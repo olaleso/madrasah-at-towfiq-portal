@@ -107,7 +107,30 @@ async function handle(req,env){
  if(path==='/api/auth/accept-invite'&&method==='POST'){
   const b=await input(req),token=String(b.token||'');if(String(b.password||'').length<12)error('Password must be at least 12 characters');
   const row=await first(db,"SELECT user_id,expires_at FROM auth_tokens WHERE token_hash=? AND purpose='invite'",await sha(token));if(!row||row.expires_at<iso())error('Invitation expired or invalid',400);
-  const salt=b64(crypto.getRandomValues(new Uint8Array(16)));await run(db,'UPDATE users SET password_hash=?,password_salt=?,active=1 WHERE id=?',await passwordHash(b.password,salt),salt,row.user_id);await run(db,"DELETE FROM auth_tokens WHERE user_id=? AND purpose='invite'",row.user_id);const user=await first(db,'SELECT * FROM users WHERE id=?',row.user_id);await audit(db,user,'invite_accepted','users',user.id);return signedIn(req,env,user);
+  const account=await first(db,'SELECT id,email,role FROM users WHERE id=?',row.user_id);
+  if(!account)error('Invitation account not found',404);
+  const salt=b64(crypto.getRandomValues(new Uint8Array(16)));
+  const operations=[
+    db.prepare('UPDATE users SET password_hash=?,password_salt=?,active=1 WHERE id=?').bind(await passwordHash(b.password,salt),salt,row.user_id),
+    db.prepare("DELETE FROM auth_tokens WHERE user_id=? AND purpose='invite'").bind(row.user_id)
+  ];
+  // Link only already-accepted, unlinked pupils with an exact registered guardian email.
+  // Never replace a parent's existing assignment. Requiring activation prevents linking
+  // pupils to an invitation before the guardian actually accepts it.
+  if(account.role==='parent'){
+    operations.push(db.prepare(`UPDATE students SET parent_id=?
+       WHERE parent_id IS NULL AND id IN (
+         SELECT a.student_id FROM admissions a
+         WHERE a.status='accepted' AND a.student_id IS NOT NULL
+           AND lower(trim(a.guardian_email))=?
+       )`).bind(account.id,email(account.email)));
+  }
+  const result=await db.batch(operations);
+  const user=await first(db,'SELECT * FROM users WHERE id=?',row.user_id);
+  await audit(db,user,'invite_accepted','users',user.id);
+  if(account.role==='parent' && Number(result[2]?.meta?.changes||0)>0)
+    await audit(db,user,'guardian_auto_link','students','',String(result[2].meta.changes)+' matching unlinked pupils');
+  return signedIn(req,env,user);
  }
  if(path==='/api/auth/forgot'&&method==='POST'){
   const b=await input(req),user=await first(db,'SELECT id,email FROM users WHERE email=? AND active=1',email(b.email));

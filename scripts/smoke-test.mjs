@@ -88,9 +88,15 @@ assert.equal(z.status,400);
 z=await req('/fees/bulk',{mode:'all',period:'2027-01',amount_pence:3000});assert.equal(z.status,400);
 z=await req('/search?q=Sample');assert.equal(z.status,200,JSON.stringify(z.data));assert.equal(z.data.students.length,1);
 z=await req('/reports');const report=z.data.items.find(x=>x.id===student_id);assert.ok(report);assert.equal(report.homework_complete,1);assert.equal(report.behaviour_points,3);
-z=await req('/users',{name:'Test Guardian',email:'guardian@example.test',role:'parent'});assert.equal(z.status,200);assert.ok(z.data.invitation_url);const invite=new URL(z.data.invitation_url).searchParams.get('invite');
-let pa=await req('/auth/accept-invite',{token:invite,password:'twelve-character-guardian-pass'},'POST',false);assert.equal(pa.status,200);const parent_cookie=pa.response.headers.get('set-cookie').split(';')[0];const parent_csrf=pa.data.csrf;
-z=await req('/students',{id:student_id,parent_id:z.data.id,first_name:'Sample',last_name:'Learner',class_id},'PATCH');assert.equal(z.status,200);
+// Guardian joins after admission: activation links their accepted child automatically.
+z=await req('/users',{name:'Test Guardian',email:application.guardian_email,role:'parent'});assert.equal(z.status,200);assert.ok(z.data.invitation_url);
+const guardian_id=z.data.id;
+assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student_id).parent_id,null,'Pending invitation must not link the pupil before activation');
+const invite=new URL(z.data.invitation_url).searchParams.get('invite');
+let pa=await req('/auth/accept-invite',{token:invite,password:'twelve-character-guardian-pass'},'POST',false);assert.equal(pa.status,200);
+const parent_cookie=pa.response.headers.get('set-cookie').split(';')[0];const parent_csrf=pa.data.csrf;
+assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student_id).parent_id,guardian_id,'Activation links the unlinked accepted pupil by verified invitation email');
+assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student2).parent_id,null,'An unrelated pupil must not be linked');
 const oldCookie=cookie,oldCsrf=csrf;cookie=parent_cookie;csrf=parent_csrf;
 z=await req('/students');assert.equal(z.status,200);assert.equal(z.data.items.length,1);
 z=await req('/behaviour');assert.equal(z.status,200);assert.equal(z.data.items.length,1);
