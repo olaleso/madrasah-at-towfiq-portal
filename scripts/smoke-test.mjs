@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import worker from '../src/worker.js';
 import assert from 'node:assert/strict';
 import {pbkdf2Sync,randomBytes} from 'node:crypto';
-const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
 for(const filename of ['0001_initial.sql','0002_expanded_admissions.sql','0003_safeguarding_declarations.sql']) oldDb.exec(fs.readFileSync(new URL('../migrations/'+filename,import.meta.url),'utf8'));
@@ -15,6 +15,12 @@ assert.equal(oldDb.prepare('SELECT student_id FROM admissions WHERE id=?').get('
 assert.equal(oldDb.prepare('SELECT first_name FROM students WHERE id=?').get('accepted-before-upgrade').first_name,'Legacy');
 assert.equal(oldDb.prepare('SELECT COUNT(*) AS n FROM students').get().n,1);
 assert.match(oldDb.prepare('SELECT student_no FROM students WHERE id=?').get('accepted-before-upgrade').student_no,/^MATT-\d{4}-0001$/);
+// Simulate the historical SQLite REAL-year formatting issue and verify repair.
+oldDb.prepare('UPDATE students SET student_no=? WHERE id=?').run('MATT-2026.0-0001','accepted-before-upgrade');
+oldDb.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));
+assert.equal(oldDb.prepare('SELECT student_no FROM students WHERE id=?').get('accepted-before-upgrade').student_no,'MATT-2026-0001');
+oldDb.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));
+assert.equal(oldDb.prepare('SELECT student_no FROM students WHERE id=?').get('accepted-before-upgrade').student_no,'MATT-2026-0001','repair migration must be idempotent');
 oldDb.close();
 const db={prepare(sql){const stmt=sqlite.prepare(sql);return {bind(...params){return {first(){return stmt.get(...params)||null;},all(){return {results:stmt.all(...params)};},run(){return stmt.run(...params);}};}};},batch(ops){sqlite.exec('BEGIN');try{const results=ops.map(x=>({meta:{changes:Number(x.run().changes||0)}}));sqlite.exec('COMMIT');return results;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
 const env={DB:db,SETUP_KEY:'twentyfour-letters-bootstrap-secure',SCHOOL_NAME:'Madrasah At-Towfiq',ASSETS:{fetch:()=>new Response('page')}};

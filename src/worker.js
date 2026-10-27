@@ -211,7 +211,7 @@ async function handle(req,env){
      db.prepare(`INSERT INTO student_number_sequences(enrollment_year,last_number) VALUES(?,1)
        ON CONFLICT(enrollment_year) DO UPDATE SET last_number=last_number+1 WHERE last_number<9999`).bind(year),
      db.prepare(`INSERT INTO students(id,student_no,first_name,last_name,dob,gender,parent_id,phone,address,status)
-       SELECT ?, 'MATT-'||?||'-'||printf('%04d',last_number),?,?,?,?,?,?,?,'active'
+       SELECT ?, 'MATT-'||printf('%04d',?)||'-'||printf('%04d',last_number),?,?,?,?,?,?,?,'active'
        FROM student_number_sequences WHERE enrollment_year=? AND last_number BETWEEN 1 AND 9999
        ON CONFLICT(id) DO NOTHING`).bind(sid,year,short(application.first_name,80),short(application.last_name,80),application.dob,short(application.gender,30),guardian?.id||null,short(application.guardian_phone||application.phone,40),address,year),
      db.prepare('UPDATE admissions SET status=?,student_id=?,updated_at=? WHERE id=?').bind('accepted',sid,iso(),application.id)

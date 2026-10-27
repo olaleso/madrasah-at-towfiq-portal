@@ -91,3 +91,8 @@ npx wrangler d1 export attowfiq_portal --remote --output "$env:USERPROFILE\\atto
 npm run db:migrate:remote
 npm run deploy
 ```
+
+
+## v1.0.10 repair
+
+Migration `0006_fix_decimal_student_year.sql` repairs any student numbers erroneously stored as `MATT-2026.0-0001` (SQLite REAL-year formatting), without changing student IDs. The Worker now uses `printf('%04d', ?)` to ensure the year is consistently a four-digit integer. Keep the original database. Do not deploy if `npm run test` fails; confirm the D1 export exists first.

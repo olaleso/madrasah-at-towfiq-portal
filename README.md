@@ -172,3 +172,8 @@ Optional **medical information**, **allergies**, and **additional learning needs
 - Student profile behaviour recording loads the same full positive/negative catalogue used in Learning & Character.
 
 **Deployment order**: `git pull origin main`, `npm run test`, back up the D1 database, `npm run db:migrate:remote`, then `npm run deploy`. Migration 0005 changes *displayed numbers* for existing pupils, not their database IDs or linked records.
+
+
+## v1.0.10 release
+
+Fixes MATT registration-number year formatting for newly accepted students, and adds migration 0006 to repair any existing display numbers containing a spurious `.0`. No database or administrator reset is needed. Run `npm run test` before applying pending remote migrations and deploying. GitHub Actions now tests pushes to `main` independently of Cloudflare deployment configuration.
