@@ -198,6 +198,37 @@ async function handle(req,env){
   if(method==='POST'){await permittedStudent(db,user,b.student_id);const c=CATALOG.find(x=>x.code===b.reason_code);if(!c)error('Behaviour type not recognised');const bid=id();await run(db,'INSERT INTO behaviour(id,student_id,reason_code,description,points,notes,recorded_by) VALUES(?,?,?,?,?,?,?)',bid,b.student_id,c.code,c.label,c.points,short(b.notes,800),user.id);await audit(db,user,'record','behaviour',bid,`${c.label}: ${c.points}`);return json({ok:true,id:bid});}
   if(method==='DELETE'){requireRole(user,'admin');await run(db,'DELETE FROM behaviour WHERE id=?',b.id);await audit(db,user,'remove','behaviour',b.id);return json({ok:true});}
  }
+ if(path==='/api/fees/bulk' && method==='POST'){
+  const user=await session(req,env);if(!user)error('Your session has expired. Please sign in.',401);
+  requireRole(user,'admin','staff');
+  const b=await input(req);
+  if(b.confirm!=='ISSUE_BULK_INVOICES')error('Bulk invoice confirmation required',400);
+  if(!['all','selected'].includes(b.mode))error('Select all or selected students',400);
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(b.period||'')))error('Valid billing month required',400);
+  if(!isMoney(b.amount_pence)||Number(b.amount_pence)<1)error('Valid positive amount required',400);
+  if(b.due_date&&!isDate(b.due_date))error('Valid due date required',400);
+  if(method!=='GET'){const received=req.headers.get('x-csrf-token');if(!received||!(await safeEqual(await sha(received),user.csrf_hash)))error('Security token expired. Reload your page.',403);}
+  const roster=await all(db,"SELECT id FROM students WHERE status='active' ORDER BY id");
+  const activeIds=new Set(roster.map(x=>x.id));
+  let targets;
+  if(b.mode==='all')targets=roster.map(x=>x.id);
+  else{
+    if(!Array.isArray(b.student_ids)||b.student_ids.length>1000)error('Select between 1 and 1000 active students',400);
+    targets=[...new Set(b.student_ids)];
+    if(targets.some(x=>typeof x!=='string'||!activeIds.has(x)))error('Selection includes an inactive or unknown student',400);
+  }
+  if(!targets.length)error('No active students selected for invoicing',400);
+  // D1 batch executes each chunk transactionally. INSERT OR IGNORE prevents duplicate monthly invoices.
+  let created=0;
+  for(let i=0;i<targets.length;i+=75){
+    const group=targets.slice(i,i+75);
+    const ops=group.map(sid=>db.prepare('INSERT OR IGNORE INTO fee_invoices(id,student_id,period,amount_pence,due_date) VALUES(?,?,?,?,?)').bind(id(),sid,b.period,Number(b.amount_pence),b.due_date||null));
+    const results=await db.batch(ops);
+    created+=results.reduce((n,r)=>n+Number(r.meta?.changes||0),0);
+  }
+  await audit(db,user,'bulk-issue','invoice','',`${b.mode}: ${created}/${targets.length} created for ${b.period}`);
+  return json({ok:true,selected:targets.length,created,skipped:targets.length-created,period:b.period});
+ }
  if(path==='/api/fees'){
   if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT f.*,s.first_name,s.last_name,(SELECT COALESCE(SUM(p.amount_pence),0) FROM payments p WHERE p.invoice_id=f.id) AS paid_pence FROM fee_invoices f JOIN students s ON s.id=f.student_id WHERE ${s.where} ORDER BY f.period DESC,s.first_name`,...s.args)});}
   requireRole(user,'admin','staff');if(method==='POST'){const b=await input(req);await permittedStudent(db,user,b.student_id);if(!/^\d{4}-\d{2}$/.test(b.period||'')||!isMoney(b.amount_pence))error('Period (YYYY-MM) and positive amount required');const fid=id();await run(db,'INSERT INTO fee_invoices(id,student_id,period,amount_pence,due_date) VALUES(?,?,?,?,?)',fid,b.student_id,b.period,Number(b.amount_pence),b.due_date||null);await audit(db,user,'issue','invoice',fid);return json({ok:true,id:fid});}

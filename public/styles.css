@@ -51,3 +51,10 @@
 .admission-summary-item{padding:11px 13px;background:#f7faff;border-radius:9px;overflow-wrap:anywhere}.admission-summary-item small{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:10px;color:#8098b2;margin-bottom:6px}.admission-summary-item strong{display:block;font-size:12px;font-weight:700;color:#20476d;line-height:1.5}
 .admission-detail-lead{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:18px;border-radius:14px;background:linear-gradient(115deg,#eff7ff,#e4f0ff)}.admission-detail-lead h3{font-size:21px;color:#173b66;margin:8px 0 5px}.admission-detail-lead p{font-size:11px;color:#7791a8}.admission-end-actions{display:flex;justify-content:flex-end;margin-top:19px}
 @media(max-width:750px){.admissions-intro{align-items:flex-start}.admissions-intro .tag{display:none}.admission-actions{flex-wrap:wrap}.admission-levels,.admission-summary-grid{grid-template-columns:1fr}.admission-form-section>.form-grid{padding:15px}.admission-section-head{padding:15px}.admission-privacy{align-items:flex-start}}
+
+/* Bulk invoice recipient picker */
+.invoice-checklist{max-height:240px;overflow-y:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(195px,1fr));gap:9px;margin-top:10px;padding:12px;border:1px solid #dfe7f4;border-radius:14px;background:#f7f9fd}
+.invoice-choice{display:flex;align-items:flex-start;gap:10px;padding:12px;border:1px solid #dee6f5;border-radius:10px;background:#fff;cursor:pointer;font-weight:650;color:#1d355d}
+.invoice-choice input{width:18px;height:18px;flex:none;accent-color:#4469cf;margin-top:2px}
+.invoice-choice span{display:grid;gap:3px}.invoice-choice small{color:#72819a;font-size:12px;font-weight:450}
+.invoice-target-summary{border-radius:12px;background:#eaf1ff;color:#23477b;font-weight:700;padding:13px 15px}
