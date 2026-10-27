@@ -9,6 +9,12 @@
       "0 8 * * 5"
     ]
   },
+  "routes": [
+    {
+      "pattern": "portal.attowfiqmasjid.org",
+      "custom_domain": true
+    }
+  ],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
