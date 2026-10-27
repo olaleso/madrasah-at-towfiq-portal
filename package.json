@@ -1,6 +1,6 @@
 {
   "name": "madrasah-at-towfiq-portal",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": true,
   "type": "module",
   "description": "Masjid At-Towfiq Madrasah student management portal with D1 and session authentication",

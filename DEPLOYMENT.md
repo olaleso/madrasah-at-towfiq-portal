@@ -67,3 +67,16 @@ Set a Cloudflare Worker secret `SETUP_KEY` with Wrangler at least once, on initi
 ## Security boundary
 
 The local preview is bound to 127.0.0.1 and must never be publicly exposed. Before accepting actual UK children's details, complete the safeguarding and UK GDPR reviews, backup/restore tests, operational monitoring, permission testing, access reviews, data-processing agreements, and resilience/recovery validation. A working authenticated prototype is not production security certification.
+
+## v1.0.7 migration
+
+Before deploying v1.0.7, from the existing checked-out project run:
+
+```powershell
+git pull origin main
+npm run test
+npm run db:migrate:remote
+npm run deploy
+```
+
+The new migration adds optional medical, allergy and learning-support fields and separate, initially-unselected consent flags to admissions. It does not delete historic fields or data. Do not recreate the D1 database, reset the SETUP_KEY or recreate the admin account.

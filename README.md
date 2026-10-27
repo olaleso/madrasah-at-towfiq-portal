@@ -154,3 +154,11 @@ The Admissions module now reflects the parent application form supplied by the m
 **Existing Cloudflare D1 deployment:** Take a backup before upgrading. Deploy the updated Worker and static assets, then apply `npm run db:migrate:remote` with the proper database ID in `wrangler.jsonc`; Cloudflare executes only unapplied migrations. For an entirely new install, apply both 0001 and 0002 migrations.
 
 **Local preview:** `npm run preview`; the persistent SQLite database automatically applies both migrations only once. It **preserves** the database on restart and across ZIP upgrades. The detailed admission form is available under **School management → Admissions → New application**. Only administrators and authorised office staff can view applicants' personal data. A public parent-facing form and a production privacy/retention workflow are not included in this release.
+
+## v1.0.7 admissions simplification and consent records
+
+The admissions form now collects **one home address** and **one guardian mobile contact**; the duplicate guardian address and daytime mobile inputs are removed. Existing legacy database columns remain untouched to preserve historic records.
+
+Optional **medical information**, **allergies**, and **additional learning needs** are recorded only in restricted admissions records, alongside two distinct consent flags for **emergency first aid** and **internal learning photographs**. Flags default to not recorded; only record a tick if the parent/guardian explicitly agreed. A proper privacy notice, safeguarding process and sensitive-data access/retention review remain required before processing real children's data.
+
+**Deployment:** run `npm run db:migrate:remote` after pulling the new commit and before `npm run deploy`. Migration `0003_safeguarding_declarations.sql` is additive and does not alter existing administrator accounts, billing history or admission records.

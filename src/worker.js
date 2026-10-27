@@ -155,15 +155,14 @@ async function handle(req,env){
    if(!['Male','Female','Prefer not to say'].includes(b.gender))error('Choose a valid gender option');
    if(!short(b.home_address,260)||!short(b.postcode,16))error('Home address and postcode are required');
    if(!short(b.guardian_name,120)||!/^\S+@\S+\.\S+$/.test(email(b.guardian_email)))error('Guardian full name and valid email are required');
-   if(!short(b.guardian_phone,40)&&!short(b.mobile,40))error('Guardian mobile/contact number is required');
+   if(!short(b.guardian_phone,40))error('Guardian mobile/contact number is required');
    if(b.previous_attended&&!['yes','no','unknown'].includes(b.previous_attended))error('Invalid previous education answer');
    if(b.previous_attended==='yes'&&!short(b.previous_institute,150))error('Please enter the previous madrasah or institution');
-   if(b.weekly_revision_hours!==''&&b.weekly_revision_hours!==undefined){const n=Number(b.weekly_revision_hours);if(!Number.isFinite(n)||n<0||n>80)error('Home revision hours must be between 0 and 80');}
-   const names=['first_name','last_name','dob','gender','home_address','postcode','home_telephone','mobile','guardian_name','guardian_email','guardian_address','guardian_phone','emergency_phone','guardian_relationship','previous_attended','previous_institute','level_starting','level_qaaidah','qaaidah_page','level_quran','quran_surah','arabic_read_write','weekly_revision_hours','preferred_class','message','parent_confirmed'];
-   const integers=new Set(['level_starting','level_qaaidah','level_quran','arabic_read_write','parent_confirmed']);
-   const sizes={first_name:80,last_name:80,dob:10,gender:30,home_address:260,postcode:16,home_telephone:40,mobile:40,guardian_name:120,guardian_email:254,guardian_address:260,guardian_phone:40,emergency_phone:40,guardian_relationship:50,previous_attended:12,previous_institute:150,qaaidah_page:55,quran_surah:100,weekly_revision_hours:10,preferred_class:90,message:1500};
+   const names=['first_name','last_name','dob','gender','home_address','postcode','home_telephone','guardian_name','guardian_email','guardian_phone','emergency_phone','guardian_relationship','previous_attended','previous_institute','level_starting','level_qaaidah','qaaidah_page','level_quran','quran_surah','arabic_read_write','medical_information','allergies','additional_learning_needs','consent_first_aid','consent_photos','message'];
+   const integers=new Set(['level_starting','level_qaaidah','level_quran','arabic_read_write','consent_first_aid','consent_photos']);
+   const sizes={first_name:80,last_name:80,dob:10,gender:30,home_address:260,postcode:16,home_telephone:40,guardian_name:120,guardian_email:254,guardian_phone:40,emergency_phone:40,guardian_relationship:50,previous_attended:12,previous_institute:150,qaaidah_page:55,quran_surah:100,medical_information:1600,allergies:1000,additional_learning_needs:1600,message:1500};
    const values=names.map(k=>integers.has(k)?((b[k]===true||b[k]===1||b[k]==='1'||b[k]==='on')?1:0):k==='guardian_email'?email(b[k]):short(b[k],sizes[k]||120));
-   const phone=short(b.mobile||b.guardian_phone||'',40);
+   const phone=short(b.guardian_phone||'',40);
    if(method==='POST'){
     const rid=id(), cols=['id','child_name','phone',...names];
     await run(db,`INSERT INTO admissions(${cols.join(',')}) VALUES(${cols.map(()=>'?').join(',')})`,rid,childName,phone,...values);
