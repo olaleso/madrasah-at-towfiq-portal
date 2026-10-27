@@ -8,7 +8,33 @@ const b64 = a => btoa(String.fromCharCode(...new Uint8Array(a)));
 const from64 = s => Uint8Array.from(atob(s), x=>x.charCodeAt(0));
 const random = (size=32) => b64(crypto.getRandomValues(new Uint8Array(size))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 async function sha(str){return b64(await crypto.subtle.digest('SHA-256',enc.encode(str)));}
-async function passwordHash(pass,salt){const k=await crypto.subtle.importKey('raw',enc.encode(pass),'PBKDF2',false,['deriveBits']);return b64(await crypto.subtle.deriveBits({name:'PBKDF2',salt:from64(salt),iterations:210000,hash:'SHA-256'},k,256));}
+// Cloudflare Workers WebCrypto limits a single PBKDF2 derivation to 100,000 iterations.
+// Prefix all new hashes with their scheme and iteration count. Older local-preview
+// accounts used an unversioned 210,000-iteration hash; retain verification for them.
+const PASSWORD_ROUNDS = 100000;
+const LEGACY_PASSWORD_ROUNDS = 210000;
+const PASSWORD_SCHEME = 'pbkdf2-sha256';
+async function passwordDerive(pass,salt,rounds){
+ const k=await crypto.subtle.importKey('raw',enc.encode(String(pass)), 'PBKDF2',false,['deriveBits']);
+ return b64(await crypto.subtle.deriveBits({name:'PBKDF2',salt:from64(salt),iterations:rounds,hash:'SHA-256'},k,256));
+}
+async function passwordHash(pass,salt){
+ return `${PASSWORD_SCHEME}:${PASSWORD_ROUNDS}:${await passwordDerive(pass,salt,PASSWORD_ROUNDS)}`;
+}
+async function verifyPassword(pass,salt,stored){
+ const hash=String(stored||'');
+ const parts=hash.split(':');
+ const versioned=parts.length===3&&parts[0]===PASSWORD_SCHEME;
+ const rounds=versioned?Number(parts[1]):LEGACY_PASSWORD_ROUNDS;
+ const digest=versioned?parts[2]:hash;
+ if(!digest||![PASSWORD_ROUNDS,LEGACY_PASSWORD_ROUNDS].includes(rounds))return false;
+ try {return await safeEqual(await passwordDerive(pass,salt,rounds),digest);}
+ catch(err){
+  if(rounds===LEGACY_PASSWORD_ROUNDS && err?.name==='NotSupportedError')
+   error('Legacy password cannot be verified on Cloudflare. Contact an administrator for a password reset.',409);
+  throw err;
+ }
+}
 async function safeEqual(a,b){const x=enc.encode(a||'');const y=enc.encode(b||'');let d=x.length^y.length;for(let i=0;i<Math.max(x.length,y.length);i++) d |= (x[i]||0)^(y[i]||0);return d===0;}
 const short = (x,n=220)=>String(x??'').trim().slice(0,n);
 const email = x=>short(x,254).toLowerCase();
@@ -57,7 +83,7 @@ async function handle(req,env){
   const b=await input(req),user=await first(db,'SELECT * FROM users WHERE email=?',email(b.email));
   if(!user||!user.active||!user.password_hash)error('Invalid email or password',401);
   if(user.locked_until&&user.locked_until>iso())error('Account temporarily locked. Try again later.',429);
-  const ok=await safeEqual(await passwordHash(String(b.password||''),user.password_salt),user.password_hash);
+  const ok=await verifyPassword(String(b.password||''),user.password_salt,user.password_hash);
   if(!ok){const failures=(user.failed_logins||0)+1;await run(db,'UPDATE users SET failed_logins=?,locked_until=? WHERE id=?',failures,failures>=6?nextIso(900):null,user.id);error('Invalid email or password',401);}
   await run(db,'UPDATE users SET failed_logins=0,locked_until=NULL WHERE id=?',user.id);await audit(db,user,'login','session');return signedIn(req,env,user);
  }
@@ -83,7 +109,7 @@ async function handle(req,env){
  }
  if(method!=='GET'){const received=req.headers.get('x-csrf-token');if(!received||!(await safeEqual(await sha(received),user.csrf_hash)))error('Security token expired. Reload your page.',403);}
  if(path==='/api/auth/logout'&&method==='POST'){await run(db,'DELETE FROM sessions WHERE token_hash=?',user.token_hash);return json({ok:true},200,{'Set-Cookie':setCookie(req,'',0)});}
- if(path==='/api/auth/password'&&method==='POST'){const b=await input(req),r=await first(db,'SELECT password_hash,password_salt FROM users WHERE id=?',user.id);if(!await safeEqual(await passwordHash(b.current_password||'',r.password_salt),r.password_hash))error('Current password is incorrect');if(String(b.new_password||'').length<12)error('New password must be at least 12 characters');const salt=b64(crypto.getRandomValues(new Uint8Array(16)));await run(db,'UPDATE users SET password_hash=?,password_salt=? WHERE id=?',await passwordHash(b.new_password,salt),salt,user.id);await run(db,'DELETE FROM sessions WHERE user_id=? AND token_hash<>?',user.id,user.token_hash);return json({ok:true});}
+ if(path==='/api/auth/password'&&method==='POST'){const b=await input(req),r=await first(db,'SELECT password_hash,password_salt FROM users WHERE id=?',user.id);if(!await verifyPassword(b.current_password||'',r.password_salt,r.password_hash))error('Current password is incorrect');if(String(b.new_password||'').length<12)error('New password must be at least 12 characters');const salt=b64(crypto.getRandomValues(new Uint8Array(16)));await run(db,'UPDATE users SET password_hash=?,password_salt=? WHERE id=?',await passwordHash(b.new_password,salt),salt,user.id);await run(db,'DELETE FROM sessions WHERE user_id=? AND token_hash<>?',user.id,user.token_hash);return json({ok:true});}
  if(path==='/api/search'&&method==='GET'){
   const query=short(u.searchParams.get('q')||'',70);if(query.length<2)return json({students:[],homework:[],classes:[]});const like='%'+query.replace(/[\%_]/g,x=>'\\'+x)+'%';const scope=studentScope(user);
   const students=await all(db,`SELECT s.id,s.student_no,s.first_name,s.last_name,c.name AS class_name FROM students s LEFT JOIN classes c ON c.id=s.class_id WHERE ${scope.where} AND (s.first_name LIKE ? ESCAPE '\\' OR s.last_name LIKE ? ESCAPE '\\' OR s.student_no LIKE ? ESCAPE '\\') LIMIT 10`,...scope.args,like,like,like);
