@@ -132,14 +132,11 @@ async function handle(req,env){
  if(path==='/api/contacts'&&method==='GET'){
   const contacts=user.role==='parent'?[]:user.role==='teacher'?await all(db,"SELECT DISTINCT u.id,u.name,u.email,u.role FROM users u JOIN students s ON s.parent_id=u.id JOIN classes c ON c.id=s.class_id WHERE c.teacher_id=? AND u.active=1 ORDER BY u.name",user.id):await all(db,"SELECT id,name,email,role FROM users WHERE active=1 AND id<>? ORDER BY name",user.id);return json({items:contacts});
  }
- if(path==='/api/students/bulk'&&method==='POST'){
-  requireRole(user,'admin','staff');const b=await input(req);if(!Array.isArray(b.items)||b.items.length>200)error('Import at most 200 students at once');let added=0;const rejected=[];
-  for(const s of b.items){if(!s.first_name||!s.last_name){rejected.push('Missing first or last name');continue;}const sid=id(),sno='AT-'+new Date().getFullYear()+'-'+random(6).replace(/[^A-Za-z0-9]/g,'').slice(0,7).toUpperCase();await run(db,'INSERT INTO students(id,student_no,first_name,last_name,dob,gender,class_id,phone,address,status) VALUES(?,?,?,?,?,?,?,?,?,?)',sid,sno,short(s.first_name,80),short(s.last_name,80),s.dob||null,short(s.gender,30),s.class_id||null,short(s.phone,40),short(s.address,250),'active');added++;}await audit(db,user,'bulk-import','student','',`${added} students`);return json({ok:true,added,rejected});
- }
+ if(path==='/api/students/bulk'&&method==='POST')error('New pupils must be enrolled through an accepted admission application',403);
  if(path==='/api/students'){
   if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT s.*,c.name AS class_name,u.name AS parent_name,(SELECT COALESCE(SUM(points),0) FROM behaviour b WHERE b.student_id=s.id) AS behaviour_score FROM students s LEFT JOIN classes c ON c.id=s.class_id LEFT JOIN users u ON u.id=s.parent_id WHERE ${s.where} ORDER BY s.first_name,s.last_name`,...s.args)});}
   requireRole(user,'admin','staff');const b=await input(req);
-  if(method==='POST'){if(!b.first_name||!b.last_name)error('Student first and last name required');const sid=id();const sno='AT-'+new Date().getFullYear()+'-'+random(6).replace(/[^A-Z0-9a-z]/g,'').slice(0,7).toUpperCase();await run(db,'INSERT INTO students(id,student_no,first_name,last_name,dob,gender,class_id,parent_id,phone,address,medical_notes,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',sid,sno,short(b.first_name,80),short(b.last_name,80),b.dob||null,short(b.gender,30),b.class_id||null,b.parent_id||null,short(b.phone,40),short(b.address,250),short(b.medical_notes,600),b.status||'active');await audit(db,user,'create','student',sid);return json({ok:true,id:sid});}
+  if(method==='POST')error('New pupils must be enrolled through an accepted admission application',403);
   if(method==='PATCH'){if(!b.id)error('Student ID required');const existing=await first(db,'SELECT * FROM students WHERE id=?',b.id);if(!existing)error('Student not found',404);const obj={...existing};for(const k of FIELDS_STUDENT)if(b[k]!==undefined)obj[k]=b[k];await run(db,'UPDATE students SET first_name=?,last_name=?,dob=?,gender=?,class_id=?,parent_id=?,phone=?,address=?,medical_notes=?,status=? WHERE id=?',...FIELDS_STUDENT.map(k=>obj[k]===null?null:short(obj[k],k==='medical_notes'?600:250)),b.id);await audit(db,user,'update','student',b.id);return json({ok:true});}
   if(method==='DELETE'){if(!b.id)error('Student ID required');await run(db,'DELETE FROM students WHERE id=?',b.id);await audit(db,user,'delete','student',b.id,'Hard deleted student and linked records');return json({ok:true});}
  }
@@ -169,12 +166,35 @@ async function handle(req,env){
     await audit(db,user,'create','admission',rid);return json({ok:true,id:rid});
    }
    if(!b.id||!await first(db,'SELECT id FROM admissions WHERE id=?',b.id))error('Application not found',404);
-   await run(db,`UPDATE admissions SET child_name=?,phone=?,${names.map(k=>k+'=?').join(',')},updated_at=? WHERE id=?`,childName,phone,...values,iso(),b.id);
+   const existingAdmission=await first(db,'SELECT student_id FROM admissions WHERE id=?',b.id);
+   const admissionUpdate=db.prepare(`UPDATE admissions SET child_name=?,phone=?,${names.map(k=>k+'=?').join(',')},updated_at=? WHERE id=?`).bind(childName,phone,...values,iso(),b.id);
+   if(existingAdmission?.student_id){
+    const home=[short(b.home_address,260),short(b.postcode,16)].filter(Boolean).join(', ');
+    await db.batch([admissionUpdate,db.prepare('UPDATE students SET first_name=?,last_name=?,dob=?,gender=?,phone=?,address=? WHERE id=?').bind(childFirst,childLast,b.dob,b.gender,phone,home,existingAdmission.student_id)]);
+   }else await admissionUpdate.run();
    await audit(db,user,'edit','admission',b.id);return json({ok:true,id:b.id});
   }
   if(method==='PATCH'){
-   if(!b.id||!await first(db,'SELECT id FROM admissions WHERE id=?',b.id))error('Application not found',404);
+   const application=b.id?await first(db,'SELECT * FROM admissions WHERE id=?',b.id):null;
+   if(!application)error('Application not found',404);
    if(!['new','reviewing','accepted','declined'].includes(b.status))error('Invalid status');
+   if(b.status==='accepted'){
+    // The admission UUID is reused as the student UUID to make enrolment idempotent.
+    // The two changes are one D1 batch transaction, so a failed insert cannot approve a pupil.
+    if(!short(application.first_name)||!short(application.last_name)||!isDate(application.dob))error('Complete the pupil name and date of birth before approval');
+    const sid=application.student_id||application.id;
+    const guardian=await first(db,"SELECT id FROM users WHERE role='parent' AND active=1 AND email=?",email(application.guardian_email));
+    const number='AT-'+new Date().getUTCFullYear()+'-'+sid.replace(/-/g,'').slice(0,10).toUpperCase();
+    const address=[short(application.home_address,260),short(application.postcode,16)].filter(Boolean).join(', ');
+    await db.batch([
+     db.prepare(`INSERT INTO students(id,student_no,first_name,last_name,dob,gender,parent_id,phone,address,status)
+       VALUES(?,?,?,?,?,?,?,?,?,'active') ON CONFLICT(id) DO NOTHING`).bind(sid,number,short(application.first_name,80),short(application.last_name,80),application.dob,short(application.gender,30),guardian?.id||null,short(application.guardian_phone||application.phone,40),address),
+     db.prepare('UPDATE admissions SET status=?,student_id=?,updated_at=? WHERE id=?').bind('accepted',sid,iso(),application.id)
+    ]);
+    await audit(db,user,'enrol','admission',application.id,`Student ${sid}`);
+    return json({ok:true,student_id:sid,enrolled:true});
+   }
+   if(application.student_id)error('This pupil is already enrolled. Update their student profile instead of reversing acceptance.',409);
    await run(db,'UPDATE admissions SET status=?,updated_at=? WHERE id=?',b.status,iso(),b.id);
    await audit(db,user,'review','admission',b.id,b.status);return json({ok:true});
   }
@@ -277,16 +297,7 @@ async function handle(req,env){
  if(path==='/api/reports'&&method==='GET'){
   requireRole(user,'admin','staff','teacher');const s=studentScope(user);const summary=await all(db,`SELECT s.id,s.student_no,s.first_name,s.last_name,c.name AS class_name,(SELECT COUNT(*) FROM attendance a WHERE a.student_id=s.id AND a.status='present') AS present,(SELECT COUNT(*) FROM attendance a WHERE a.student_id=s.id) AS attendance_total,(SELECT COUNT(*) FROM homework h WHERE h.student_id=s.id AND h.status='complete') AS homework_complete,(SELECT COUNT(*) FROM homework h WHERE h.student_id=s.id) AS homework_total,(SELECT COALESCE(SUM(b.points),0) FROM behaviour b WHERE b.student_id=s.id) AS behaviour_points FROM students s LEFT JOIN classes c ON c.id=s.class_id WHERE ${s.where} ORDER BY c.name,s.first_name`,...s.args);return json({items:summary});
  }
- if(path==='/api/demo-seed'&&method==='POST'){
-  requireRole(user,'admin');const count=await first(db,'SELECT COUNT(*) AS n FROM students');if(count.n)error('Sample data can only be loaded into an empty student database');const cl=[['Safa','Foundation'],['Huda','Intermediate'],['Ihsan','Advanced']];const cids=[];for(const [name,stage] of cl){let cid=id();cids.push(cid);await run(db,'INSERT INTO classes(id,name,stage,capacity,schedule) VALUES(?,?,?,?,?)',cid,name,stage,25,'Weekends · 10:00–13:00');}
-   const students=[['Ayaan','Rahman'],['Maryam','Yusuf'],['Zaynab','Khan'],['Idris','Ahmed'],['Fatimah','Ali'],['Bilal','Hassan'],['Aisha','Mahmood'],['Yusuf','Ibrahim'],['Hafsa','Malik'],['Umar','Sadiq'],['Safiyyah','Noor'],['Musa','Hameed']];
-   let i=0;for(const [fn,ln] of students){const sid=id();await run(db,'INSERT INTO students(id,student_no,first_name,last_name,gender,class_id,status) VALUES(?,?,?,?,?,?,?)',sid,`DEMO-${String(i+1).padStart(3,'0')}`,fn,ln,i%2?'Female':'Male',cids[i%3],'active');if(i<7){const ht=['hifdh','murajaa','qaaidah','islamic_studies'][i%4];await run(db,'INSERT INTO homework(id,student_id,type,surah_from,verse_from,surah_to,verse_to,page_number,due_date,comments,assigned_by,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',id(),sid,ht,'Al-Fatihah',1,'Al-Fatihah',7,'12',new Date(Date.now()+(i-2)*DAY*1000).toISOString().slice(0,10),'Practise with a parent or guardian.',user.id,i%3?'incomplete':'complete');}
-  if(i<9){const code=CATALOG[(i*2)%CATALOG.length];await run(db,'INSERT INTO behaviour(id,student_id,reason_code,description,points,notes,recorded_by) VALUES(?,?,?,?,?,?,?)',id(),sid,code.code,code.label,code.points,'Sample record — delete before using with real pupils',user.id);}await run(db,'INSERT INTO attendance(id,student_id,date,status,recorded_by) VALUES(?,?,?,?,?)',id(),sid,nowDate(),i%5?'present':'absent',user.id);if(i<5){await run(db,'INSERT INTO fee_invoices(id,student_id,period,amount_pence,due_date) VALUES(?,?,?,?,?)',id(),sid,nowDate().slice(0,7),3000,nowDate());}i++;}
-  await run(db,'INSERT INTO announcements(id,title,body,audience,created_by) VALUES(?,?,?,?,?)',id(),'Welcome to Madrasah At-Towfiq','Bismillah. This is a demonstration announcement. Replace it with your school updates.','all',user.id);
-  await run(db,'INSERT INTO events(id,title,event_date,description,category) VALUES(?,?,?,?,?)',id(),'Madrasah family learning day',new Date(Date.now()+14*DAY*1000).toISOString().slice(0,10),'Sample event for the portal demonstration.','community');
-  await run(db,'INSERT INTO quizzes(id,question,options_json,answer_index,category) VALUES(?,?,?,?,?)',id(),'How many daily obligatory prayers are there?',JSON.stringify(['Three','Four','Five','Six']),2,'Islamic Knowledge');
-  await audit(db,user,'seed','demo','','Sample records created');return json({ok:true,students:students.length});
- }
+ if(path==='/api/demo-seed'&&method==='POST')error('New pupils must be enrolled through Admissions',403);
  error('Endpoint not found',404);
 }
 export default {
