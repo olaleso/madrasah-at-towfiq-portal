@@ -96,3 +96,8 @@ npm run deploy
 ## v1.0.10 repair
 
 Migration `0006_fix_decimal_student_year.sql` repairs any student numbers erroneously stored as `MATT-2026.0-0001` (SQLite REAL-year formatting), without changing student IDs. The Worker now uses `printf('%04d', ?)` to ensure the year is consistently a four-digit integer. Keep the original database. Do not deploy if `npm run test` fails; confirm the D1 export exists first.
+
+
+## v1.0.12 automated guardian invitation setup
+
+To email parents automatically upon accepting an admission, configure `EMAIL_FROM` in `wrangler.jsonc` with a verified Resend sending domain and set the Worker secret with `npx wrangler secret put RESEND_API_KEY`. The default `notifications@example.org` is a placeholder and cannot send. A successful admission may still succeed even when email delivery is unavailable; in that case, staff receive the one-time invitation URL for secure sharing and can retry from **School management → Parents & guardians**. Verify consent, email and guardianship before activating real parent accounts.

@@ -82,6 +82,36 @@ const CATALOG=[
  ['punctual','Arriving on time',1],['equipment','Bringing all books and equipment',1],['homework','Completing homework',1],['manners','Showing excellent manners',1],['following','Following instructions promptly',1],['participation','Participating positively in class',1],['helping','Helping another student',2],['respect','Showing exceptional respect to teachers',2],['hifdh-effort','Excellent effort in Qur’an memorisation',2],['leadership','Demonstrating leadership and responsibility',2],['resolution','Helping resolve a disagreement peacefully',3],['improvement','Outstanding improvement in behaviour',3],['kindness','Exceptional act of kindness or character',3]
 ].map(([code,label,points])=>({code,label,points,category:points>0?'positive':'concern'}));
 async function mail(env,to,subject,html){const e=id();if(!env.RESEND_API_KEY||!env.EMAIL_FROM){await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status,error) VALUES(?,?,?,?,?)',e,to,subject,'not_configured','Resend API key or sender not configured');return {sent:false};}try{const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Authorization':`Bearer ${env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:env.EMAIL_FROM,to:[to],subject,html})});if(!r.ok)throw new Error(`Provider returned ${r.status}`);await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status) VALUES(?,?,?,?)',e,to,subject,'sent');return {sent:true};}catch(err){await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status,error) VALUES(?,?,?,?,?)',e,to,subject,'failed',short(err.message));return {sent:false};}}
+
+async function inviteGuardianAfterAcceptance(db,env,req,application,actor){
+ const guardianEmail=email(application.guardian_email);
+ if(!/^\S+@\S+\.\S+$/.test(guardianEmail))return {invitation_status:'invalid_email'};
+ const existing=await first(db,'SELECT id,email,name,role,password_hash,active FROM users WHERE email=?',guardianEmail);
+ if(existing && existing.role!=='parent')return {invitation_status:'existing_non_parent_account'};
+ const pupil=await first(db,'SELECT id,parent_id FROM students WHERE id=?',application.student_id||application.id);
+ if(!pupil)return {invitation_status:'student_not_found'};
+ if(existing?.password_hash && existing.active){
+  if(!pupil.parent_id)await run(db,'UPDATE students SET parent_id=? WHERE id=? AND parent_id IS NULL',existing.id,pupil.id);
+  return {invitation_status:pupil.parent_id&&pupil.parent_id!==existing.id?'manual_review':'already_active'};
+ }
+ if(pupil.parent_id && (!existing || pupil.parent_id!==existing.id))return {invitation_status:'manual_review'};
+ let uid=existing?.id;
+ if(!uid){
+  uid=id();
+  await run(db,'INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,0)',uid,short(application.guardian_name,100)||'Parent / Guardian',guardianEmail,'parent');
+ }
+ const token=random(32);
+ await run(db,"DELETE FROM auth_tokens WHERE user_id=? AND purpose='invite'",uid);
+ await run(db,'INSERT INTO auth_tokens(token_hash,user_id,purpose,expires_at) VALUES(?,?,?,?)',await sha(token),uid,'invite',nextIso(7*DAY));
+ const link=new URL('/?invite='+encodeURIComponent(token),req.url).href;
+ const sent=await mail(env,guardianEmail,'Madrasah At-Towfiq — Activate your parent account',
+  '<p>Assalamu alaikum,</p><p>A pupil associated with this guardian email has been admitted to Madrasah At-Towfiq.</p>'+
+  '<p><a href="'+escapeHtml(link)+'">Activate your secure parent account</a></p>'+
+  '<p>This single-use link expires in 7 days. If you did not expect this invitation, contact the madrasah.</p>');
+ await audit(db,actor,'guardian_invitation','users',uid,sent.sent?'email_sent':'delivery_not_confirmed');
+ return {invitation_status:sent.sent?'sent':'delivery_not_configured_or_failed',invitation_url:sent.sent?null:link};
+}
+
 const escapeHtml=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function handle(req,env){
  const u=new URL(req.url), path=u.pathname,method=req.method,db=env.DB;
@@ -167,7 +197,69 @@ async function handle(req,env){
   if(method==='POST'){const b=await input(req);if(!b.name||!String(b.email||'').includes('@')||!ROLES.includes(b.role))error('Name, valid email and role required');const uid=id();await run(db,'INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,1)',uid,short(b.name,100),email(b.email),b.role);
     const t=random(32);await run(db,"INSERT INTO auth_tokens(token_hash,user_id,purpose,expires_at) VALUES(?,?,?,?)",await sha(t),uid,'invite',nextIso(7*DAY));const link=new URL('/?invite='+encodeURIComponent(t),req.url).href;const mailed=await mail(env,email(b.email),'You are invited to Madrasah At-Towfiq',`<p>Welcome to Madrasah At-Towfiq.</p><p><a href="${escapeHtml(link)}">Activate your account</a></p><p>This link expires in seven days.</p>`);
     await audit(db,user,'invite','users',uid);return json({ok:true,id:uid,invitation_url:mailed.sent?null:link,emailed:mailed.sent});}
-  if(method==='PATCH'){const b=await input(req);if(b.id===user.id&&b.active===false)error('Cannot deactivate your own account');if(b.role&&!ROLES.includes(b.role))error('Invalid role');if(b.active===false||(b.role&&b.role!=='admin')){const admins=await first(db,"SELECT COUNT(*) AS n FROM users WHERE role='admin' AND active=1");const prior=await first(db,'SELECT role FROM users WHERE id=?',b.id);if(prior?.role==='admin'&&admins.n<=1)error('You cannot deactivate or demote the last admin');}await run(db,'UPDATE users SET name=COALESCE(?,name),role=COALESCE(?,role),active=COALESCE(?,active) WHERE id=?',b.name?short(b.name,100):null,b.role||null,b.active===undefined?null:(b.active?1:0),b.id);await audit(db,user,'update','users',b.id);return json({ok:true});}
+  if(method==='PATCH'){
+   const b=await input(req);
+   const original=await first(db,'SELECT id,name,email,role,active,password_hash,password_salt FROM users WHERE id=?',b.id);
+   if(!original)error('Account not found',404);
+   if(b.id===user.id&&b.active===false)error('Cannot deactivate your own account');
+   if(b.role&&!ROLES.includes(b.role))error('Invalid role');
+   const role=b.role||original.role,active=b.active===undefined?original.active:(b.active?1:0);
+   if(original.role==='admin'&&(role!=='admin'||!active)){
+    const admins=await first(db,"SELECT COUNT(*) AS n FROM users WHERE role='admin' AND active=1");
+    if(admins.n<=1)error('You cannot deactivate or demote the last admin');
+   }
+   const newEmail=b.email===undefined?original.email:email(b.email);
+   if(!/^\S+@\S+\.\S+$/.test(newEmail))error('Valid email required');
+   const name=b.name===undefined?original.name:short(b.name,100);
+   if(!name)error('Name required');
+   const changedEmail=newEmail!==original.email;
+   if(changedEmail&&await first(db,'SELECT id FROM users WHERE email=? AND id<>?',newEmail,b.id))error('Email already belongs to another account',409);
+   if(changedEmail&&b.id===user.id){
+    if(!b.current_password||!await verifyPassword(b.current_password,original.password_salt,original.password_hash))
+      error('Enter your current password to change your own administrator email',403);
+   }
+   // For an email reassignment to another person, invalidate existing sessions,
+   // remove the old password and require new-inbox activation before access resumes.
+   await run(db,'UPDATE users SET name=?,email=?,role=?,active=?,password_hash=?,password_salt=? WHERE id=?',
+    name,newEmail,role,active,changedEmail&&b.id!==user.id?null:original.password_hash,
+    changedEmail&&b.id!==user.id?null:original.password_salt,b.id);
+   if(changedEmail&&b.id!==user.id){
+    await run(db,'DELETE FROM sessions WHERE user_id=?',b.id);
+    await run(db,"DELETE FROM auth_tokens WHERE user_id=? AND purpose='invite'",b.id);
+    const token=random(32);
+    await run(db,'INSERT INTO auth_tokens(token_hash,user_id,purpose,expires_at) VALUES(?,?,?,?)',await sha(token),b.id,'invite',nextIso(7*DAY));
+    const link=new URL('/?invite='+encodeURIComponent(token),req.url).href;
+    const delivered=await mail(env,newEmail,'Madrasah At-Towfiq — Confirm your updated account email',
+      '<p>Your madrasah account email has been updated. Activate the account using <a href="'+escapeHtml(link)+'">this secure invitation link</a>. This link expires in seven days.</p>');
+    await audit(db,user,'update_and_reinvite','users',b.id);
+    return json({ok:true,emailed:delivered.sent,invitation_url:delivered.sent?null:link});
+   }
+   await audit(db,user,'update','users',b.id);return json({ok:true});
+  }
+ }
+ if(path==='/api/guardians'){
+  requireRole(user,'admin','staff');
+  if(method==='GET'){
+   const rows=await all(db,`SELECT s.id AS student_id,s.student_no,s.first_name,s.last_name,
+      a.id AS admission_id,a.guardian_name,a.guardian_email,a.guardian_phone,
+      s.parent_id,COALESCE(u.id,pending.id) AS account_id,
+      CASE WHEN u.password_hash IS NOT NULL OR pending.password_hash IS NOT NULL THEN 1 ELSE 0 END AS activated,
+      CASE WHEN s.parent_id IS NOT NULL THEN 'linked'
+           WHEN pending.id IS NOT NULL THEN 'invited_or_pending' ELSE 'not_invited' END AS link_status
+     FROM students s LEFT JOIN admissions a ON a.student_id=s.id
+       LEFT JOIN users u ON u.id=s.parent_id
+       LEFT JOIN users pending ON pending.role='parent' AND pending.email=lower(trim(a.guardian_email))
+     ORDER BY s.last_name,s.first_name`);
+   return json({items:rows});
+  }
+  if(method==='POST'){
+   const b=await input(req);
+   if(!b.student_id)error('Student required');
+   const admission=await first(db,"SELECT a.* FROM admissions a JOIN students s ON s.id=a.student_id WHERE a.student_id=? AND a.status='accepted'",b.student_id);
+   if(!admission)error('Accepted admission not found',404);
+   const outcome=await inviteGuardianAfterAcceptance(db,env,req,admission,user);
+   return json({ok:true,...outcome});
+  }
  }
  if(path==='/api/contacts'&&method==='GET'){
   const contacts=user.role==='parent'?[]:user.role==='teacher'?await all(db,"SELECT DISTINCT u.id,u.name,u.email,u.role FROM users u JOIN students s ON s.parent_id=u.id JOIN classes c ON c.id=s.class_id WHERE c.teacher_id=? AND u.active=1 ORDER BY u.name",user.id):await all(db,"SELECT id,name,email,role FROM users WHERE active=1 AND id<>? ORDER BY name",user.id);return json({items:contacts});
@@ -240,7 +332,10 @@ async function handle(req,env){
      db.prepare('UPDATE admissions SET status=?,student_id=?,updated_at=? WHERE id=?').bind('accepted',sid,iso(),application.id)
     ]);
     await audit(db,user,'enrol','admission',application.id,`Student ${sid}`);
-    return json({ok:true,student_id:sid,enrolled:true});
+    let invitation={invitation_status:'not_attempted'};
+    try{invitation=await inviteGuardianAfterAcceptance(db,env,req,{...application,student_id:sid},user);}
+    catch(err){await audit(db,user,'guardian_invitation_error','admission',application.id,short(err.message,150));invitation={invitation_status:'error'};}
+    return json({ok:true,student_id:sid,enrolled:true,...invitation});
    }
    if(application.student_id)error('This pupil is already enrolled. Update their student profile instead of reversing acceptance.',409);
    await run(db,'UPDATE admissions SET status=?,updated_at=? WHERE id=?',b.status,iso(),b.id);

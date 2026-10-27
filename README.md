@@ -177,3 +177,12 @@ Optional **medical information**, **allergies**, and **additional learning needs
 ## v1.0.10 release
 
 Fixes MATT registration-number year formatting for newly accepted students, and adds migration 0006 to repair any existing display numbers containing a spurious `.0`. No database or administrator reset is needed. Run `npm run test` before applying pending remote migrations and deploying. GitHub Actions now tests pushes to `main` independently of Cloudflare deployment configuration.
+
+
+## v1.0.12 — Staff, family directory and admission-triggered guardian invitations
+
+- Sidebar: **Staff & administration** is separate from the **Parents & guardians** directory under School management. The guardian directory lists accepted pupils and their family contacts, and links back to student profiles.
+- Admins may edit names, roles and status on staff accounts. Email changes for *other* staff revoke old sessions/password and issue an invitation to the new address; a logged-in admin changing their own email must supply their current password. The final active admin cannot be deactivated or demoted.
+- When admission acceptance succeeds, the backend attempts an invitation to the recorded parent email. Matching already-active parent accounts are linked without creating duplicate accounts. Parent accounts awaiting activation are linked on invitation acceptance, not beforehand.
+- **Email delivery prerequisites:** A verified sender address in `EMAIL_FROM` (not the example.org placeholder) and a Cloudflare Worker `RESEND_API_KEY` secret are required. Without them or when provider delivery fails, an authorized staff member is shown a **private one-time activation link**; email is not claimed sent. Staff can retry from Parents & guardians, after verifying the contact identity. Do not include real pupil data in an invitation email.
+- The change is code only, requiring no D1 schema migration or reset. Verify that setup and safeguarding are complete before using real child/guardian records.

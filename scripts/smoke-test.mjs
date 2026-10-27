@@ -51,6 +51,11 @@ z=await req('/admissions');assert.equal(z.data.items[0].status,'reviewing');asse
 z=await req('/students',{first_name:'Amina',last_name:'Example',class_id});assert.equal(z.status,403,'Manual student creation is prohibited');
 z=await req('/students/bulk',{items:[{first_name:'Example',last_name:'Learner'}]});assert.equal(z.status,403,'Bulk student import is prohibited');
 z=await req('/admissions',{id:application_id,status:'accepted'},'PATCH');assert.equal(z.status,200,JSON.stringify(z.data));
+assert.equal(z.data.invitation_status,'delivery_not_configured_or_failed','Acceptance attempts the parent invitation automatically');
+assert.ok(z.data.invitation_url,'Without Resend a private guardian activation link must be returned');
+const autoGuardianUrl=z.data.invitation_url;
+const guardian_id=sqlite.prepare("SELECT id FROM users WHERE email=? AND role='parent'").get(application.guardian_email).id;
+assert.equal(sqlite.prepare('SELECT password_hash FROM users WHERE id=?').get(guardian_id).password_hash,null,'Automatic parent invitation must not activate the account');
 const student_id=z.data.student_id;assert.equal(student_id,application_id);
 assert.equal(sqlite.prepare('SELECT student_no FROM students WHERE id=?').get(student_id).student_no,'MATT-'+new Date().getUTCFullYear()+'-0001');
 z=await req('/students');assert.equal(z.data.items.length,1);assert.equal(z.data.items[0].first_name,'Sample');assert.equal(z.data.items[0].dob,application.dob);
@@ -88,11 +93,11 @@ assert.equal(z.status,400);
 z=await req('/fees/bulk',{mode:'all',period:'2027-01',amount_pence:3000});assert.equal(z.status,400);
 z=await req('/search?q=Sample');assert.equal(z.status,200,JSON.stringify(z.data));assert.equal(z.data.students.length,1);
 z=await req('/reports');const report=z.data.items.find(x=>x.id===student_id);assert.ok(report);assert.equal(report.homework_complete,1);assert.equal(report.behaviour_points,3);
-// Guardian joins after admission: activation links their accepted child automatically.
-z=await req('/users',{name:'Test Guardian',email:application.guardian_email,role:'parent'});assert.equal(z.status,200);assert.ok(z.data.invitation_url);
-const guardian_id=z.data.id;
+// Guardian activates the invitation automatically created by admission acceptance.
 assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student_id).parent_id,null,'Pending invitation must not link the pupil before activation');
-const invite=new URL(z.data.invitation_url).searchParams.get('invite');
+z=await req('/guardians');assert.equal(z.status,200);assert.equal(z.data.items.length,3,'Guardian directory includes accepted pupils');
+assert.ok(z.data.items.some(x=>x.student_id===student_id&&x.account_id===guardian_id));
+const invite=new URL(autoGuardianUrl).searchParams.get('invite');
 let pa=await req('/auth/accept-invite',{token:invite,password:'twelve-character-guardian-pass'},'POST',false);assert.equal(pa.status,200);
 const parent_cookie=pa.response.headers.get('set-cookie').split(';')[0];const parent_csrf=pa.data.csrf;
 assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student_id).parent_id,guardian_id,'Activation links the unlinked accepted pupil by verified invitation email');
@@ -103,6 +108,8 @@ z=await req('/behaviour');assert.equal(z.status,200);assert.equal(z.data.items.l
 z=await req('/homework',{student_id,type:'qaaidah',page_number:'12',due_date:'2026-11-04'});assert.equal(z.status,403,'Parent must not assign homework');
 z=await req('/users');assert.equal(z.status,403,'Parent must not enumerate accounts');
 z=await req('/admissions');assert.equal(z.status,403,'Parent must not view applicants');
+z=await req('/guardians');assert.equal(z.status,403,'Parents cannot list other guardians');
+z=await req('/guardians',{student_id},'POST');assert.equal(z.status,403,'Parents cannot issue invitations');
 z=await req('/fees/bulk',{mode:'all',period:'2027-02',amount_pence:3000,confirm:'ISSUE_BULK_INVOICES'});assert.equal(z.status,403,'Parents cannot bulk invoice pupils');
 cookie=oldCookie;csrf=oldCsrf;
 // Updating accepted admission details keeps the pupil's basic details in sync.
@@ -112,6 +119,18 @@ z=await req('/students');assert.equal(z.data.items.find(x=>x.id===student_id).fi
 z=await req('/demo-seed',{});assert.equal(z.status,403,'Demo seeding cannot bypass admissions');
 z=await req('/settings',{key:'jumah_enabled',value:'false'});assert.equal(z.status,200,JSON.stringify(z.data));
 z=await req('/automation/preview');assert.equal(z.status,200);
+// Administrators can edit staff/admin details, but sensitive account transitions are guarded.
+z=await req('/users',{name:'Office A',email:'office.a@example.test',role:'staff'});assert.equal(z.status,200);
+const staff_id=z.data.id;
+z=await req('/users',{id:staff_id,name:'Office Support A',role:'teacher'},'PATCH');
+assert.equal(z.status,200,'Admin can update staff profile and role');
+z=await req('/users');assert.equal(z.data.items.find(x=>x.id===staff_id).name,'Office Support A');
+z=await req('/users',{id:staff_id,email:'office.b@example.test'},'PATCH');
+assert.equal(z.status,200,JSON.stringify(z.data));assert.ok(z.data.invitation_url,'Email reassignment requires renewed activation');
+const staffPass=await req('/auth/accept-invite',{token:new URL(z.data.invitation_url).searchParams.get('invite'),password:'staff-password-long-enough'},'POST',false);
+assert.equal(staffPass.status,200,'Updated staff email accepts the new activation link');
+z=await req('/users',{id:staff_id,email:'admin@example.test'},'PATCH');assert.equal(z.status,409,'Duplicate email is rejected');
+z=await req('/users',{id:guardian_id,name:'Updated Guardian'},'PATCH');assert.equal(z.status,200);
 z=await req('/auth/logout',{});assert.equal(z.status,200);
 console.log('PASS: admissions and MATT registration numbers, login, classes, student profiles, valid/invalid Quran ranges, homework completion, behaviour, attendance, fees, account isolation, reports and settings.');
 
@@ -126,3 +145,7 @@ assert.equal(admissionsUi.includes('data-value="bulk-import"'),false,'Student di
 assert.ok(admissionsUi.includes("students:['students','classes','users','contacts','homework','behaviour','behaviour-catalog'"),'Student profile must load full behaviour catalogue');
 assert.ok(admissionsUi.includes('function validateQuranVerses(data)'), 'Quran range validation must also be visible in the form');
 assert.ok(admissionsUi.includes('Starts as <strong>Incomplete</strong>'), 'Homework workflow explanation must be present');
+assert.ok(admissionsUi.includes("function guardiansPage()"),'Student-linked guardians screen exists');
+assert.ok(admissionsUi.includes("function staffPage()"),'Dedicated staff directory exists');
+assert.ok(admissionsUi.includes("case 'edit-user'"),'Staff profile edit modal exists');
+assert.ok(admissionsUi.includes('function invitationNotice('),'Invitation delivery result surfaced to staff');
