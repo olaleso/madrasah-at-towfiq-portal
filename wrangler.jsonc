@@ -29,7 +29,8 @@
     }
   ],
   "vars": {
-    "EMAIL_FROM": "Madrasah At-Towfiq <notifications@example.org>",
+    "EMAIL_FROM": "Madrasah At-Towfiq <notifications@attowfiqmasjid.org>",
+    "ADMISSIONS_EMAIL": "admissions@attowfiqmasjid.org",
     "SCHOOL_NAME": "Madrasah At-Towfiq"
   }
 }

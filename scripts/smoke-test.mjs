@@ -149,3 +149,9 @@ assert.ok(admissionsUi.includes("function guardiansPage()"),'Student-linked guar
 assert.ok(admissionsUi.includes("function staffPage()"),'Dedicated staff directory exists');
 assert.ok(admissionsUi.includes("case 'edit-user'"),'Staff profile edit modal exists');
 assert.ok(admissionsUi.includes('function invitationNotice('),'Invitation delivery result surfaced to staff');
+const officialEmailConfig=JSON.parse(fs.readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
+assert.equal(officialEmailConfig.vars.EMAIL_FROM,'Madrasah At-Towfiq <notifications@attowfiqmasjid.org>');
+assert.equal(officialEmailConfig.vars.ADMISSIONS_EMAIL,'admissions@attowfiqmasjid.org');
+const officialEmailWorker=fs.readFileSync(new URL('../src/worker.js',import.meta.url),'utf8');
+assert.ok(officialEmailWorker.includes('reply_to:options.replyTo'), 'Resend messages support Reply-To');
+assert.ok(officialEmailWorker.includes('replyTo:env.ADMISSIONS_EMAIL'), 'Guardian invites reply to admissions');
