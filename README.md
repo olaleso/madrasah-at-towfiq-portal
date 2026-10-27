@@ -162,3 +162,13 @@ The admissions form now collects **one home address** and **one guardian mobile 
 Optional **medical information**, **allergies**, and **additional learning needs** are recorded only in restricted admissions records, alongside two distinct consent flags for **emergency first aid** and **internal learning photographs**. Flags default to not recorded; only record a tick if the parent/guardian explicitly agreed. A proper privacy notice, safeguarding process and sensitive-data access/retention review remain required before processing real children's data.
 
 **Deployment:** run `npm run db:migrate:remote` after pulling the new commit and before `npm run deploy`. Migration `0003_safeguarding_declarations.sql` is additive and does not alter existing administrator accounts, billing history or admission records.
+
+## v1.0.9 — Student numbers, Quran validation and homework/behaviour workflow
+
+- Student IDs remain stable, but display numbers use `MATT-YYYY-NNNN`, starting at `0001` each year. Migration `0005_student_registration_numbers.sql` converts existing numbers, preserving pupil UUIDs, admissions, invoices, attendance, and homework. Back up D1 before migration; previously issued legacy numbers should be communicated to staff.
+- All future accepted admissions allocate numbers atomically from a per-year D1 sequence. Repeated approval does not allocate an extra number.
+- Hifdh and Muraja'a enforce the canonical 114-surah verse counts in both the interface and the Worker. E.g. Al-Fatihah has 7 verses; a verse 20 assignment is rejected.
+- Homework has two stored statuses: `incomplete` at assignment and `complete` when an authorised teacher/admin updates the record and saves feedback. Overdue is an on-screen date indicator, not an independent stored status.
+- Student profile behaviour recording loads the same full positive/negative catalogue used in Learning & Character.
+
+**Deployment order**: `git pull origin main`, `npm run test`, back up the D1 database, `npm run db:migrate:remote`, then `npm run deploy`. Migration 0005 changes *displayed numbers* for existing pupils, not their database IDs or linked records.

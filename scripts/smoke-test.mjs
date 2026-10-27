@@ -4,15 +4,17 @@ import {DatabaseSync} from 'node:sqlite';
 import worker from '../src/worker.js';
 import assert from 'node:assert/strict';
 import {pbkdf2Sync,randomBytes} from 'node:crypto';
-const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
 for(const filename of ['0001_initial.sql','0002_expanded_admissions.sql','0003_safeguarding_declarations.sql']) oldDb.exec(fs.readFileSync(new URL('../migrations/'+filename,import.meta.url),'utf8'));
 oldDb.prepare(`INSERT INTO admissions(id,child_name,dob,guardian_name,guardian_email,first_name,last_name,gender,home_address,postcode,guardian_phone,status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run('accepted-before-upgrade','Legacy Learner','2017-06-12','Test Parent','legacy@example.test','Legacy','Learner','Male','Example Road','BL1 1AA','07000000000','accepted');
 oldDb.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));
+oldDb.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));
 assert.equal(oldDb.prepare('SELECT student_id FROM admissions WHERE id=?').get('accepted-before-upgrade').student_id,'accepted-before-upgrade');
 assert.equal(oldDb.prepare('SELECT first_name FROM students WHERE id=?').get('accepted-before-upgrade').first_name,'Legacy');
 assert.equal(oldDb.prepare('SELECT COUNT(*) AS n FROM students').get().n,1);
+assert.match(oldDb.prepare('SELECT student_no FROM students WHERE id=?').get('accepted-before-upgrade').student_no,/^MATT-\d{4}-0001$/);
 oldDb.close();
 const db={prepare(sql){const stmt=sqlite.prepare(sql);return {bind(...params){return {first(){return stmt.get(...params)||null;},all(){return {results:stmt.all(...params)};},run(){return stmt.run(...params);}};}};},batch(ops){sqlite.exec('BEGIN');try{const results=ops.map(x=>({meta:{changes:Number(x.run().changes||0)}}));sqlite.exec('COMMIT');return results;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
 const env={DB:db,SETUP_KEY:'twentyfour-letters-bootstrap-secure',SCHOOL_NAME:'Madrasah At-Towfiq',ASSETS:{fetch:()=>new Response('page')}};
@@ -44,9 +46,16 @@ z=await req('/students',{first_name:'Amina',last_name:'Example',class_id});asser
 z=await req('/students/bulk',{items:[{first_name:'Example',last_name:'Learner'}]});assert.equal(z.status,403,'Bulk student import is prohibited');
 z=await req('/admissions',{id:application_id,status:'accepted'},'PATCH');assert.equal(z.status,200,JSON.stringify(z.data));
 const student_id=z.data.student_id;assert.equal(student_id,application_id);
+assert.equal(sqlite.prepare('SELECT student_no FROM students WHERE id=?').get(student_id).student_no,'MATT-'+new Date().getUTCFullYear()+'-0001');
 z=await req('/students');assert.equal(z.data.items.length,1);assert.equal(z.data.items[0].first_name,'Sample');assert.equal(z.data.items[0].dob,application.dob);
 z=await req('/admissions',{id:application_id,status:'accepted'},'PATCH');assert.equal(z.status,200);z=await req('/students');assert.equal(z.data.items.length,1,'Accepting twice must not duplicate a pupil');
+assert.equal(sqlite.prepare('SELECT last_number FROM student_number_sequences WHERE enrollment_year=?').get(new Date().getUTCFullYear()).last_number,1,'Repeated approval must not consume an enrolment number');
 z=await req('/admissions',{id:application_id,status:'declined'},'PATCH');assert.equal(z.status,409,'An enrolled application cannot be reversed');
+// Quran verse boundaries and Surah ordering must also be enforced by the Worker API.
+z=await req('/homework',{student_id,type:'hifdh',surah_from:'Al-Fatihah',verse_from:1,surah_to:'Al-Fatihah',verse_to:20,due_date:'2026-11-04'});assert.equal(z.status,400,'Al-Fatihah has only seven verses');
+z=await req('/homework',{student_id,type:'hifdh',surah_from:'Al-Fatihah',verse_from:7,surah_to:'Al-Fatihah',verse_to:1,due_date:'2026-11-04'});assert.equal(z.status,400,'Descending verse ranges prohibited');
+z=await req('/homework',{student_id,type:'murajaa',surah_from:'Al-Baqarah',verse_from:1,surah_to:'Al-Fatihah',verse_to:7,due_date:'2026-11-04'});assert.equal(z.status,400,'Descending Surah ranges prohibited');
+z=await req('/homework',{student_id,type:'hifdh',surah_from:'Unknown Surah',verse_from:1,surah_to:'Al-Fatihah',verse_to:7,due_date:'2026-11-04'});assert.equal(z.status,400,'Invalid Surah must be rejected');
 z=await req('/homework',{student_id,type:'hifdh',surah_from:'Al-Fatihah',verse_from:1,surah_to:'Al-Fatihah',verse_to:7,due_date:'2026-11-04',comments:'Practice'});assert.equal(z.status,200,JSON.stringify(z.data));const homework_id=z.data.id;
 z=await req('/homework',{id:homework_id,status:'complete',teacher_feedback:'Excellent'},'PATCH');assert.equal(z.status,200,JSON.stringify(z.data));
 z=await req('/behaviour',{student_id,reason_code:'kindness',notes:'Kind to a new student'});assert.equal(z.status,200,JSON.stringify(z.data));
@@ -58,6 +67,7 @@ z=await req('/fees');assert.equal(z.data.items[0].paid_pence,1200);
 const secondApplication={...application,first_name:'Bilal',last_name:'Test',guardian_email:'guardian2@example.test'};
 z=await req('/admissions',secondApplication);assert.equal(z.status,200);const secondApplicationId=z.data.id;
 z=await req('/admissions',{id:secondApplicationId,status:'accepted'},'PATCH');assert.equal(z.status,200);const student2=z.data.student_id;
+assert.equal(sqlite.prepare('SELECT student_no FROM students WHERE id=?').get(student2).student_no,'MATT-'+new Date().getUTCFullYear()+'-0002');
 z=await req('/admissions',{...application,first_name:'Inactive',last_name:'Test',guardian_email:'inactive@example.test'});assert.equal(z.status,200);const thirdApplicationId=z.data.id;
 z=await req('/admissions',{id:thirdApplicationId,status:'accepted'},'PATCH');assert.equal(z.status,200);
 z=await req('/students',{id:z.data.student_id,status:'inactive'},'PATCH');assert.equal(z.status,200);
@@ -91,7 +101,7 @@ z=await req('/demo-seed',{});assert.equal(z.status,403,'Demo seeding cannot bypa
 z=await req('/settings',{key:'jumah_enabled',value:'false'});assert.equal(z.status,200,JSON.stringify(z.data));
 z=await req('/automation/preview');assert.equal(z.status,200);
 z=await req('/auth/logout',{});assert.equal(z.status,200);
-console.log('PASS: admissions expanded form/create/edit/status, setup, secure sessions, classes, students, homework, behaviour, attendance, invoice/payment, report, invitations, parent scoping, forbidden mutations, automation settings, logout.');
+console.log('PASS: admissions and MATT registration numbers, login, classes, student profiles, valid/invalid Quran ranges, homework completion, behaviour, attendance, fees, account isolation, reports and settings.');
 
 const admissionsUi=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 assert.equal(admissionsUi.includes("field('Daytime mobile number'"),false);
@@ -101,3 +111,6 @@ assert.ok(admissionsUi.includes('I consent to appropriate photographs for intern
 
 assert.equal(admissionsUi.includes('data-value="add-student"'),false,'Student directory must not show Add student button');
 assert.equal(admissionsUi.includes('data-value="bulk-import"'),false,'Student directory must not show Bulk import');
+assert.ok(admissionsUi.includes("students:['students','classes','users','contacts','homework','behaviour','behaviour-catalog'"),'Student profile must load full behaviour catalogue');
+assert.ok(admissionsUi.includes('function validateQuranVerses(data)'), 'Quran range validation must also be visible in the form');
+assert.ok(admissionsUi.includes('Starts as <strong>Incomplete</strong>'), 'Homework workflow explanation must be present');

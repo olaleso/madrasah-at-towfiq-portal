@@ -80,3 +80,14 @@ npm run deploy
 ```
 
 The new migration adds optional medical, allergy and learning-support fields and separate, initially-unselected consent flags to admissions. It does not delete historic fields or data. Do not recreate the D1 database, reset the SETUP_KEY or recreate the admin account.
+
+## v1.0.9 upgrade note
+
+**This version renumbers the visible student registrations** to MATT-YYYY-NNNN using an additive D1 migration. Preserve a SQL backup first. Do not delete/recreate the D1 database. Apply migration 0005 before deploying the updated Worker; it creates the sequential-number counter. The migration intentionally replaces previous AT-format public registration numbers, but keeps internal student UUIDs and all linked records.
+
+```powershell
+npm run test
+npx wrangler d1 export attowfiq_portal --remote --output "$env:USERPROFILE\\attowfiq-pre-v109.sql"
+npm run db:migrate:remote
+npm run deploy
+```

@@ -1,4 +1,21 @@
 const ROLES = ['admin','staff','teacher','parent'];
+
+const QURAN_SURAHS='Al-Fatihah|Al-Baqarah|Aal-Imran|An-Nisa|Al-Maidah|Al-Anam|Al-Araf|Al-Anfal|At-Tawbah|Yunus|Hud|Yusuf|Ar-Rad|Ibrahim|Al-Hijr|An-Nahl|Al-Isra|Al-Kahf|Maryam|Ta-Ha|Al-Anbiya|Al-Hajj|Al-Muminun|An-Nur|Al-Furqan|Ash-Shuara|An-Naml|Al-Qasas|Al-Ankabut|Ar-Rum|Luqman|As-Sajdah|Al-Ahzab|Saba|Fatir|Ya-Sin|As-Saffat|Sad|Az-Zumar|Ghafir|Fussilat|Ash-Shura|Az-Zukhruf|Ad-Dukhan|Al-Jathiyah|Al-Ahqaf|Muhammad|Al-Fath|Al-Hujurat|Qaf|Adh-Dhariyat|At-Tur|An-Najm|Al-Qamar|Ar-Rahman|Al-Waqiah|Al-Hadid|Al-Mujadilah|Al-Hashr|Al-Mumtahanah|As-Saff|Al-Jumuah|Al-Munafiqun|At-Taghabun|At-Talaq|At-Tahrim|Al-Mulk|Al-Qalam|Al-Haqqah|Al-Maarij|Nuh|Al-Jinn|Al-Muzzammil|Al-Muddaththir|Al-Qiyamah|Al-Insan|Al-Mursalat|An-Naba|An-Naziat|Abasa|At-Takwir|Al-Infitar|Al-Mutaffifin|Al-Inshiqaq|Al-Buruj|At-Tariq|Al-Ala|Al-Ghashiyah|Al-Fajr|Al-Balad|Ash-Shams|Al-Layl|Ad-Duha|Ash-Sharh|At-Tin|Al-Alaq|Al-Qadr|Al-Bayyinah|Az-Zalzalah|Al-Adiyat|Al-Qariah|At-Takathur|Al-Asr|Al-Humazah|Al-Fil|Quraysh|Al-Maun|Al-Kawthar|Al-Kafirun|An-Nasr|Al-Masad|Al-Ikhlas|Al-Falaq|An-Nas'.split('|');
+const QURAN_VERSE_COUNTS=[7,286,200,176,120,165,206,75,129,109,123,111,43,52,99,128,111,110,98,135,112,78,118,64,77,227,93,88,69,60,34,30,73,54,45,83,182,88,75,85,54,53,89,59,37,35,38,29,18,45,60,49,62,55,78,96,29,22,24,13,14,11,11,18,12,12,30,52,52,44,28,28,20,56,40,31,50,40,46,42,29,19,36,25,22,17,19,26,30,20,15,21,11,8,8,19,5,8,8,11,11,8,3,9,5,4,7,3,6,3,5,4,5,6];
+// Surah and ayah bounds use the standard 6236-verse (Kufan) numbering.
+function checkQuranRange(b){
+ const start=QURAN_SURAHS.indexOf(String(b.surah_from||''));
+ const end=QURAN_SURAHS.indexOf(String(b.surah_to||''));
+ if(start<0||end<0)error('Choose valid starting and ending Surahs');
+ const firstVerse=Number(b.verse_from),lastVerse=Number(b.verse_to);
+ if(!Number.isInteger(firstVerse)||firstVerse<1||firstVerse>QURAN_VERSE_COUNTS[start])
+  error('From verse must be between 1 and '+QURAN_VERSE_COUNTS[start]+' for '+QURAN_SURAHS[start]);
+ if(!Number.isInteger(lastVerse)||lastVerse<1||lastVerse>QURAN_VERSE_COUNTS[end])
+  error('To verse must be between 1 and '+QURAN_VERSE_COUNTS[end]+' for '+QURAN_SURAHS[end]);
+ if(end<start||(start===end&&lastVerse<firstVerse))
+  error('Ending Surah/verse cannot come before starting Surah/verse');
+}
+
 const DAY = 86400;
 const SESSION_AGE = 7 * DAY;
 const iso = () => new Date().toISOString();
@@ -179,16 +196,24 @@ async function handle(req,env){
    if(!application)error('Application not found',404);
    if(!['new','reviewing','accepted','declined'].includes(b.status))error('Invalid status');
    if(b.status==='accepted'){
-    // The admission UUID is reused as the student UUID to make enrolment idempotent.
-    // The two changes are one D1 batch transaction, so a failed insert cannot approve a pupil.
-    if(!short(application.first_name)||!short(application.last_name)||!isDate(application.dob))error('Complete the pupil name and date of birth before approval');
-    const sid=application.student_id||application.id;
+    // An existing admission remains enrolled; do not allocate another number.
+    if(application.student_id)return json({ok:true,student_id:application.student_id,enrolled:true});
+    if(!short(application.first_name)||!short(application.last_name)||!isDate(application.dob))
+      error('Complete the pupil name and date of birth before approval');
+    const sid=application.id;
     const guardian=await first(db,"SELECT id FROM users WHERE role='parent' AND active=1 AND email=?",email(application.guardian_email));
-    const number='AT-'+new Date().getUTCFullYear()+'-'+sid.replace(/-/g,'').slice(0,10).toUpperCase();
+    const year=Number(nowDate().slice(0,4));
+    const seq=await first(db,'SELECT last_number FROM student_number_sequences WHERE enrollment_year=?',year);
+    if(seq?.last_number>=9999)error('Student number capacity reached for '+year+'. Contact an administrator.',409);
     const address=[short(application.home_address,260),short(application.postcode,16)].filter(Boolean).join(', ');
+    // D1 batch is transactional: number allocation, enrolment and status update succeed together.
     await db.batch([
+     db.prepare(`INSERT INTO student_number_sequences(enrollment_year,last_number) VALUES(?,1)
+       ON CONFLICT(enrollment_year) DO UPDATE SET last_number=last_number+1 WHERE last_number<9999`).bind(year),
      db.prepare(`INSERT INTO students(id,student_no,first_name,last_name,dob,gender,parent_id,phone,address,status)
-       VALUES(?,?,?,?,?,?,?,?,?,'active') ON CONFLICT(id) DO NOTHING`).bind(sid,number,short(application.first_name,80),short(application.last_name,80),application.dob,short(application.gender,30),guardian?.id||null,short(application.guardian_phone||application.phone,40),address),
+       SELECT ?, 'MATT-'||?||'-'||printf('%04d',last_number),?,?,?,?,?,?,?,'active'
+       FROM student_number_sequences WHERE enrollment_year=? AND last_number BETWEEN 1 AND 9999
+       ON CONFLICT(id) DO NOTHING`).bind(sid,year,short(application.first_name,80),short(application.last_name,80),application.dob,short(application.gender,30),guardian?.id||null,short(application.guardian_phone||application.phone,40),address,year),
      db.prepare('UPDATE admissions SET status=?,student_id=?,updated_at=? WHERE id=?').bind('accepted',sid,iso(),application.id)
     ]);
     await audit(db,user,'enrol','admission',application.id,`Student ${sid}`);
@@ -206,7 +231,16 @@ async function handle(req,env){
  if(path==='/api/homework'){
   if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT h.*,s.first_name,s.last_name,s.class_id,u.name AS teacher_name FROM homework h JOIN students s ON s.id=h.student_id LEFT JOIN users u ON u.id=h.assigned_by WHERE ${s.where} ORDER BY h.due_date DESC,h.created_at DESC LIMIT 500`,...s.args)});}
   requireRole(user,'admin','staff','teacher');const b=await input(req);
-  if(method==='POST'){await permittedStudent(db,user,b.student_id);if(!['hifdh','murajaa','qaaidah','islamic_studies'].includes(b.type)||!isDate(b.due_date))error('Choose subject and a valid due date');if(['hifdh','murajaa'].includes(b.type)&&(!b.surah_from||!b.surah_to||!Number.isInteger(Number(b.verse_from))||!Number.isInteger(Number(b.verse_to))||Number(b.verse_from)<1||Number(b.verse_to)<1))error('Surah and verse range required');if(['qaaidah','islamic_studies'].includes(b.type)&&!b.page_number)error('Page number required');const hid=id();await run(db,'INSERT INTO homework(id,student_id,type,surah_from,verse_from,surah_to,verse_to,page_number,comments,due_date,assigned_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)',hid,b.student_id,b.type,short(b.surah_from,100),b.verse_from?Number(b.verse_from):null,short(b.surah_to,100),b.verse_to?Number(b.verse_to):null,short(b.page_number,50),short(b.comments,1000),b.due_date,user.id);await audit(db,user,'assign','homework',hid);return json({ok:true,id:hid});}
+  if(method==='POST'){
+   await permittedStudent(db,user,b.student_id);
+   if(!['hifdh','murajaa','qaaidah','islamic_studies'].includes(b.type)||!isDate(b.due_date))
+    error('Choose a subject and valid due date');
+   if(['hifdh','murajaa'].includes(b.type))checkQuranRange(b);
+   if(['qaaidah','islamic_studies'].includes(b.type)&&!short(b.page_number,50))error('Page number required');
+   const hid=id();
+   await run(db,'INSERT INTO homework(id,student_id,type,surah_from,verse_from,surah_to,verse_to,page_number,comments,due_date,assigned_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)',hid,b.student_id,b.type,short(b.surah_from,100),['hifdh','murajaa'].includes(b.type)?Number(b.verse_from):null,short(b.surah_to,100),['hifdh','murajaa'].includes(b.type)?Number(b.verse_to):null,short(b.page_number,50),short(b.comments,1000),b.due_date,user.id);
+   await audit(db,user,'assign','homework',hid);return json({ok:true,id:hid});
+  }
   if(method==='PATCH'){const h=await first(db,'SELECT * FROM homework WHERE id=?',b.id);if(!h)error('Homework not found',404);await permittedStudent(db,user,h.student_id);if(!['complete','incomplete'].includes(b.status))error('Invalid status');await run(db,'UPDATE homework SET status=?,teacher_feedback=?,completed_at=? WHERE id=?',b.status,short(b.teacher_feedback,1000),b.status==='complete'?iso():null,b.id);await audit(db,user,'grade','homework',b.id,b.status);return json({ok:true});}
   if(method==='DELETE'){requireRole(user,'admin','staff');const h=await first(db,'SELECT student_id FROM homework WHERE id=?',b.id);if(!h)error('Homework not found',404);await run(db,'DELETE FROM homework WHERE id=?',b.id);await audit(db,user,'delete','homework',b.id);return json({ok:true});}
  }
