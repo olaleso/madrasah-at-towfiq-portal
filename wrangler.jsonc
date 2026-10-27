@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "madrasah-at-towfiq-portal",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "triggers": {"crons": ["0 8 * * 5"]},
+  "assets": {"directory": "./public", "binding": "ASSETS", "not_found_handling":"single-page-application"},
+  "d1_databases": [{"binding":"DB", "database_name":"attowfiq_portal", "database_id":"00000000-0000-0000-0000-000000000000", "migrations_dir":"migrations"}],
+  "vars": {"EMAIL_FROM":"Madrasah At-Towfiq <notifications@example.org>","SCHOOL_NAME":"Madrasah At-Towfiq"}
+}

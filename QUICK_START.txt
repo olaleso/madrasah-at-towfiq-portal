@@ -1,0 +1,30 @@
+MADRASAH AT-TOWFIQ — MANAGEMENT PORTAL v1.0.4
+================================================
+
+QUICK LOCAL PREVIEW (Node.js 22+)
+1. Stop the old preview server (Ctrl+C).
+2. Extract this ZIP, open PowerShell in the project folder.
+3. Run: npm run preview
+4. Open: http://127.0.0.1:8787
+5. Create the FIRST administrator only if prompted; use the setup key
+   printed in PowerShell. On later restarts, use the same login.
+
+LOCAL ADMIN DATA NOW PERSISTS!
+Windows database: %LOCALAPPDATA%\MadrasahAtTowfiq\portal-preview.sqlite
+All newer extracted releases reuse the file automatically. Keep the
+DB folder safe and do not delete it. Use fictional children data only.
+NOTE: An admin from the older in-memory preview cannot be recovered if
+that old server was stopped; create it one final time in v1.0.4.
+
+FOR CLOUDFLARE DEPLOYMENT
+Please read DEPLOYMENT.md. Cloudflare Worker + D1 require one-time setup.
+The LIVE D1 database persists through code deployments. Never delete
+or recreate it for an upgrade.
+
+FOR GITHUB
+This ZIP includes a local Git commit with the changes. Create a new
+private repository and follow DEPLOYMENT.md to push the branch.
+
+IMPORTANT: School safeguarding, UK GDPR/DPIA, secure backups, email,
+and production-readiness reviews remain outstanding. Do not use actual
+pupil records in the local QA preview.

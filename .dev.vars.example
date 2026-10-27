@@ -1,0 +1,4 @@
+# Create .dev.vars by copying this file for local development. Never commit real secrets.
+SETUP_KEY="replace-with-long-random-onetime-bootstrap-secret"
+# Optional outgoing email integration:
+# RESEND_API_KEY="re_..."

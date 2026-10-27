@@ -1,0 +1,23 @@
+-- v1.0.3: preserve historic applications and extend their fields.
+ALTER TABLE admissions ADD COLUMN first_name TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN last_name TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN gender TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN home_address TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN postcode TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN home_telephone TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN mobile TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN guardian_address TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN guardian_phone TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN emergency_phone TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN guardian_relationship TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN previous_attended TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN previous_institute TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN level_starting INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE admissions ADD COLUMN level_qaaidah INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE admissions ADD COLUMN qaaidah_page TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN level_quran INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE admissions ADD COLUMN quran_surah TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN arabic_read_write INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE admissions ADD COLUMN weekly_revision_hours TEXT DEFAULT '';
+ALTER TABLE admissions ADD COLUMN parent_confirmed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE admissions ADD COLUMN updated_at TEXT DEFAULT '';
