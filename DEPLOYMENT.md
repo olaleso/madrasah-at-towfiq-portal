@@ -220,3 +220,21 @@ npm run deploy
 ```
 
 **Acceptance checks:** with fictional accounts, confirm: an office-to-parent message, a parent-initiated message to their child’s assigned teacher, and the guardian's in-portal reply, message read state, restricted conversation visibility and neutral-content email; admin policy creation/review, staff read-only policy view, and staff-submitted concerns visible only to their author and administrators. Photo/first-aid entries are **historical admission statements**, not current consent approval or an automated compliance determination. This upgrade does not send new mass mail.
+
+## v1.6.1 — Staff DBS checks and private retained certificates
+
+**Required:** Create the private R2 bucket `attowfiq-private-dbs` in the deployment account **before deploying the new Worker**. Its new R2 binding `DBS_FILES` appears in `wrangler.jsonc`. Set an R2 lifecycle expiration rule for the `private/dbs/` prefix (180 days), in addition to the Worker's scheduled daily file cleanup, then verify it. Full verified commands and safety guidance: **[docs/PRIVATE_DBS_STORAGE.md](docs/PRIVATE_DBS_STORAGE.md)**.
+
+After creating the bucket and setting its retention rule, back up production D1 using a recovery method available on your account, then:
+```powershell
+git pull origin main
+npm run test
+if ($LASTEXITCODE -ne 0) { throw "Test failed. Do not deploy." }
+npm run db:migrate:remote
+if ($LASTEXITCODE -ne 0) { throw "D1 migration failed. Do not deploy." }
+npm run deploy
+```
+The new migration `0010_staff_dbs_review.sql` only adds the administrative DBS check table and indexes. Existing pupil, attendance, fees and progress records are preserved.
+
+Once deployed, admins open **Compliance Centre → Staff DBS checking register**. Record the certificate's actual issue date and the **school-defined recheck due date** (DBS certificates have **no official expiry date**). Review alerts appear 60 days ahead and while overdue. Uploading an original certificate image is **optional and high-risk**; it requires a documented need, private R2 storage, and short retention. Never make the private R2 bucket public.
+
