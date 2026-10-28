@@ -98,6 +98,26 @@ async function signedIn(req,env,user){
 async function audit(db,user,action,entity,entity_id='',detail=''){await run(db,'INSERT INTO audit_log(id,actor_id,action,entity,entity_id,detail) VALUES(?,?,?,?,?,?)',id(),user?.id||null,action,entity,entity_id,short(detail,600));}
 function studentScope(user,alias='s'){if(user.role==='admin'||user.role==='staff')return {where:'1=1',args:[]};if(user.role==='teacher')return {where:`${alias}.class_id IN (SELECT id FROM classes WHERE teacher_id=?)`,args:[user.id]};return {where:`${alias}.parent_id=?`,args:[user.id]};}
 async function permittedStudent(db,user,sid){const s=await first(db,'SELECT * FROM students WHERE id=?',sid);if(!s)error('Student not found',404);if(['admin','staff'].includes(user.role))return s;if(user.role==='parent'&&s.parent_id===user.id)return s;if(user.role==='teacher'){const c=await first(db,'SELECT id FROM classes WHERE id=? AND teacher_id=?',s.class_id,user.id);if(c)return s;}error('You are not assigned to this student',403);}
+
+const DBS_RETENTION_DAYS=180;
+const DBS_MAX_FILE_BYTES=3*1024*1024;
+const dbsDayDiff=(date,base=schoolLocalDate())=>Math.round((Date.parse(date+'T00:00:00Z')-Date.parse(base+'T00:00:00Z'))/86400000);
+const dbsNotice=(due,base=schoolLocalDate())=>{
+ const days=dbsDayDiff(due,base);
+ return {days_remaining:days,alert:days<0?'overdue':days<=60?'due_soon':'current'};
+};
+async function purgeOldDbsDocuments(env){
+ if(!env.DB||!env.DBS_FILES)return 0;
+ const records=await all(env.DB,"SELECT id,document_key FROM staff_dbs_checks WHERE document_key IS NOT NULL AND document_purge_after<=? LIMIT 150",iso());
+ let count=0;
+ for(const rec of records){
+  await env.DBS_FILES.delete(rec.document_key);
+  await run(env.DB,'UPDATE staff_dbs_checks SET document_key=NULL,document_mime=NULL,document_uploaded_at=NULL,document_purge_after=NULL WHERE id=? AND document_key=?',rec.id,rec.document_key);
+  count++;
+ }
+ return count;
+}
+
 const FIELDS_STUDENT=['first_name','last_name','dob','gender','class_id','parent_id','phone','address','medical_notes','status'];
 const CATALOG=[
  ['talking','Talking repeatedly during lessons',-1],['instructions','Not following instructions',-1],['distracting','Distracting other pupils',-1],['unprepared','Being unprepared for lessons repeatedly',-1],['lateness','Repeated lateness without a valid reason',-1],
@@ -1171,6 +1191,105 @@ async function handle(req,env){
   await audit(db,user,existing?'update':'create','compliance_concern',recordId,kind+' '+status);
   return json({ok:true,id:recordId});
  }
+
+ // Administrator-only DBS register. A DBS certificate has no statutory expiry date:
+ // review_due is a school-defined renewal/recheck date, not a certificate expiry.
+ if(path==='/api/compliance/dbs'){
+  requireRole(user,'admin');
+  if(method==='GET'){
+   const rows=await all(db,`SELECT u.id AS staff_id,u.name AS staff_name,u.role,u.active,
+     d.id AS check_id,d.check_level,d.issued_on,d.review_due,d.reference_last4,d.checked_on,
+     d.document_uploaded_at,d.document_purge_after,d.updated_at
+     FROM users u LEFT JOIN staff_dbs_checks d ON d.user_id=u.id
+     WHERE u.role IN ('admin','staff','teacher') AND u.active=1
+     ORDER BY u.role,u.name LIMIT 500`);
+   const items=rows.map(x=>x.review_due?{...x,...dbsNotice(x.review_due)}:{...x,alert:'not_recorded',days_remaining:null});
+   const warnings=items.filter(x=>['overdue','due_soon'].includes(x.alert));
+   return json({items,warnings:warnings.length,overdue:items.filter(x=>x.alert==='overdue').length,window_days:60,storage_ready:!!env.DBS_FILES});
+  }
+  if(!['POST','PATCH'].includes(method))error('Method not allowed',405);
+  const b=await input(req);
+  const staff=await first(db,"SELECT id FROM users WHERE id=? AND active=1 AND role IN ('admin','staff','teacher')",short(b.staff_id,100));
+  if(!staff)error('Select an active staff or teacher account',404);
+  const existing=await first(db,'SELECT * FROM staff_dbs_checks WHERE user_id=?',staff.id);
+  if(method==='POST'&&existing)error('Edit the existing DBS check rather than creating a duplicate',409);
+  if(method==='PATCH'&&!existing)error('No DBS check is registered for this account',404);
+  const level=short(b.check_level,30);
+  const issued=short(b.issued_on,10),due=short(b.review_due,10),reference=short(b.reference_last4,4).toUpperCase();
+  if(!['basic','standard','enhanced','enhanced_barred'].includes(level))error('Select a DBS check level');
+  if(!isDate(issued)||!isDate(due)||issued>due||issued>schoolLocalDate())error('Enter valid issue and future recheck dates (issue cannot be in the future)');
+  if(!/^[A-Z0-9]{0,4}$/.test(reference))error('Reference suffix must contain up to four letters or digits');
+  const checked=short(b.checked_on,10);
+  if(checked&&(!isDate(checked)||checked>schoolLocalDate()))error('Enter a valid verification date');
+  if(existing&&existing.document_key && issued!==existing.issued_on)
+   error('Remove the retained certificate copy before replacing its issue date',409);
+  if(existing){
+   await run(db,`UPDATE staff_dbs_checks SET check_level=?,issued_on=?,review_due=?,reference_last4=?,checked_on=?,updated_by=?,updated_at=? WHERE id=?`,
+    level,issued,due,reference,checked||null,user.id,iso(),existing.id);
+  }else{
+   await run(db,`INSERT INTO staff_dbs_checks(id,user_id,check_level,issued_on,review_due,reference_last4,checked_on,updated_by)
+     VALUES(?,?,?,?,?,?,?,?)`,id(),staff.id,level,issued,due,reference,checked||null,user.id);
+  }
+  await audit(db,user,existing?'update':'create','staff_dbs_check',staff.id,'Recheck schedule updated');
+  return json({ok:true});
+ }
+ if(path==='/api/compliance/dbs/file'){
+  requireRole(user,'admin');
+  const sid=short(u.searchParams.get('staff_id'),100);
+  const record=await first(db,'SELECT * FROM staff_dbs_checks WHERE user_id=?',sid);
+  if(!record)error('Register a DBS review first',404);
+  if(method==='GET'){
+   if(!record.document_key)error('No DBS certificate copy is retained',404);
+   if(record.document_purge_after && record.document_purge_after<=iso()){
+    if(env.DBS_FILES)await env.DBS_FILES.delete(record.document_key);
+    await run(db,'UPDATE staff_dbs_checks SET document_key=NULL,document_mime=NULL,document_uploaded_at=NULL,document_purge_after=NULL WHERE id=?',record.id);
+    error('Retention period ended; the certificate copy was removed',410);
+   }
+   if(!env.DBS_FILES)error('Private DBS document storage is not configured',503);
+   const file=await env.DBS_FILES.get(record.document_key);
+   if(!file)error('Document not available',404);
+   await audit(db,user,'view_file','staff_dbs_check',sid,'Private certificate download');
+   return new Response(file.body,{headers:{
+    'Content-Type':record.document_mime||'application/octet-stream',
+    'Content-Disposition':`attachment; filename="dbs-certificate.${record.document_mime==='application/pdf'?'pdf':record.document_mime==='image/png'?'png':'jpg'}"`,
+    'Cache-Control':'no-store, private','X-Content-Type-Options':'nosniff',
+    'Content-Security-Policy':"sandbox",'Referrer-Policy':'no-referrer'
+   }});
+  }
+  if(method==='DELETE'){
+   if(!record.document_key)error('No certificate copy is retained',404);
+   if(!env.DBS_FILES)error('Private DBS document storage is not configured',503);
+   await env.DBS_FILES.delete(record.document_key);
+   await run(db,'UPDATE staff_dbs_checks SET document_key=NULL,document_mime=NULL,document_uploaded_at=NULL,document_purge_after=NULL WHERE id=?',record.id);
+   await audit(db,user,'delete_file','staff_dbs_check',sid,'Retained certificate copy securely removed');
+   return json({ok:true});
+  }
+  if(method!=='POST')error('Method not allowed',405);
+  if(!env.DBS_FILES)error('Private DBS storage not configured. Set up a private Cloudflare R2 bucket before uploading.',503);
+  if(record.document_key)error('Remove the existing certificate copy before uploading another',409);
+  if(Number(req.headers.get('content-length')||0)>DBS_MAX_FILE_BYTES+10000)error('Certificate file exceeds 3 MB',413);
+  if(!String(req.headers.get('content-type')||'').includes('multipart/form-data'))error('A multipart file upload is required');
+  const form=await req.formData();
+  if(form.get('retention_authorized')!=='YES')error('Confirm that temporary retention is authorised under the school’s DBS handling policy',403);
+  const file=form.get('certificate');
+  if(!(file instanceof Blob)||file.size<8||file.size>DBS_MAX_FILE_BYTES)error('Choose a PDF, PNG or JPEG certificate under 3 MB');
+  const bytes=new Uint8Array(await file.arrayBuffer());
+  const pdf=bytes[0]===37&&bytes[1]===80&&bytes[2]===68&&bytes[3]===70&&bytes[4]===45;
+  const png=bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71&&bytes[4]===13&&bytes[5]===10;
+  const jpg=bytes[0]===255&&bytes[1]===216&&bytes[2]===255;
+  const mime=pdf?'application/pdf':png?'image/png':jpg?'image/jpeg':null;
+  if(!mime)error('Only real PDF, PNG or JPEG files are accepted',415);
+  const key='private/dbs/'+id();
+  await env.DBS_FILES.put(key,bytes,{httpMetadata:{contentType:mime}});
+  const purgeAt=new Date(Date.now()+DBS_RETENTION_DAYS*86400000).toISOString();
+  try{
+   await run(db,'UPDATE staff_dbs_checks SET document_key=?,document_mime=?,document_uploaded_at=?,document_purge_after=?,updated_by=?,updated_at=? WHERE id=?',
+    key,mime,iso(),purgeAt,user.id,iso(),record.id);
+  }catch(err){await env.DBS_FILES.delete(key);throw err;}
+  await audit(db,user,'upload_file','staff_dbs_check',sid,'Restricted certificate copy; automatic purge scheduled');
+  return json({ok:true,document_purge_after:purgeAt});
+ }
+
  if(path==='/api/email-log'&&method==='GET'){requireRole(user,'admin');return json({items:await all(db,'SELECT * FROM email_log ORDER BY created_at DESC LIMIT 100')});}
  if(path==='/api/audit'&&method==='GET'){requireRole(user,'admin');return json({items:await all(db,'SELECT a.*,u.name AS actor FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.created_at DESC LIMIT 150')});}
  if(path==='/api/automation/preview'&&method==='GET'){
@@ -1255,6 +1374,8 @@ async function handle(req,env){
 }
 export default {
  async scheduled(event,env,ctx){
+  ctx.waitUntil(purgeOldDbsDocuments(env).catch(err=>console.error('DBS retention purge failed',err)));
+  if(event.cron!=='0 8 * * 5')return;
   ctx.waitUntil((async()=>{if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM||env.EMAIL_FROM.includes('example.org'))return;const v=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_enabled'");if(v?.value!=='true')return;const m=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_message'");const people=await all(env.DB,"SELECT email FROM users WHERE active=1 AND role IN ('parent','teacher','staff')");for(const p of people){await mail(env,p.email,'Jumu’ah reminder — Madrasah At-Towfiq',`<div style="font-family:Arial,sans-serif"><h2>Madrasah At-Towfiq</h2><p>${escapeHtml(m?.value||'Assalamu alaikum. Jumu’ah Mubarak.')}</p></div>`);}})());
  },
  async fetch(req,env){const url=new URL(req.url);if(!url.pathname.startsWith('/api/')){return env.ASSETS.fetch(req);}
