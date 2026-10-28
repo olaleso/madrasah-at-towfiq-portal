@@ -318,7 +318,7 @@ npm run deploy
 ## v1.6.0 — Compliance & Communications centre
 
 ### Communications (all authorised roles)
-- **Two-way private conversations:** admin/staff/assigned teachers start conversations; parents reply only in existing conversations addressed to their account. Message replies inherit the original participants, subject and pupil link; the recipient is resolved by the server and cannot be changed by the sender.
+- **Two-way private conversations:** admin/staff/assigned teachers can start conversations; parents can start a message only to their active pupil’s assigned lead teacher, or reply within an existing conversation they participate in. Message replies inherit the original participants, subject and pupil link; the recipient is resolved by the server and cannot be changed by the sender.
 - **In-app inbox:** conversation history, sent/received labels and individually tracked unread/read timestamps. Only the actual recipient can mark a message read. Parent/teacher views see only messages they sent or received and, for pupil-specific messages, only when the pupil is still linked to that guardian or assigned to that teacher. Admin/staff retain office oversight access.
 - **Email alert:** when Resend is configured, the other participant receives a private inbox notification, showing the linked pupil’s full name when applicable but **never the message body**. A failed/no-provider email does not roll back the saved portal message.
 - **Announcements:** the existing authorised audience-specific noticeboard remains available. Only admin/staff publish or remove announcements.
