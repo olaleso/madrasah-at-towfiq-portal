@@ -204,3 +204,14 @@ Fixes MATT registration-number year formatting for newly accepted students, and 
 - The current Admissions form is accessible only to authorised staff/admin; a public self-service admissions page would be a separate change requiring abuse prevention and safeguarding review.
 - No schema migration or D1 reset required. Verified Resend sending and the admissions reply inbox are prerequisites for a complete email experience.
 
+
+## v1.0.16 — Automatic homework and behaviour notifications
+
+- When an authorised administrator, staff member, or assigned teacher creates a homework assignment, the Worker saves it, records the audit event, then attempts one branded HTML email to the pupil's guardian with the subject, prescribed Qur’an passage or page, due date and a link to the parent portal.
+- When a behaviour catalogue entry is recorded, the Worker sends a separate positive-recognition or points-deduction notice with the official catalogue reason and signed point change. Private teacher notes never appear in the notification.
+- Recipients are derived **server-side**: prefer an active linked parent account; otherwise use the accepted admission's registered guardian email if no parent is linked. A pupil reassigned to another parent is **never** emailed to an obsolete admission contact; inactive pupils and invalid/missing recipients are skipped. User-supplied recipient addresses are not accepted by these endpoints.
+- Notifications are sent only when the initial assignment/behaviour record is created, **not** when an assignment is marked complete or its status is updated. Original authenticated permissions, CSRF and audit history remain enforced.
+- Saving learning records never depends on email delivery: the response includes `notification_status` (`sent`, `not_sent` or `no_guardian_email`), and the staff UI displays the outcome. `sent` means accepted by Resend, not guaranteed inbox delivery.
+- The notification HTML shares the navy/blue design, official logo, Arabic and transliterated taslīm, personalised greeting and secure portal call to action. Only essential pupil data are included; detailed teacher feedback and sensitive notes remain in the protected portal.
+- No D1 migration or admin reset. Verify actual delivery with a fictional guardian address before enabling real family communications; the admissions reply-to mailbox must be able to receive replies.
+

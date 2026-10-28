@@ -228,6 +228,107 @@ async function sendApplicationReceipt(db,env,application){
  return {acknowledgement_status:outcome.sent?'sent':'not_sent',reference};
 }
 
+
+const publicPortalUrl='https://portal.attowfiqmasjid.org/';
+function safeEmailDate(value){
+ const date=new Date(String(value||'').slice(0,10)+'T12:00:00Z');
+ return Number.isNaN(date.getTime())?'See your parent portal':new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'long',year:'numeric',timeZone:'Europe/London'}).format(date);
+}
+async function studentNotificationRecipient(db,studentId){
+ const row=await first(db,`SELECT s.id,s.first_name,s.last_name,s.status,s.parent_id,
+  p.email AS linked_email,p.name AS linked_name,p.role AS linked_role,p.active AS linked_active,
+  a.guardian_email,a.guardian_name
+  FROM students s LEFT JOIN users p ON p.id=s.parent_id
+  LEFT JOIN admissions a ON a.student_id=s.id AND a.status='accepted'
+  WHERE s.id=?`,studentId);
+ if(!row||row.status!=='active')return null;
+ let to,guardianName;
+ if(row.parent_id){
+  // A manually reassigned guardian supersedes the old admission email.
+  // Never leak pupil records to the previous contact when a new parent is linked.
+  if(row.linked_role!=='parent'||!row.linked_active)return null;
+  to=email(row.linked_email);guardianName=row.linked_name;
+ }else{
+  to=email(row.guardian_email);guardianName=row.guardian_name;
+ }
+ if(!/^\S+@\S+\.\S+$/.test(to||''))return null;
+ return {to,firstName:short(row.first_name,80),guardianName:short(guardianName||'Parent / Guardian',100)};
+}
+function studentActivityEmail({recipient,kind,subjectTitle,summaryLabel,summaryValue,description,explanation,dueDate,admissionsEmail}){
+ const greeting=escapeHtml(guardianGreetingName('',recipient.guardianName));
+ const pupil=escapeHtml(recipient.firstName);
+ const label=escapeHtml(summaryLabel);
+ const value=escapeHtml(summaryValue);
+ const details=escapeHtml(description);
+ const guidance=escapeHtml(explanation);
+ const contact=escapeHtml(admissionsEmail||'admissions@attowfiqmasjid.org');
+ const heading=escapeHtml(subjectTitle);
+ const logo='https://portal.attowfiqmasjid.org/assets/at-towfiq-madrasah-logo.png';
+ const extra=dueDate?`<tr><td style="padding:8px 0;color:#6e829f;font-size:13px">Due date</td><td style="padding:8px 0;color:#233e6b;font-size:14px;font-weight:bold;text-align:right">${escapeHtml(dueDate)}</td></tr>`:'';
+ return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>${heading} | Madrasah At-Towfiq</title><style>@media only screen and (max-width:600px){.notify-wrap{width:100%!important}.notify-pad{padding:27px 21px!important}.notify-title{font-size:25px!important}.notify-button{display:block!important;text-align:center!important}}</style></head>
+ <body style="margin:0;padding:0;background:#f1f5fb;font-family:Arial,Helvetica,sans-serif;color:#263c5f">
+ <span style="display:none!important;opacity:0;max-height:0;overflow:hidden;color:#f1f5fb">A new ${kind==='homework'?'homework assignment':'behaviour points update'} is available in your child’s parent portal.</span>
+ <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f1f5fb"><tr><td align="center" style="padding:34px 15px">
+ <table role="presentation" width="600" class="notify-wrap" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#fff;border:1px solid #e2eaf6;border-radius:18px;overflow:hidden">
+ <tr><td style="background:#172e57;padding:26px 32px 23px;text-align:center">
+ <img src="${logo}" alt="Madrasah At-Towfiq" width="185" style="display:block;margin:0 auto 16px;width:185px;max-width:80%;height:auto;background:#fff;border-radius:8px;padding:7px;border:0">
+ <p style="margin:0;color:#c2d8f8;letter-spacing:2.1px;font-size:11px;font-weight:bold">MADRASAH AT-TOWFIQ · BOLTON</p></td></tr>
+ <tr><td class="notify-pad" style="padding:38px 42px 28px">
+ <p style="margin:0 0 11px;color:#396abd;font-size:11px;font-weight:bold;letter-spacing:1.6px;text-transform:uppercase">LEARNING &amp; CHARACTER · PARENT UPDATE</p>
+ <h1 class="notify-title" style="margin:0 0 23px;font:normal 30px/1.28 Georgia,'Times New Roman',serif;color:#1c365f">${heading}</h1>
+ <p lang="ar" dir="rtl" style="margin:0 0 5px;text-align:left;color:#244578;font-size:23px;line-height:1.8">السلام عليكم ورحمة الله وبركاته</p>
+ <p style="margin:0 0 23px;color:#79889e;font-size:13px;font-style:italic">Assalāmu ʿalaykum wa raḥmatullāhi wa barakātuh</p>
+ <p style="margin:0 0 18px;color:#1d355a;font-size:16px;line-height:1.75"><strong>Dear ${greeting},</strong></p>
+ <p style="margin:0 0 22px;color:#455977;font-size:15px;line-height:1.85">${guidance} The update relates to <strong>${pupil}</strong>.</p>
+ <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;background:#f0f5fd;border:1px solid #dbe7f7;border-radius:12px">
+ <tr><td style="padding:19px 22px"><p style="margin:0 0 12px;color:#5474a6;font-size:11px;letter-spacing:1.3px;font-weight:bold">${label}</p>
+ <p style="margin:0 0 11px;font-size:22px;font-weight:bold;color:#1c4077;line-height:1.4">${value}</p>
+ <p style="margin:0 0 12px;color:#536b89;font-size:13px;line-height:1.75">${details}</p>
+ ${extra?'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid #dce7f5;margin-top:11px">'+extra+'</table>':''}
+ </td></tr></table>
+ <p style="margin:0 0 22px;color:#556983;font-size:14px;line-height:1.8">For full details, learning instructions and any additional teacher feedback, sign in securely to the parent portal.</p>
+ <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 25px"><tr><td bgcolor="#386bc8" style="border-radius:9px;background:#386bc8">
+ <a class="notify-button" href="${publicPortalUrl}" style="display:inline-block;color:#fff;text-decoration:none;padding:16px 27px;font-size:14px;font-weight:bold">Open the parent portal &nbsp;→</a>
+ </td></tr></table>
+ <p style="margin:0;color:#697e9c;font-size:12px;line-height:1.7">This is a confidential update for the recorded parent or guardian. Please do not forward pupil records. If you have a question, contact <a href="mailto:${contact}" style="color:#315fb3;text-decoration:none">${contact}</a>.</p>
+ <p style="margin:22px 0 0;color:#455977;font-size:14px;line-height:1.8">Jazākum Allāhu khayran,<br><strong>The Madrasah Team</strong><br>Madrasah At-Towfiq</p>
+ </td></tr>
+ <tr><td style="padding:20px 32px;background:#f7f9fd;border-top:1px solid #e7edf6;text-align:center;color:#8394ae;font-size:11px;line-height:1.7">Madrasah At-Towfiq · Bolton, United Kingdom<br>Rooted in faith, guided by knowledge.</td></tr>
+ </table></td></tr></table></body></html>`;
+}
+async function notifyGuardianAboutRecord(db,env,studentId,kind,item,actor){
+ const recipient=await studentNotificationRecipient(db,studentId);
+ if(!recipient)return {notification_status:'no_guardian_email'};
+ let emailSubject,template;
+ if(kind==='homework'){
+  const types={hifdh:'Qur’an memorisation (Hifdh)',murajaa:'Qur’an revision (Muraja’a)',qaaidah:'Qaaidah',islamic_studies:'Islamic Studies'};
+  const type=types[item.type]||'Homework';
+  const part=['hifdh','murajaa'].includes(item.type)
+    ?item.surah_from+' (verse '+item.verse_from+') to '+item.surah_to+' (verse '+item.verse_to+')'
+    :'Page '+short(item.page_number,50);
+  emailSubject='New homework assignment | Madrasah At-Towfiq';
+  template=studentActivityEmail({recipient,kind,
+   subjectTitle:'A new homework assignment',summaryLabel:'ASSIGNMENT',summaryValue:type,
+   description:part,explanation:'A new learning task has been assigned to your child.',
+   dueDate:safeEmailDate(item.due_date),admissionsEmail:env.ADMISSIONS_EMAIL});
+ }else if(kind==='behaviour'){
+  const delta=Number(item.points),positive=delta>0;
+  emailSubject='Behaviour points update | Madrasah At-Towfiq';
+  template=studentActivityEmail({recipient,kind,
+   subjectTitle:positive?'Celebrating positive character':'A behaviour points update',
+   summaryLabel:positive?'POINTS AWARDED':'POINTS DEDUCTED',
+   summaryValue:(positive?'+':'')+delta+' '+(Math.abs(delta)===1?'point':'points'),
+   description:short(item.description,150),
+   explanation:positive?'We are pleased to recognise a positive contribution to our madrasah community.':'A behaviour points adjustment has been recorded in our learning and character system.',
+   admissionsEmail:env.ADMISSIONS_EMAIL});
+ }else return {notification_status:'unsupported'};
+ const sent=await mail(env,recipient.to,emailSubject,template,{replyTo:env.ADMISSIONS_EMAIL});
+ const result=sent.sent?'sent':'not_sent';
+ try{await audit(db,actor,'parent_'+kind+'_notification',kind,item.id,result);}catch{}
+ return {notification_status:result};
+}
+
 const escapeHtml=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function handle(req,env){
  const u=new URL(req.url), path=u.pathname,method=req.method,db=env.DB;
@@ -484,7 +585,14 @@ async function handle(req,env){
    if(['qaaidah','islamic_studies'].includes(b.type)&&!short(b.page_number,50))error('Page number required');
    const hid=id();
    await run(db,'INSERT INTO homework(id,student_id,type,surah_from,verse_from,surah_to,verse_to,page_number,comments,due_date,assigned_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)',hid,b.student_id,b.type,short(b.surah_from,100),['hifdh','murajaa'].includes(b.type)?Number(b.verse_from):null,short(b.surah_to,100),['hifdh','murajaa'].includes(b.type)?Number(b.verse_to):null,short(b.page_number,50),short(b.comments,1000),b.due_date,user.id);
-   await audit(db,user,'assign','homework',hid);return json({ok:true,id:hid});
+   await audit(db,user,'assign','homework',hid);
+   let notification={notification_status:'not_sent'};
+   try{
+    notification=await notifyGuardianAboutRecord(db,env,b.student_id,'homework',{...b,id:hid},user);
+   }catch(err){
+    try{await audit(db,user,'parent_homework_notification_error','homework',hid,short(err.message,150));}catch{}
+   }
+   return json({ok:true,id:hid,...notification});
   }
   if(method==='PATCH'){const h=await first(db,'SELECT * FROM homework WHERE id=?',b.id);if(!h)error('Homework not found',404);await permittedStudent(db,user,h.student_id);if(!['complete','incomplete'].includes(b.status))error('Invalid status');await run(db,'UPDATE homework SET status=?,teacher_feedback=?,completed_at=? WHERE id=?',b.status,short(b.teacher_feedback,1000),b.status==='complete'?iso():null,b.id);await audit(db,user,'grade','homework',b.id,b.status);return json({ok:true});}
   if(method==='DELETE'){requireRole(user,'admin','staff');const h=await first(db,'SELECT student_id FROM homework WHERE id=?',b.id);if(!h)error('Homework not found',404);await run(db,'DELETE FROM homework WHERE id=?',b.id);await audit(db,user,'delete','homework',b.id);return json({ok:true});}
@@ -493,7 +601,14 @@ async function handle(req,env){
  if(path==='/api/behaviour'){
   if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT b.*,s.first_name,s.last_name,u.name AS recorded_by_name FROM behaviour b JOIN students s ON s.id=b.student_id LEFT JOIN users u ON u.id=b.recorded_by WHERE ${s.where} ORDER BY b.created_at DESC LIMIT 600`,...s.args)});}
   requireRole(user,'admin','staff','teacher');const b=await input(req);
-  if(method==='POST'){await permittedStudent(db,user,b.student_id);const c=CATALOG.find(x=>x.code===b.reason_code);if(!c)error('Behaviour type not recognised');const bid=id();await run(db,'INSERT INTO behaviour(id,student_id,reason_code,description,points,notes,recorded_by) VALUES(?,?,?,?,?,?,?)',bid,b.student_id,c.code,c.label,c.points,short(b.notes,800),user.id);await audit(db,user,'record','behaviour',bid,`${c.label}: ${c.points}`);return json({ok:true,id:bid});}
+  if(method==='POST'){await permittedStudent(db,user,b.student_id);const c=CATALOG.find(x=>x.code===b.reason_code);if(!c)error('Behaviour type not recognised');const bid=id();await run(db,'INSERT INTO behaviour(id,student_id,reason_code,description,points,notes,recorded_by) VALUES(?,?,?,?,?,?,?)',bid,b.student_id,c.code,c.label,c.points,short(b.notes,800),user.id);await audit(db,user,'record','behaviour',bid,`${c.label}: ${c.points}`);
+   let notification={notification_status:'not_sent'};
+   try{
+    notification=await notifyGuardianAboutRecord(db,env,b.student_id,'behaviour',{id:bid,points:c.points,description:c.label},user);
+   }catch(err){
+    try{await audit(db,user,'parent_behaviour_notification_error','behaviour',bid,short(err.message,150));}catch{}
+   }
+   return json({ok:true,id:bid,...notification});}
   if(method==='DELETE'){requireRole(user,'admin');await run(db,'DELETE FROM behaviour WHERE id=?',b.id);await audit(db,user,'remove','behaviour',b.id);return json({ok:true});}
  }
  if(path==='/api/fees/bulk' && method==='POST'){

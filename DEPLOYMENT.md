@@ -116,3 +116,7 @@ Run `git pull origin main`, `npm run test`, then `npm run deploy`. No database m
 
 After applying the code with `git pull origin main`, run `npm run test` followed by `npm run deploy`. New submissions entered through **Admissions → New application** trigger a styled acknowledgement sent using `notifications@attowfiqmasjid.org`, with `Reply-To: admissions@attowfiqmasjid.org`. Test with a fictional child and an email inbox you control. Verify the guardian receives an **application received** message with a reference, not an acceptance message; then edit the application and verify the acknowledgement is not resent. The provider may accept a message without guaranteeing final inbox delivery, so check real inboxes and provider logs. Failed email delivery never invalidates the newly saved application. The current admissions form is staff-only, not yet public self-service.
 
+
+## v1.0.16 parent learning notifications
+
+Run `git pull origin main`, `npm run test` and `npm run deploy` (no D1 migration). Verified Resend sending and Worker `RESEND_API_KEY` must remain configured. Create fictional homework and a positive and negative behaviour event to an authorised test guardian, then verify exactly one email per new record, including due date/points and a link to `https://portal.attowfiqmasjid.org/`. Resend status `sent` means the provider accepted the message, not proof the final mailbox received it. Check email logs and spam filtering. These events are separate from the application-received and acceptance invitations already implemented.

@@ -220,6 +220,82 @@ const staffPass=await req('/auth/accept-invite',{token:new URL(z.data.invitation
 assert.equal(staffPass.status,200,'Updated staff email accepts the new activation link');
 z=await req('/users',{id:staff_id,email:'admin@example.test'},'PATCH');assert.equal(z.status,409,'Duplicate email is rejected');
 z=await req('/users',{id:guardian_id,name:'Updated Guardian'},'PATCH');assert.equal(z.status,200);
+
+ 
+// v1.0.16 — every newly assigned homework item and behaviour point change
+// emails only the linked or accepted-admission guardian, after saving the record.
+const notificationFetch=globalThis.fetch;
+const sentNotifications=[];
+env.RESEND_API_KEY='local-notification-simulation';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async(url,options)=>{
+ assert.equal(String(url),'https://api.resend.com/emails');
+ sentNotifications.push(JSON.parse(options.body));
+ return new Response(JSON.stringify({id:'mock-guardian-mail'}),{status:200,headers:{'content-type':'application/json'}});
+};
+try{
+ const hwNotify=await req('/homework',{student_id:student2,type:'qaaidah',page_number:'22',comments:'Private instruction <do not show>',due_date:'2026-11-10'});
+ assert.equal(hwNotify.status,200,JSON.stringify(hwNotify.data));
+ assert.equal(hwNotify.data.notification_status,'sent');
+ assert.equal(sentNotifications.length,1,'Assignment should send exactly one email');
+ assert.equal(sentNotifications[0].to[0],secondApplication.guardian_email,'Unlinked accepted pupil uses registered guardian email');
+ assert.equal(sentNotifications[0].reply_to,env.ADMISSIONS_EMAIL);
+ assert.ok(sentNotifications[0].subject.includes('New homework assignment'));
+ assert.ok(sentNotifications[0].html.includes('Qaaidah'));
+ assert.ok(sentNotifications[0].html.includes('Page 22'));
+ assert.ok(sentNotifications[0].html.includes('10 November 2026'));
+ assert.ok(sentNotifications[0].html.includes('السلام عليكم ورحمة الله وبركاته'));
+ assert.ok(sentNotifications[0].html.includes('https://portal.attowfiqmasjid.org/'));
+ assert.ok(!sentNotifications[0].html.includes('Private instruction'),'Free-text homework comments must remain inside the secure portal');
+ let notification=await req('/homework',{id:hwNotify.data.id,status:'complete',teacher_feedback:'Well done'},'PATCH');
+ assert.equal(notification.status,200);
+ assert.equal(sentNotifications.length,1,'Marking homework complete must not resend a new-assignment notice');
+ notification=await req('/behaviour',{student_id:student2,reason_code:'kindness',notes:'Private teacher notes <confidential>'});
+ assert.equal(notification.status,200,JSON.stringify(notification.data));
+ assert.equal(notification.data.notification_status,'sent');
+ assert.equal(sentNotifications.length,2);
+ assert.ok(sentNotifications[1].html.includes('POINTS AWARDED'));
+ assert.ok(sentNotifications[1].html.includes('+3 points'));
+ assert.ok(!sentNotifications[1].html.includes('Private teacher notes'));
+ notification=await req('/behaviour',{student_id:student2,reason_code:'disrespect',notes:'Keep this note confidential'});
+ assert.equal(notification.status,200,JSON.stringify(notification.data));
+ assert.equal(notification.data.notification_status,'sent');
+ assert.equal(sentNotifications.length,3);
+ assert.ok(sentNotifications[2].html.includes('POINTS DEDUCTED'));
+ assert.ok(sentNotifications[2].html.includes('-2 points'));
+ assert.ok(sentNotifications[2].html.includes('Disrespectful language'));
+ assert.ok(!sentNotifications[2].html.includes('Keep this note confidential'));
+ assert.equal(sentNotifications.every(x=>x.from===env.EMAIL_FROM&&x.reply_to===env.ADMISSIONS_EMAIL),true);
+ // A pupil linked to an activated parent should use that account's email.
+ notification=await req('/homework',{student_id,type:'qaaidah',page_number:'10',due_date:'2026-11-12'});
+ assert.equal(notification.status,200);
+ assert.equal(notification.data.notification_status,'sent');
+ assert.equal(sentNotifications[3].to[0],application.guardian_email);
+}finally{
+ globalThis.fetch=notificationFetch;
+ delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
+}
+// A Resend outage must never roll back pupil work or behaviour records.
+const failingNotificationFetch=globalThis.fetch;
+env.RESEND_API_KEY='mock-api-failure';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async()=>new Response('Temporary error',{status:503});
+try{
+ const hwFail=await req('/homework',{student_id:student2,type:'islamic_studies',page_number:'16',due_date:'2026-11-13'});
+ assert.equal(hwFail.status,200,'Assignment must save during email outage');
+ assert.equal(hwFail.data.notification_status,'not_sent');
+ assert.ok(sqlite.prepare('SELECT id FROM homework WHERE id=?').get(hwFail.data.id));
+ const behaviourFail=await req('/behaviour',{student_id:student2,reason_code:'following'});
+ assert.equal(behaviourFail.status,200,'Points must save during email outage');
+ assert.equal(behaviourFail.data.notification_status,'not_sent');
+ assert.ok(sqlite.prepare('SELECT points FROM behaviour WHERE id=?').get(behaviourFail.data.id));
+}finally{
+ globalThis.fetch=failingNotificationFetch;
+ delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
+}
+
 z=await req('/auth/logout',{});assert.equal(z.status,200);
 console.log('PASS: admissions and MATT registration numbers, login, classes, student profiles, valid/invalid Quran ranges, homework completion, behaviour, attendance, fees, account isolation, reports and settings.');
 
@@ -234,6 +310,11 @@ assert.equal(admissionsUi.includes('data-value="bulk-import"'),false,'Student di
 assert.ok(admissionsUi.includes("students:['students','classes','users','contacts','homework','behaviour','behaviour-catalog'"),'Student profile must load full behaviour catalogue');
 assert.ok(admissionsUi.includes('function validateQuranVerses(data)'), 'Quran range validation must also be visible in the form');
 assert.ok(admissionsUi.includes('const admissionReference=a=>'),'Administrators can locate applicants by emailed reference');
+assert.ok(admissionsUi.includes("function notificationResultMessage(result,recordType)"),'Parents email delivery status shown to staff after save');
+const notificationsWorker=fs.readFileSync(new URL('../src/worker.js',import.meta.url),'utf8');
+assert.ok(notificationsWorker.includes('studentNotificationRecipient'),'Guardian-only notification routing exists');
+assert.ok(notificationsWorker.includes('notifyGuardianAboutRecord'),'Homework and behaviour notices share secure email routing');
+
 assert.ok(admissionsUi.includes("acknowledgement_status==='sent'"),'Receipt submission status shown to administrator');
 assert.ok(admissionsUi.includes('Starts as <strong>Incomplete</strong>'), 'Homework workflow explanation must be present');
 assert.ok(admissionsUi.includes("function guardiansPage()"),'Student-linked guardians screen exists');
