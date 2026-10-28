@@ -938,9 +938,18 @@ async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.
  else if(formId==='message-form'){if(!raw.student_id)delete raw.student_id;const result=await post('/messages',raw);S.messageThread=result.conversation_id;toast(result.notification_status==='sent'?'Message saved · inbox notification email accepted':'Message saved in the private portal inbox (email not sent)');}
  else if(formId==='reply-message-form'){const result=await post('/messages',{reply_to:raw.reply_to,body:raw.body});S.messageThread=result.conversation_id;toast(result.notification_status==='sent'?'Reply saved · email alert accepted':'Reply saved in the private portal inbox');}
  else if(formId==='dbs-record-form'){
+   const file=form.elements.certificate.files?.[0];
    const previous=get('compliance/dbs').find(p=>p.staff_id===raw.staff_id);
-   await post('/compliance/dbs',raw,previous?.check_id?'PATCH':'POST');
-   toast('DBS review dates saved · in-app recheck monitoring active');
+   const needsFile=!previous?.document_received_at||raw.issued_on!==previous?.issued_on;
+   if(needsFile&&!file)throw Error('Attach the DBS certificate before saving the check.');
+   if(file&&file.size>3*1024*1024)throw Error('Certificate exceeds the 3 MB size limit.');
+   if(file&&!form.elements.retention_authorized.checked)throw Error('Confirm authorised temporary retention of the certificate.');
+   const response=await fetch('/api/compliance/dbs/submit',{
+     method:'POST',credentials:'same-origin',headers:{'x-csrf-token':S.csrf},body:new FormData(form)
+   });
+   let result={};try{result=await response.json();}catch{}
+   if(!response.ok)throw Error(result.error||'DBS certificate and dates could not be saved');
+   toast(result.certificate_received?'Certificate securely uploaded; DBS record saved':'DBS review dates updated');
  }
  else if(formId==='dbs-upload-form'){
    const file=form.elements.certificate.files?.[0];
@@ -992,7 +1001,22 @@ else if(formId==='attendance-form'){
 document.addEventListener('click',async e=>{const el=e.target.closest('[data-action]');if(!el)return;const a=el.dataset.action;try{if(a==='copy-invite'){const v=$('#invitation-url');await navigator.clipboard.writeText(v.value);toast('Invitation link copied');return;}await action(a,el);}catch(err){toast(err.message,true);console.error(err);}});
 document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','class-assignment-form','class-roster-form','admission-form','invoice-form','payment-form','announcement-form','message-form','reply-message-form','dbs-record-form','dbs-upload-form','policy-record-form','compliance-concern-form','event-form','quiz-form','invite-form','guardian-invite-form','edit-user-form','password-form','attendance-form','progress-report-form','settings-form','automation-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
 document.addEventListener('input',e=>{if(e.target.closest('#homework-form')&&['verse_from','verse_to'].includes(e.target.name))updateSurahVerseLimits();if(e.target.name==='greeting_name'&&e.target.closest('#guardian-invite-form')){const preview=$('#guardian-invite-preview');if(preview)preview.textContent='Dear '+(e.target.value.trim()||'Parent')+',';}});
-document.addEventListener('change',async e=>{const el=e.target;if(el.closest('#invoice-form'))updateInvoiceTargets();if(el.closest('#homework-form')&&(['surah_from','surah_to','verse_from','verse_to'].includes(el.name)))updateSurahVerseLimits();if(el.name==='type'&&el.closest('#homework-form')){const surah=['hifdh','murajaa'].includes(el.value);$('#surah-fields')?.classList.toggle('hide',!surah);$('#page-fields')?.classList.toggle('hide',surah);}if(el.dataset.date==='attendance'){S.attendanceDate=el.value;await navigate('attendance');}if(el.dataset.attendanceClass!==undefined){S.attendanceClass=el.value;renderPage();return;}if(el.dataset.classroomClass!==undefined){S.classroomClass=el.value;renderPage();return;}if(el.dataset.filter){S.filter=el.value;renderPage();}if(el.dataset.admission){try{
+function updateDbsCertificateRequirement(){
+ const form=document.querySelector('#dbs-record-form');
+ if(!form)return;
+ const file=form.elements.certificate;
+ const issue=form.elements.issued_on?.value||'';
+ const original=form.querySelector('#dbs-original-issued')?.value||'';
+ const previouslyReceived=form.querySelector('#dbs-original-received')?.value==='yes';
+ const necessary=!previouslyReceived||issue!==original;
+ file.required=necessary;
+ form.querySelector('#dbs-file-required-label').textContent=necessary?'— required':'— required when replacing the certificate';
+ const consent=form.querySelector('#dbs-retention-label');
+ const showing=necessary||!!file.files?.length;
+ consent.hidden=!showing;
+ form.elements.retention_authorized.required=showing;
+}
+document.addEventListener('change',async e=>{const el=e.target;if(el.closest('#dbs-record-form')&&['issued_on','certificate'].includes(el.name))updateDbsCertificateRequirement();if(el.closest('#invoice-form'))updateInvoiceTargets();if(el.closest('#homework-form')&&(['surah_from','surah_to','verse_from','verse_to'].includes(el.name)))updateSurahVerseLimits();if(el.name==='type'&&el.closest('#homework-form')){const surah=['hifdh','murajaa'].includes(el.value);$('#surah-fields')?.classList.toggle('hide',!surah);$('#page-fields')?.classList.toggle('hide',surah);}if(el.dataset.date==='attendance'){S.attendanceDate=el.value;await navigate('attendance');}if(el.dataset.attendanceClass!==undefined){S.attendanceClass=el.value;renderPage();return;}if(el.dataset.classroomClass!==undefined){S.classroomClass=el.value;renderPage();return;}if(el.dataset.filter){S.filter=el.value;renderPage();}if(el.dataset.admission){try{
   const application=get('admissions').find(x=>x.id===el.dataset.admission);
   let classId='';
   if(el.value==='accepted'){
