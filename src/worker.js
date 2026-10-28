@@ -1075,7 +1075,7 @@ async function handle(req,env){
   const pupil=await permittedStudent(db,user,studentId);
   if(pupil.status!=='active')error('Progress reports can only be created or edited for active pupils');
   const period=existing?.period||short(b.period,7);
-  if(!/^(19|20)\\d{2}-(0[1-9]|1[0-2])$/.test(period))error('Choose a valid report month');
+  if(!/^(19|20)\d{2}-(0[1-9]|1[0-2])$/.test(period))error('Choose a valid report month');
   if(existing&&b.period&&b.period!==period)error('Cannot change a report period after creation');
   const grades=['','developing','progressing','secure','excellent'];
   const fields=['hifdh','murajaa','qaaidah','islamic_studies'];
