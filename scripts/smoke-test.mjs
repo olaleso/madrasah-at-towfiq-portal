@@ -380,6 +380,71 @@ try{
  delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
 }
 
+// Existing parent + second accepted child: linking and email outcomes are distinct.
+// This must NEVER show an already-linked error or change their password/role.
+const existingGuardianBefore=sqlite.prepare('SELECT id,role,password_hash FROM users WHERE id=?').get(guardian_id);
+const siblingApplication={...application,first_name:'Maryam',last_name:'Family',guardian_name:'Example Guardian'};
+z=await req('/admissions',siblingApplication);assert.equal(z.status,200,JSON.stringify(z.data));
+const siblingApplicationId=z.data.id;
+const beforeSiblingCount=sqlite.prepare('SELECT COUNT(*) AS n FROM users WHERE email=?').get(application.guardian_email).n;
+const originalSiblingFetch=globalThis.fetch;
+let siblingEmailPayload;
+let siblingSendCount=0;
+env.RESEND_API_KEY='test-existing-parent-email';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async(url,options)=>{
+ siblingSendCount++;
+ siblingEmailPayload=JSON.parse(options.body);
+ return new Response(JSON.stringify({id:'existing-parent-sibling-mail'}),{status:200,headers:{'content-type':'application/json'}});
+};
+try{
+ z=await req('/admissions',{id:siblingApplicationId,status:'accepted'},'PATCH');
+ assert.equal(z.status,200,JSON.stringify(z.data));
+ assert.equal(z.data.enrolled,true);
+ assert.equal(z.data.linked,true);
+ assert.equal(z.data.invitation_status,'linked_existing','Second child must be a successful existing-parent link');
+ assert.equal(z.data.email_status,'sent');
+ assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(siblingApplicationId).parent_id,guardian_id,'Sibling linked to original parent');
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM users WHERE email=?').get(application.guardian_email).n,beforeSiblingCount,'No duplicate parent account');
+ const afterGuardian=sqlite.prepare('SELECT id,role,password_hash FROM users WHERE id=?').get(guardian_id);
+ assert.deepEqual(afterGuardian,existingGuardianBefore,'Parent password and role must not change');
+ assert.equal(siblingSendCount,1);
+ assert.equal(siblingEmailPayload.to[0],application.guardian_email);
+ assert.ok(siblingEmailPayload.html.includes('Maryam Family'),'Existing-parent email includes pupil full name');
+ assert.ok(!siblingEmailPayload.subject.includes('Maryam Family'),'Pupil name stays out of subject');
+ // A repeated admission acceptance is idempotent and must not generate a second email.
+ z=await req('/admissions',{id:siblingApplicationId,status:'accepted'},'PATCH');
+ assert.equal(z.status,200,JSON.stringify(z.data));
+ assert.equal(z.data.invitation_status,'already_linked');
+ assert.equal(z.data.already_enrolled,true);
+ assert.equal(z.data.linked,true);
+ assert.equal(z.data.email_status,'not_attempted');
+ assert.equal(siblingSendCount,1);
+}finally{
+ globalThis.fetch=originalSiblingFetch;
+ delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
+}
+// Email failure must report a successful link, not a false "already linked" error.
+z=await req('/admissions',{...siblingApplication,first_name:'Zaynab'});assert.equal(z.status,200);
+const mailFailureChildId=z.data.id;
+const existingParentFetch=globalThis.fetch;
+env.RESEND_API_KEY='test-mail-failure';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async()=>new Response('Email temporarily unavailable',{status:503});
+try{
+ z=await req('/admissions',{id:mailFailureChildId,status:'accepted'},'PATCH');
+ assert.equal(z.status,200,JSON.stringify(z.data));
+ assert.equal(z.data.invitation_status,'linked_existing');
+ assert.equal(z.data.linked,true);
+ assert.equal(z.data.email_status,'not_sent');
+ assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(mailFailureChildId).parent_id,guardian_id);
+}finally{
+ globalThis.fetch=existingParentFetch;
+ delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
+}
+
 z=await req('/auth/logout',{});assert.equal(z.status,200);
 console.log('PASS: admissions and MATT registration numbers, login, classes, student profiles, valid/invalid Quran ranges, homework completion, behaviour, attendance, fees, account isolation, reports and settings.');
 
@@ -422,6 +487,11 @@ assert.ok(admissionsUi.includes('function familyDashboard()'),'Parent family das
 assert.ok(admissionsUi.includes('family-switch'),'Family view switch appears in the UI');
 assert.ok(admissionsUi.includes('x-portal-view'),'Family view requests carry their restricted role');
 assert.ok(admissionsUi.includes("if(a==='family-switch')"),'Switch action is interactive');
+assert.ok(admissionsUi.includes("result.invitation_status==='already_linked'"),'Existing parent links are treated as success in the UI');
+assert.ok(admissionsUi.includes('Admission saved; directory refresh failed'),'Post-save refresh failures must not report enrolment as failed');
+assert.ok(admissionsUi.includes('Admission saved; confirmation dialog failed'),'Email dialog errors must not report enrolment as failed');
+assert.ok(admissionsUi.includes("result.already_enrolled?'This admission was already enrolled."),'Repeated acceptance shows idempotent success');
+
 assert.ok(admissionsUi.includes('Linked · activation pending'),'Pending and active guardian status distinguished');
 assert.ok(admissionsUi.includes("if(userCan('parent'))return familyDashboard()"),'Parent accounts receive family-specific dashboard');
 assert.ok(admissionsUi.includes('get(\'attendance\')'),'Family dashboard loads attendance records');

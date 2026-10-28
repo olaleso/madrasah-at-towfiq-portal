@@ -378,10 +378,9 @@ function invitationNotice(result,guardianName='parent / guardian'){
   modal('Activation link requires delivery',`<div class="notice warn">The invitation email was not confirmed as sent. Verify the recipient's identity, then share this single-use link securely with <strong>${h(guardianName)}</strong>.</div><div class="field" style="margin-top:16px"><label>Private activation link</label><textarea id="invitation-url" readonly>${h(result.invitation_url)}</textarea></div><button type="button" class="btn primary" style="margin-top:13px" data-action="copy-invite">${ico('file',15)} Copy activation link</button>`);
  } else if(result.invitation_status==='sent'||result.emailed){
    modal('Invitation sent successfully',`<div class="guardian-invite-success"><span class="guardian-invite-success-icon">${ico('check',32)}</span><h3>The parent invitation is on its way</h3><p>A secure account activation email has been accepted by the email provider for <strong>${h(guardianName)}</strong>.</p><div class="guardian-invite-note">${ico('info',19)}<p><strong>What happens next?</strong><span>The parent can open the message and create their password using the one-time link. Please ask them to check their spam folder if the message does not arrive.</span></p></div></div>`);
- } else if(result.invitation_status==='linked_existing'){
-   modal('Pupil linked to an existing account',`<div class="guardian-invite-success"><span class="guardian-invite-success-icon">${ico('check',32)}</span><h3>Guardian linked successfully</h3><p>The pupil is now associated with an existing user account. No additional login or password is needed. ${result.email_status==='sent'?'A notification was accepted by the email provider.':'The notification email could not be confirmed; check the email log.'}</p><div class="guardian-invite-note">${ico('shield',19)}<p><strong>Staff members who are parents</strong><span>Use the Family view switch on the portal header to access your linked children without losing staff permissions.</span></p></div></div>`);
- } else if(result.invitation_status==='already_active'){
-   toast('Guardian account already active; pupil linked if previously unlinked');
+ } else if(result.invitation_status==='linked_existing'||result.invitation_status==='already_active'||result.invitation_status==='already_linked'){
+   const emailMessage=result.email_status==='sent'?'A notification has been accepted by the email provider.':result.email_status==='not_sent'?'The pupil is linked, but the email was not delivered to the provider; review the email log.':'No new activation is needed.';
+   modal('Guardian account linked',`<div class="guardian-invite-success"><span class="guardian-invite-success-icon">${ico('check',32)}</span><h3>Child linked successfully</h3><p>The pupil is associated with the existing guardian account. ${result.already_enrolled?'This admission was already enrolled. ':''}There is no need to create a second account or send a new activation link. ${emailMessage}</p><div class="guardian-invite-note">${ico('shield',19)}<p><strong>One account for the whole family</strong><span>The guardian can use their existing login to see all linked children. Staff members who are guardians can select Family view without losing their staff role.</span></p></div></div>`);
  } else if(result.invitation_status==='manual_review'||result.invitation_status==='existing_non_parent_account'){
    toast('Guardian requires manual verification. Review the existing account and pupil link.',true);
  } else if(result.invitation_status){
@@ -559,10 +558,20 @@ document.addEventListener('change',async e=>{const el=e.target;if(el.closest('#i
    if(!approved){el.value=application?.status||'new';return;}
   }
   const result=await post('/admissions',{id:el.dataset.admission,status:el.value},'PATCH');
-  toast(result.enrolled?'Application accepted — pupil enrolled in Student directory':'Admission status updated');
-  await navigate('admissions');
-  if(result.enrolled)invitationNotice(result,application?.guardian_name||'guardian');
- }catch(err){toast(err.message,true);const application=get('admissions').find(x=>x.id===el.dataset.admission);if(application)el.value=application.status;}}});
+  // The admission was committed by the server. Do not report a subsequent
+  // email/status popup or page refresh issue as a failed enrolment.
+  toast(result.enrolled?'Application accepted — pupil enrolled successfully':'Admission status updated');
+  try{await navigate('admissions');}
+  catch(refreshErr){console.warn('Admission saved; directory refresh failed',refreshErr);toast('Admission saved successfully. Refresh the directory to see the latest status.',false);}
+  if(result.enrolled){
+   try{invitationNotice(result,application?.guardian_name||'guardian');}
+   catch(noticeErr){console.warn('Admission saved; confirmation dialog failed',noticeErr);toast('Pupil enrolled and guardian relationship saved. Check Parents & guardians for email status.',false);}
+  }
+ }catch(err){
+  toast('Admission change was not completed: '+err.message,true);
+  const application=get('admissions').find(x=>x.id===el.dataset.admission);
+  if(application)el.value=application.status;
+ }}});
 let globalSearchTimer=null;
 document.addEventListener('input',e=>{const el=e.target;if(el.closest('#invoice-form'))updateInvoiceTargets();if(el.id==='global-query'){clearTimeout(globalSearchTimer);globalSearchTimer=setTimeout(async()=>{const q=el.value.trim(),results=$('#global-results');if(!results)return;if(q.length<2){results.innerHTML=blank('Type at least two characters');return;}try{const r=await api('/search?q='+encodeURIComponent(q));results.innerHTML=`${r.students.map(s=>`<button class="quick-action" style="width:100%;margin:6px 0" data-action="search-open" data-page="students" data-id="${h(s.id)}">${ico('students',18)} ${h(s.first_name+' '+s.last_name)} · ${h(s.student_no)} · ${h(s.class_name||'Unassigned')}</button>`).join('')}${r.homework.map(w=>`<button class="quick-action" style="width:100%;margin:6px 0" data-action="search-open" data-page="homework">${ico('book',18)} ${h(cap(w.type))} · ${h(w.first_name+' '+w.last_name)} · ${fmt(w.due_date)}</button>`).join('')}${r.classes.map(c=>`<button class="quick-action" style="width:100%;margin:6px 0" data-action="search-open" data-page="classes">${ico('graduation',18)} ${h(c.name)} · ${h(c.stage)}</button>`).join('')}`||blank('No matching records');}catch(error){results.innerHTML=blank('Search unavailable',error.message);}},300);return;}if(el.dataset.search){const v=el.value;S.search=v;const pos=el.selectionStart;renderPage();const field=$('[data-search="'+el.dataset.search+'"]');if(field){field.focus();field.setSelectionRange(pos,pos);}}});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelector('.modal-overlay')?.remove();});

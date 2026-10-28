@@ -147,3 +147,7 @@ Before deploying, run `git pull origin main` and `npm run test`. With a verified
 4. If a pupil has a *different* guardian already linked or an account was deliberately deactivated, the system requires manual review. Avoid exposing pupil records without verification.
 
 No D1 migration, admin reset, student re-enrolment, new secret or duplicate account is required. Email provider acceptance is not final inbox-delivery confirmation.
+
+## v1.1.2 — Fix misleading guardian-already-linked warning
+
+Pull `main`, run `npm run test`, and deploy with `npm run deploy`. No database migration or reset is needed. To verify, use a **fictional second application** with an email matching a test parent who already has an active account. Acceptance should enrol/link without creating another user or changing the password; a linked-account confirmation is emailed. If Resend fails, enrolment still succeeds with an email-status warning instead of an enrolment error. Re-accepting an already-enrolled application should not resend an email.

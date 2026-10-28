@@ -119,7 +119,7 @@ async function inviteGuardianAfterAcceptance(db,env,req,application,actor){
  }
  // Linking is immediate on acceptance, independent of email delivery.
  // Pending accounts remain inactive until their invitation is accepted.
- await run(db,'UPDATE students SET parent_id=? WHERE id=? AND parent_id IS NULL',uid,pupil.id);
+ if(!pupil.parent_id)await run(db,'UPDATE students SET parent_id=? WHERE id=? AND parent_id IS NULL',uid,pupil.id);
  const name=guardianGreetingName(application.preferred_greeting_name,application.guardian_name);
  const pupilName=[pupil.first_name,pupil.last_name].map(x=>short(x,80)).filter(Boolean).join(' ');
  const active=Boolean(existing?.active&&existing?.password_hash);
@@ -127,8 +127,12 @@ async function inviteGuardianAfterAcceptance(db,env,req,application,actor){
   // An existing teacher/staff/admin may also be a guardian. Keep their staff role
   // and current password unchanged; show the child in an explicit family view.
   const html=guardianExistingAccountHtml(name,pupilName,env.ADMISSIONS_EMAIL,existing.role!=='parent');
-  const delivered=await mail(env,guardianEmail,'Your child is linked to your Madrasah At-Towfiq account',html,{replyTo:env.ADMISSIONS_EMAIL});
-  await audit(db,actor,'guardian_link_existing','students',pupil.id,delivered.sent?'email_sent':'delivery_not_confirmed');
+  let delivered={sent:false};
+  try{delivered=await mail(env,guardianEmail,'Your child is linked to your Madrasah At-Towfiq account',html,{replyTo:env.ADMISSIONS_EMAIL});}
+  catch(emailErr){try{await audit(db,actor,'guardian_link_email_error','students',pupil.id,short(emailErr.message,150));}catch{}}
+  try{await audit(db,actor,'guardian_link_existing','students',pupil.id,delivered.sent?'email_sent':'delivery_not_confirmed');}catch{}
+  // A notification or audit-log failure cannot turn a completed link into an
+  // error. The caller receives the actual enrolment and email outcomes separately.
   return {invitation_status:'linked_existing',email_status:delivered.sent?'sent':'not_sent',linked:true};
  }
  // For a new or still-pending account, email a single-use password activation
@@ -608,7 +612,14 @@ async function handle(req,env){
    if(!['new','reviewing','accepted','declined'].includes(b.status))error('Invalid status');
    if(b.status==='accepted'){
     // An existing admission remains enrolled; do not allocate another number.
-    if(application.student_id)return json({ok:true,student_id:application.student_id,enrolled:true});
+    if(application.student_id){
+     const already=await first(db,`SELECT s.id,s.parent_id,u.email AS linked_email
+       FROM students s LEFT JOIN users u ON u.id=s.parent_id WHERE s.id=?`,application.student_id);
+     const sameGuardian=!!(already?.parent_id && email(already.linked_email)===email(application.guardian_email));
+     return json({ok:true,student_id:application.student_id,enrolled:true,already_enrolled:true,
+       linked:sameGuardian,invitation_status:sameGuardian?'already_linked':'manual_review',
+       email_status:'not_attempted'});
+    }
     if(!short(application.first_name)||!short(application.last_name)||!isDate(application.dob))
       error('Complete the pupil name and date of birth before approval');
     const sid=application.id;
