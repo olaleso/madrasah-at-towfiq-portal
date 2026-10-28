@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import worker from '../src/worker.js';
 import assert from 'node:assert/strict';
 import {pbkdf2Sync,randomBytes} from 'node:crypto';
-const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0008_pupil_progress_reports.sql',import.meta.url),'utf8'));
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
 for(const filename of ['0001_initial.sql','0002_expanded_admissions.sql','0003_safeguarding_declarations.sql']) oldDb.exec(fs.readFileSync(new URL('../migrations/'+filename,import.meta.url),'utf8'));
@@ -682,8 +682,112 @@ try{
  assert.equal(sqlite.prepare('SELECT state FROM attendance_family_alerts WHERE student_id=? AND attendance_date=?').get(student2,markDate).state,'not_sent');
 }finally{globalThis.fetch=oldMailFetch;delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;}
 
+
+// v1.5.0 – Monthly learner assessments, teacher scope and explicit publication.
+const reportDraft={
+ student_id,period:'2026-10',hifdh:'progressing',murajaa:'',qaaidah:'secure',
+ islamic_studies:'developing',summary:'',next_steps:'',status:'draft'
+};
+let pr=await req('/progress-reports',reportDraft);
+assert.equal(pr.status,200,JSON.stringify(pr.data));
+const draftId=pr.data.id;
+assert.equal(pr.data.status,'draft');
+assert.equal(sqlite.prepare('SELECT status FROM pupil_progress_reports WHERE id=?').get(draftId).status,'draft');
+pr=await req('/progress-reports');assert.equal(pr.status,200);
+assert.ok(pr.data.items.some(x=>x.id===draftId),'Administrator may read an unpublished report');
+pr=await req('/progress-reports',{...reportDraft},'POST');
+assert.equal(pr.status,409,'A second report in the same month must be blocked');
+pr=await req('/progress-reports',{...reportDraft,period:'2026-13'});
+assert.equal(pr.status,400,'Invalid report month must be rejected');
+pr=await req('/progress-reports',{...reportDraft,period:'2026-11',hifdh:'unverified'});
+assert.equal(pr.status,400,'Assessments require one of the official progress levels');
+pr=await req('/progress-reports',{id:draftId,status:'published',summary:'Too brief',hifdh:''},'PATCH');
+assert.equal(pr.status,400,'Publishing requires a meaningful summary and assessment');
+const savedAdminCookie=cookie,savedAdminCsrf=csrf;
+cookie=parent_cookie;csrf=parent_csrf;
+pr=await req('/progress-reports');assert.equal(pr.status,200);
+assert.equal(pr.data.items.length,0,'A parent must never see an unpublished report');
+pr=await req('/progress-reports',{...reportDraft,period:'2026-12',status:'published'});
+assert.equal(pr.status,403,'Parents cannot create a report');
+pr=await req('/progress-reports',{id:draftId,summary:'An unauthorised edit',status:'published'},'PATCH');
+assert.equal(pr.status,403,'Parents cannot edit or publish a report');
+cookie=savedAdminCookie;csrf=savedAdminCsrf;
+pr=await req('/progress-reports',{
+ id:draftId,student_id,period:'2026-10',hifdh:'progressing',murajaa:'developing',
+ qaaidah:'secure',islamic_studies:'progressing',
+ summary:'Steady progress in Qur’an reading and early memorisation during the month.',
+ next_steps:'Practise the assigned verses for ten minutes daily with a guardian.',
+ status:'published'},'PATCH');
+assert.equal(pr.status,200,JSON.stringify(pr.data));
+assert.equal(pr.data.published,true);
+assert.ok(sqlite.prepare('SELECT published_at FROM pupil_progress_reports WHERE id=?').get(draftId).published_at);
+cookie=parent_cookie;csrf=parent_csrf;
+pr=await req('/progress-reports');assert.equal(pr.status,200);
+assert.deepEqual(pr.data.items.map(x=>x.id),[draftId],'Guardian sees only their linked pupil’s published report');
+assert.match(pr.data.items[0].summary,/Steady progress/);
+assert.match(pr.data.items[0].next_steps,/Practise the assigned verses/);
+cookie=savedAdminCookie;csrf=savedAdminCsrf;
+const otherClass=await req('/classes',{name:'Advanced Reports',stage:'Advanced',capacity:10});
+assert.equal(otherClass.status,200,JSON.stringify(otherClass.data));
+pr=await req('/students',{id:student2,class_id:otherClass.data.id},'PATCH');
+assert.equal(pr.status,200,'Place unrelated pupil in a different teacher class');
+pr=await req('/classes',{id:class_id,name:'Foundation',stage:'Foundation',capacity:20,teacher_id:staff_id,schedule:''},'PATCH');
+assert.equal(pr.status,200,'Assign the Foundation class to the test teacher');
+const otherReport={
+ student_id:student2,period:'2026-10',hifdh:'secure',murajaa:'',
+ qaaidah:'',islamic_studies:'',summary:'Consistent learning this month.',
+ next_steps:'Read with a responsible adult.',status:'published'
+};
+pr=await req('/progress-reports',otherReport);
+assert.equal(pr.status,200,JSON.stringify(pr.data));
+const otherReportId=pr.data.id;
+cookie=parent_cookie;csrf=parent_csrf;
+pr=await req('/progress-reports');
+assert.deepEqual(pr.data.items.map(x=>x.id),[draftId],'Another family’s published record must not leak');
+cookie=savedAdminCookie;csrf=savedAdminCsrf;
+const teacherChildReport=await req('/progress-reports',{
+ student_id:storedTeacherChild.id,period:'2026-10',hifdh:'developing',
+ summary:'The pupil is beginning to read confidently with patient support.',
+ next_steps:'Revise short passages together each week.',status:'published'
+});
+assert.equal(teacherChildReport.status,200,JSON.stringify(teacherChildReport.data));
+const teacherCookie=staffPass.response.headers.get('set-cookie').split(';')[0];
+cookie=teacherCookie;csrf=staffPass.data.csrf;
+pr=await req('/progress-reports');assert.equal(pr.status,200);
+assert.ok(pr.data.items.some(x=>x.id===draftId),'Assigned teacher sees class progress reports');
+assert.ok(!pr.data.items.some(x=>x.id===otherReportId),'Teacher cannot read another class report');
+pr=await req('/progress-reports',{...reportDraft,student_id:student2,period:'2026-11'});
+assert.equal(pr.status,403,'Teacher cannot create reports for another class');
+pr=await req('/progress-reports',{
+ id:otherReportId,summary:'Attempted outside-class update',status:'published'},'PATCH');
+assert.equal(pr.status,403,'Teacher cannot edit another class report by ID');
+pr=await req('/progress-reports',{
+ student_id,period:'2026-11',hifdh:'excellent',
+ summary:'A confident and consistent learner in recitation this month.',
+ next_steps:'Maintain a daily revision routine.',status:'draft'});
+assert.equal(pr.status,200,'Assigned teacher may prepare a private draft for their class');
+pr=await req('/progress-reports',null,'GET',true,'family');
+assert.equal(pr.status,200);
+assert.deepEqual(pr.data.items.map(x=>x.id),[teacherChildReport.data.id],
+ 'Dual-role teacher Family view sees only their own child’s published report');
+pr=await req('/progress-reports',{...reportDraft,period:'2026-12'},'POST',true,'family');
+assert.equal(pr.status,403,'Dual-role Family view cannot create a teaching report');
+cookie=savedAdminCookie;csrf=savedAdminCsrf;
+pr=await req('/progress-reports',{
+ id:draftId,status:'draft',hifdh:'progressing',murajaa:'developing',
+ qaaidah:'secure',islamic_studies:'progressing',
+ summary:'Steady progress in Qur’an reading and early memorisation during the month.',
+ next_steps:'Practise the assigned verses for ten minutes daily with a guardian.'},'PATCH');
+assert.equal(pr.status,200,'Staff can withdraw a report from family view');
+cookie=parent_cookie;csrf=parent_csrf;
+pr=await req('/progress-reports');
+assert.equal(pr.data.items.some(x=>x.id===draftId),false,'Unpublishing immediately revokes family access');
+cookie=savedAdminCookie;csrf=savedAdminCsrf;
+assert.ok(sqlite.prepare('SELECT COUNT(*) AS count FROM pupil_progress_reports').get().count>=4,
+ 'New report records remain separate from existing homework and attendance');
+
 z=await req('/auth/logout',{});assert.equal(z.status,200);
-console.log('PASS: admissions, class-safe attendance, one-time absence emails, family permissions, fees and portal smoke checks.');
+console.log('PASS: admissions, attendance, fees, teacher-scoped monthly reports, family draft privacy and portal checks.');
 
 const admissionsUi=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 assert.equal(admissionsUi.includes("field('Daytime mobile number'"),false);
@@ -697,6 +801,15 @@ assert.ok(admissionsUi.includes("students:['students','classes','users','contact
 assert.ok(admissionsUi.includes('function validateQuranVerses(data)'), 'Quran range validation must also be visible in the form');
 assert.ok(admissionsUi.includes('const admissionReference=a=>'),'Administrators can locate applicants by emailed reference');
 assert.ok(admissionsUi.includes("function notificationResultMessage(result,recordType)"),'Parents email delivery status shown to staff after save');
+
+assert.ok(admissionsUi.includes('function classroomPage()'),'Teacher classroom hub must exist');
+assert.ok(admissionsUi.includes('function progressPage()'),'Family-visible learner reports must exist');
+assert.ok(admissionsUi.includes("case 'progress-report'"),'The report editor modal must exist');
+assert.ok(admissionsUi.includes("formId==='progress-report-form'"),'The report save/publish workflow must exist');
+assert.ok(admissionsUi.includes("progressReportCards("),'Pupil reports are shown using the reusable renderer');
+assert.ok(admissionsUi.includes('h(r.summary)'),'Progress narratives must be escaped against HTML injection');
+assert.ok(admissionsUi.includes("data-value=\"progress\""),'Guardian dashboard links to progress reports');
+
 const notificationsWorker=fs.readFileSync(new URL('../src/worker.js',import.meta.url),'utf8');
 assert.ok(notificationsWorker.includes('studentNotificationRecipient'),'Guardian-only notification routing exists');
 assert.ok(notificationsWorker.includes('notifyGuardianAboutRecord'),'Homework and behaviour notices share secure email routing');
