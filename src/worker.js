@@ -157,6 +157,77 @@ function guardianInvitationHtml(name,activationUrl,admissionsEmail){
 </td></tr></table></body></html>`;
 }
 
+
+function applicationReceiptReference(applicationId,receivedAt){
+ const year=String(receivedAt||'').slice(0,4)||String(new Date().getUTCFullYear());
+ const slug=String(applicationId||'').replace(/[^a-zA-Z0-9]/g,'').slice(0,10).toUpperCase();
+ return 'MAT-'+year+'-'+slug;
+}
+function applicationReceiptHtml({guardianName,studentName,reference,submittedAt,admissionsEmail}){
+ const name=escapeHtml(short(guardianName||'Parent / Guardian',120));
+ const student=escapeHtml(short(studentName||'your child',170));
+ const ref=escapeHtml(reference);
+ const submitted=escapeHtml(submittedAt);
+ const contact=escapeHtml(admissionsEmail||'admissions@attowfiqmasjid.org');
+ const logo='https://portal.attowfiqmasjid.org/assets/at-towfiq-madrasah-logo.png';
+ return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Application received | Madrasah At-Towfiq</title>
+<style>@media only screen and (max-width:600px){.mail-wrap{width:100%!important}.mail-pad{padding:27px 22px!important}.mail-title{font-size:27px!important}.ref-table td{display:block!important;width:auto!important;padding:5px 0!important}}</style>
+</head><body style="margin:0;padding:0;background:#f2f5fb;color:#172d50;font-family:Arial,Helvetica,sans-serif">
+<span style="display:none!important;font-size:1px;color:#f2f5fb;max-height:0;max-width:0;opacity:0;overflow:hidden">We have received your admission application. Please retain your reference number for future correspondence.</span>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f2f5fb"><tr><td align="center" style="padding:34px 14px">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" class="mail-wrap" style="max-width:600px;width:100%;background:#ffffff;border:1px solid #e0e8f4;border-radius:18px;overflow:hidden">
+<tr><td style="background:#172e57;text-align:center;padding:28px 34px 24px">
+<img src="${logo}" alt="Madrasah At-Towfiq logo" width="190" style="display:block;margin:0 auto 16px;width:190px;max-width:80%;height:auto;border:0;border-radius:9px;background:#ffffff;padding:7px">
+<p style="margin:0;color:#bbd7fd;font-size:11px;font-weight:bold;letter-spacing:2.3px">MADRASAH AT-TOWFIQ · BOLTON</p>
+</td></tr>
+<tr><td class="mail-pad" style="padding:38px 42px 25px">
+<p style="margin:0 0 11px;color:#3769be;text-transform:uppercase;font-size:11px;letter-spacing:1.6px;font-weight:bold">Admissions · Confirmation of receipt</p>
+<h1 class="mail-title" style="margin:0 0 15px;font-family:Georgia,'Times New Roman',serif;font-size:31px;line-height:1.3;font-weight:normal;color:#1c365f">Your application has been received</h1>
+<p style="margin:0 0 26px;color:#4a8467;font-size:13px;font-weight:bold">✓ Successfully recorded · Awaiting review</p>
+<p dir="rtl" lang="ar" style="margin:0 0 5px;font-size:24px;line-height:1.8;color:#193e76;text-align:left">السلام عليكم ورحمة الله وبركاته</p>
+<p style="margin:0 0 23px;font-size:13px;font-style:italic;color:#74849b">Assalāmu ʿalaykum wa raḥmatullāhi wa barakātuh</p>
+<p style="margin:0 0 18px;color:#20395b;font-size:16px;line-height:1.8"><strong>Dear ${name},</strong></p>
+<p style="margin:0 0 19px;font-size:15px;line-height:1.85;color:#435573">Jazākum Allāhu khayran for your interest in Madrasah At-Towfiq. We are pleased to acknowledge receipt of the admission application submitted for <strong>${student}</strong>.</p>
+<p style="margin:0 0 24px;font-size:15px;line-height:1.85;color:#435573">Your application has been securely recorded and will be reviewed by our admissions team. We appreciate the trust you have placed in the madrasah.</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 26px;background:#f0f5fd;border:1px solid #dce8f7;border-radius:12px">
+<tr><td style="padding:18px 20px">
+<p style="margin:0 0 13px;color:#325994;font-size:11px;letter-spacing:1.1px;font-weight:bold">YOUR APPLICATION DETAILS</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="ref-table">
+<tr><td style="padding:6px 0;color:#71839e;font-size:12px;width:36%">Reference</td><td style="padding:6px 0;color:#1e3864;font-weight:bold;font-size:14px">${ref}</td></tr>
+<tr><td style="padding:6px 0;color:#71839e;font-size:12px">Received on</td><td style="padding:6px 0;color:#1e3864;font-weight:bold;font-size:13px">${submitted}</td></tr>
+<tr><td style="padding:6px 0;color:#71839e;font-size:12px">Application status</td><td style="padding:6px 0;color:#1e3864;font-weight:bold;font-size:13px">Received — awaiting review</td></tr>
+</table></td></tr></table>
+<h2 style="margin:0 0 12px;color:#243f6b;font-size:17px;line-height:1.4">What happens next?</h2>
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 20px">
+<tr><td valign="top" style="width:33px;padding:4px 8px 12px 0;color:#3566bd;font-weight:bold;font-size:15px">01</td><td style="padding:4px 0 12px;color:#495d7a;font-size:14px;line-height:1.75"><strong style="color:#263f67">Application review.</strong> Our admissions team will review the information provided.</td></tr>
+<tr><td valign="top" style="padding:4px 8px 12px 0;color:#3566bd;font-weight:bold;font-size:15px">02</td><td style="padding:4px 0 12px;color:#495d7a;font-size:14px;line-height:1.75"><strong style="color:#263f67">Further information.</strong> We will contact you if clarification or additional details are needed.</td></tr>
+<tr><td valign="top" style="padding:4px 8px 12px 0;color:#3566bd;font-weight:bold;font-size:15px">03</td><td style="padding:4px 0 12px;color:#495d7a;font-size:14px;line-height:1.75"><strong style="color:#263f67">Decision and next steps.</strong> You will be notified separately when a decision has been made.</td></tr>
+</table>
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 25px;background:#fffbef;border-left:3px solid #dbb365;border-radius:6px"><tr><td style="padding:14px 16px;color:#7b653d;font-size:12px;line-height:1.75"><strong>Please note:</strong> This email confirms receipt only. It is not an offer of admission or confirmation of an allocated place.</td></tr></table>
+<p style="margin:0 0 10px;color:#435573;font-size:14px;line-height:1.8">Please keep the reference above for future enquiries. For questions, contact <a href="mailto:${contact}" style="color:#3568bc;text-decoration:none">${contact}</a>.</p>
+<p style="margin:21px 0 0;color:#435573;font-size:14px;line-height:1.8">With kind regards and duʿā’,<br><strong>The Admissions Team</strong><br>Madrasah At-Towfiq</p>
+</td></tr>
+<tr><td style="background:#f7f9fd;border-top:1px solid #e7edf6;padding:22px 32px;text-align:center">
+<p style="margin:0 0 8px;color:#4d6589;font-size:12px">Madrasah At-Towfiq · Bolton, United Kingdom</p>
+<p style="margin:0;color:#8294ad;font-size:11px;line-height:1.7">This is an automated acknowledgement sent to the email address recorded on the application. Please do not send sensitive student or medical information by ordinary email.</p>
+</td></tr></table>
+<p style="margin:19px 0 0;color:#8a98ae;font-size:11px;text-align:center">Rooted in faith, guided by knowledge.</p>
+</td></tr></table></body></html>`;
+}
+async function sendApplicationReceipt(db,env,application){
+ const guardianEmail=email(application.guardian_email);
+ const receivedAt=application.created_at||iso();
+ const reference=applicationReceiptReference(application.id,receivedAt);
+ const receivedDate=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',day:'numeric',month:'long',year:'numeric'}).format(new Date(receivedAt));
+ const html=applicationReceiptHtml({
+  guardianName:application.guardian_name,studentName:application.child_name,
+  reference,submittedAt:receivedDate,admissionsEmail:env.ADMISSIONS_EMAIL
+ });
+ const outcome=await mail(env,guardianEmail,'Madrasah At-Towfiq | Application received ('+reference+')',html,{replyTo:env.ADMISSIONS_EMAIL});
+ return {acknowledgement_status:outcome.sent?'sent':'not_sent',reference};
+}
+
 const escapeHtml=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function handle(req,env){
  const u=new URL(req.url), path=u.pathname,method=req.method,db=env.DB;
@@ -340,7 +411,18 @@ async function handle(req,env){
    if(method==='POST'){
     const rid=id(), cols=['id','child_name','phone',...names];
     await run(db,`INSERT INTO admissions(${cols.join(',')}) VALUES(${cols.map(()=>'?').join(',')})`,rid,childName,phone,...values);
-    await audit(db,user,'create','admission',rid);return json({ok:true,id:rid});
+    await audit(db,user,'create','admission',rid);
+    // Email is a best-effort notification AFTER the admission has been saved.
+    // If sending or logging fails, the application must still exist and return success.
+    let receipt={acknowledgement_status:'not_sent',reference:applicationReceiptReference(rid,iso())};
+    try{
+     const recorded=await first(db,'SELECT id,child_name,guardian_name,guardian_email,created_at FROM admissions WHERE id=?',rid);
+     receipt=await sendApplicationReceipt(db,env,recorded);
+     await audit(db,user,'application_receipt','admission',rid,receipt.acknowledgement_status);
+    }catch(err){
+     try{await audit(db,user,'application_receipt_error','admission',rid,short(err.message,180));}catch{}
+    }
+    return json({ok:true,id:rid,...receipt});
    }
    if(!b.id||!await first(db,'SELECT id FROM admissions WHERE id=?',b.id))error('Application not found',404);
    const existingAdmission=await first(db,'SELECT student_id FROM admissions WHERE id=?',b.id);

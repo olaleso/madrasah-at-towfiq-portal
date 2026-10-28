@@ -111,3 +111,8 @@ The Worker config now sets `EMAIL_FROM` to `Madrasah At-Towfiq <notifications@at
 ## v1.0.14 branded guardian invitations
 
 Run `git pull origin main`, `npm run test`, then `npm run deploy`. No database migration is needed. The parent invitation email loads the existing public logo at `https://portal.attowfiqmasjid.org/assets/at-towfiq-madrasah-logo.png`, uses a secure activation URL on the official portal, and sets Reply-To to `admissions@attowfiqmasjid.org`. Verify that this reply address can receive email before inviting real families. The responsive confirmation modal allows manual correction of the preferred first name without changing the original admission record. Check an actual Gmail/Outlook delivery after deployment.
+
+## v1.0.15 application acknowledgement
+
+After applying the code with `git pull origin main`, run `npm run test` followed by `npm run deploy`. New submissions entered through **Admissions → New application** trigger a styled acknowledgement sent using `notifications@attowfiqmasjid.org`, with `Reply-To: admissions@attowfiqmasjid.org`. Test with a fictional child and an email inbox you control. Verify the guardian receives an **application received** message with a reference, not an acceptance message; then edit the application and verify the acknowledgement is not resent. The provider may accept a message without guaranteeing final inbox delivery, so check real inboxes and provider logs. Failed email delivery never invalidates the newly saved application. The current admissions form is staff-only, not yet public self-service.
+

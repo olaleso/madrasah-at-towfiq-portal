@@ -194,3 +194,13 @@ Fixes MATT registration-number year formatting for newly accepted students, and 
 - Replaces the plain-text-looking parent invitation with a responsive, table-based HTML email in navy/blue using the public Madrasah At-Towfiq logo, Arabic and transliterated taslīm, formal salutation (“Dear [preferred first name]”), admission confirmation, clear activation button, single-use 7-day expiry, and admissions reply address. Parent names and activation URLs are HTML-escaped, and the email subject contains no pupil identity.
 - Existing admissions store a single guardian full-name field. The automatic first invitation uses the last word of that field as its provisional greeting (common surname-first forms). Staff should verify the name using the editable invitation dialog when inviting or resending, especially when name order differs.
 - No D1 migrations or resets. `npm run test` validates the email payload using an intercepted Resend request; production delivery still depends on valid verified Resend configuration.
+
+## v1.0.15 — Immediate application received email
+
+- Creating an admission through the authorised **Admissions → New application** form now saves the record first, then attempts a separate, formal HTML acknowledgement to the guardian email. A rejection or email logging failure does not roll back the application. The response shows whether Resend accepted the receipt for delivery; the portal warns an administrator if it was not sent.
+- Branded receipt uses the official logo and navy/blue palette, Arabic and transliterated taslīm, the registered guardian name, a reference in the format `MAT-YYYY-XXXXXXXXXX`, received date, review steps, and admissions contact email. The reference also appears in the application's staff directory row and detail view.
+- Explicitly distinguishes **application received / awaiting review** from **admission accepted**; no activation link is issued until admission acceptance. The email excludes date of birth, medical/allergy information, home address, and other sensitive form fields.
+- Email is dispatched only upon initial creation (`POST /api/admissions`), not every edit or change of status. Existing historical applications will not be backfilled automatically.
+- The current Admissions form is accessible only to authorised staff/admin; a public self-service admissions page would be a separate change requiring abuse prevention and safeguarding review.
+- No schema migration or D1 reset required. Verified Resend sending and the admissions reply inbox are prerequisites for a complete email experience.
+
