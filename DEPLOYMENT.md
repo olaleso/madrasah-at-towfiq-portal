@@ -162,3 +162,14 @@ Run `git pull origin main`, `npm run test` (must PASS), then `npm run deploy`. N
 4. Test **Forgot password?** on the login page using an active *test account* whose email inbox you control. Confirm the branded email arrives from `notifications@attowfiqmasjid.org`, the one-use 30-minute link opens the official portal, mismatched passwords are rejected and a successful reset signs out other sessions. A pending invitation account should activate its account instead of using recovery.
 
 The backend uses the existing verified Resend `RESEND_API_KEY`, email sender and admissions reply-to. No additional API key or email domain is needed. For live verification, use only accounts and inboxes you control.
+
+## v1.3.0 — Family fees & receipts
+
+Code-only upgrade. From the Cloudflare-connected PowerShell project folder:
+```powershell
+git pull origin main
+npm run test
+if ($LASTEXITCODE -ne 0) { throw "Tests failed. Do not deploy." }
+npm run deploy
+```
+Use a guardian email you control to create an individual test invoice. A branded new-invoice notice should arrive. Record a small manual test payment and confirm the receipt email describes the recorded payment and remaining balance. From **Fees & payments**, use **Send statement** to test a manual reminder for an outstanding invoice. A settled invoice must not be sent a balance reminder. Check the parent's own fee account for accurate paid/outstanding amounts and due-date badges. Avoid sending financial reminders to real families until account balances and guardian links are confirmed. Bulk invoice creation continues to be independent of outbound email; send statements individually if follow-up is needed. Email provider acceptance does not guarantee final inbox delivery, and these notices do not charge a payment method.

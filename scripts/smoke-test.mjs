@@ -533,6 +533,93 @@ try{
  delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
 }
 
+// v1.3.0 — Finance emails: new invoice, balance reminder and payment receipt.
+// No bank transaction is created; the corresponding ledger record always saves first.
+const originalFinanceFetch=globalThis.fetch;
+const financePayloads=[];
+env.RESEND_API_KEY='test-finance-emails';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async(url,options)=>{
+ assert.equal(String(url),'https://api.resend.com/emails');
+ financePayloads.push(JSON.parse(options.body));
+ return new Response(JSON.stringify({id:'finance-email-test-id'}),{status:200,headers:{'content-type':'application/json'}});
+};
+try{
+ const fee=await req('/fees',{student_id,period:'2027-06',amount_pence:3000,due_date:'2027-06-30'});
+ assert.equal(fee.status,200,JSON.stringify(fee.data));
+ assert.equal(fee.data.notification_status,'sent','New individual invoice emails the guardian');
+ const testFinanceInvoiceId=fee.data.id;
+ assert.equal(financePayloads.length,1);
+ assert.equal(financePayloads[0].to[0],application.guardian_email);
+ assert.equal(financePayloads[0].reply_to,env.ADMISSIONS_EMAIL);
+ assert.match(financePayloads[0].subject,/New fee invoice/);
+ assert.ok(financePayloads[0].html.includes('Updated Learner'),'Full student name is in the finance email body');
+ assert.ok(financePayloads[0].html.includes('June 2027'));
+ assert.ok(financePayloads[0].html.includes('30 June 2027'));
+ assert.ok(financePayloads[0].html.includes('£30.00'));
+ assert.ok(financePayloads[0].html.includes('السلام عليكم ورحمة الله وبركاته'));
+ assert.ok(financePayloads[0].html.includes('at-towfiq-madrasah-logo.png'));
+ assert.ok(!financePayloads[0].subject.includes('Learner'),'The subject must not reveal pupil name');
+ const reminder=await req('/fees/notify',{invoice_id:testFinanceInvoiceId});
+ assert.equal(reminder.status,200,JSON.stringify(reminder.data));
+ assert.equal(reminder.data.notification_status,'sent');
+ assert.equal(financePayloads.length,2);
+ assert.match(financePayloads[1].subject,/Fee balance reminder/);
+ assert.ok(financePayloads[1].html.includes('£30.00'));
+ // Only admin/staff can send messages, and parents cannot target other pupil invoices.
+ const savedCookie=cookie,savedCsrf=csrf;
+ cookie=parent_cookie;csrf=parent_csrf;
+ const restricted=await req('/fees/notify',{invoice_id:testFinanceInvoiceId});
+ assert.equal(restricted.status,403,'Parents cannot issue balance reminders');
+ cookie=savedCookie;csrf=savedCsrf;
+ assert.equal(financePayloads.length,2);
+ const pmt=await req('/payments',{invoice_id:testFinanceInvoiceId,amount_pence:1000,method:'cash'});
+ assert.equal(pmt.status,200,JSON.stringify(pmt.data));
+ assert.equal(pmt.data.notification_status,'sent');
+ assert.equal(financePayloads.length,3);
+ assert.match(financePayloads[2].subject,/Payment receipt/);
+ assert.ok(financePayloads[2].html.includes('£10.00'),'Receipt identifies the actual recorded amount');
+ assert.ok(financePayloads[2].html.includes('£20.00'),'Receipt reports the remaining invoice balance');
+ assert.ok(financePayloads[2].html.includes('Updated Learner'));
+ assert.ok(!financePayloads[2].subject.includes('Updated Learner'));
+ const allFees=await req('/fees',null,'GET');
+ assert.equal(allFees.status,200);
+ assert.equal(allFees.data.items.find(x=>x.id===testFinanceInvoiceId).paid_pence,1000);
+ const settle=await req('/payments',{invoice_id:testFinanceInvoiceId,amount_pence:2000,method:'bank_transfer'});
+ assert.equal(settle.status,200);
+ assert.equal(settle.data.notification_status,'sent');
+ assert.ok(financePayloads.at(-1).html.includes('Invoice fully paid'));
+ const noReminder=await req('/fees/notify',{invoice_id:testFinanceInvoiceId});
+ assert.equal(noReminder.status,200);
+ assert.equal(noReminder.data.notification_status,'already_paid','Never email a payment demand for a settled invoice');
+ assert.equal(financePayloads.length,4);
+ const bogus=await req('/fees/notify',{invoice_id:'not-a-real-invoice'});
+ assert.equal(bogus.status,404);
+}finally{
+ globalThis.fetch=originalFinanceFetch;
+ delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
+}
+// Provider outages never roll back a fee invoice or recorded cash payment.
+const priorFinanceFetch=globalThis.fetch;
+env.RESEND_API_KEY='test-finance-provider-outage';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async()=>new Response('Unavailable',{status:503});
+try{
+ const created=await req('/fees',{student_id,period:'2027-07',amount_pence:2500,due_date:'2027-07-30'});
+ assert.equal(created.status,200,'Invoice must be saved despite failed notification');
+ assert.equal(created.data.notification_status,'not_sent');
+ assert.ok(sqlite.prepare('SELECT id FROM fee_invoices WHERE id=?').get(created.data.id));
+ const recorded=await req('/payments',{invoice_id:created.data.id,amount_pence:2500,method:'cash'});
+ assert.equal(recorded.status,200,'Payment must save despite email failure');
+ assert.equal(recorded.data.notification_status,'not_sent');
+ assert.ok(sqlite.prepare('SELECT id FROM payments WHERE id=?').get(recorded.data.id));
+}finally{
+ globalThis.fetch=priorFinanceFetch;
+ delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
+}
+
 z=await req('/auth/logout',{});assert.equal(z.status,200);
 console.log('PASS: admissions and MATT registration numbers, login, classes, student profiles, valid/invalid Quran ranges, homework completion, behaviour, attendance, fees, account isolation, reports and settings.');
 
@@ -571,6 +658,11 @@ for(const path of ['../public/app.js','../public/index.html','../src/worker.js',
 }
 assert.doesNotThrow(()=>new Function(admissionsUi),'The portal UI script must parse after dialog conversion');
 assert.ok(admissionsUi.includes('function confirmDialog('),'Reusable custom confirm dialog is available');
+assert.ok(admissionsUi.includes('data-action="finance-notify"'),'Staff can send invoice statements');
+assert.ok(admissionsUi.includes("if(a==='finance-notify')"),'Finance reminder has branded confirmation and action');
+assert.ok(admissionsUi.includes('My family fee account'),'Parents see their private fee account');
+assert.ok(admissionsUi.includes('fee-status-line'),'Fee statements show clear invoice statuses');
+
 assert.ok(admissionsUi.includes("classChoices:get('classes')"),'Admission approval requires class selection');
 assert.ok(admissionsUi.includes('class-roster-form'),'Class roster allocation form is accessible');
 assert.ok(admissionsUi.includes('class-assignment-form'),'Student directory class assignment available');

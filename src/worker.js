@@ -425,6 +425,77 @@ async function notifyGuardianAboutRecord(db,env,studentId,kind,item,actor){
  return {notification_status:result};
 }
 
+
+const financeMoney=pence=>'£'+(Number(pence||0)/100).toFixed(2);
+const financePeriod=period=>{
+ const match=/^(\d{4})-(0[1-9]|1[0-2])$/.exec(String(period||''));
+ if(!match)return String(period||'');
+ return new Intl.DateTimeFormat('en-GB',{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(Date.UTC(Number(match[1]),Number(match[2])-1,1)));
+};
+function financeNoticeHtml({recipient,kind,invoice,paidPence=0,paymentPence=0,remainingPence=0,admissionsEmail}){
+ const name=escapeHtml(guardianGreetingName('',recipient.guardianName));
+ const child=escapeHtml(recipient.fullName);
+ const period=escapeHtml(financePeriod(invoice.period));
+ const amount=escapeHtml(financeMoney(invoice.amount_pence));
+ const paid=escapeHtml(financeMoney(paidPence));
+ const remaining=escapeHtml(financeMoney(remainingPence));
+ const payment=escapeHtml(financeMoney(paymentPence));
+ const due=invoice.due_date?escapeHtml(safeEmailDate(invoice.due_date)):'See your parent portal';
+ const support=escapeHtml(admissionsEmail||'admissions@attowfiqmasjid.org');
+ const receipt=kind==='receipt',reminder=kind==='reminder';
+ const title=receipt?'Your payment has been recorded':reminder?'Your madrasah fee statement':'A new fee invoice is available';
+ const status=receipt?(remainingPence===0?'Invoice fully paid':'Payment received · balance remaining'):reminder?'Fee balance reminder':'New invoice issued';
+ const intro=receipt?'Thank you for your payment. We are pleased to confirm that it has been entered in the madrasah fee ledger.':reminder?'This is a courteous reminder of an outstanding balance on your child’s fee account. If you have recently paid, please contact the admissions team so the records can be checked.':'A new fee invoice has been issued for your child. Please review the amount and due date below.';
+ const extra=receipt?`<tr><td style="padding:7px 0;color:#7184a3;font-size:13px">Payment recorded</td><td align="right" style="padding:7px 0;font-weight:bold;color:#193962">${payment}</td></tr>`:'';
+ return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>${title} | Madrasah At-Towfiq</title>
+ <style>@media only screen and (max-width:600px){.finance-wrap{width:100%!important}.finance-pad{padding:26px 21px!important}.finance-title{font-size:25px!important}.finance-cta{display:block!important;text-align:center!important}}</style></head>
+ <body style="margin:0;background:#f2f5fb;color:#243a5e;font-family:Arial,Helvetica,sans-serif"><span style="display:none!important;max-height:0;opacity:0;overflow:hidden">A private fee update is available in your family portal.</span>
+ <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f2f5fb"><tr><td align="center" style="padding:32px 13px">
+ <table role="presentation" width="580" class="finance-wrap" cellpadding="0" cellspacing="0" style="width:100%;max-width:580px;background:#fff;border:1px solid #dfe8f6;border-radius:18px;overflow:hidden">
+ <tr><td style="padding:29px 33px 23px;text-align:center;background:#172e57"><img src="https://portal.attowfiqmasjid.org/assets/at-towfiq-madrasah-logo.png" alt="Madrasah At-Towfiq" width="183" style="display:block;width:183px;max-width:80%;height:auto;padding:7px;border-radius:8px;background:#fff;margin:0 auto 15px"><p style="color:#bdd8fb;font-size:11px;letter-spacing:2px;margin:0">MADRASAH AT-TOWFIQ · BOLTON</p></td></tr>
+ <tr><td class="finance-pad" style="padding:37px 41px 29px">
+ <p style="font-size:11px;font-weight:bold;letter-spacing:1.6px;color:#376bbd;margin:0 0 11px">FAMILY ACCOUNTS · PRIVATE UPDATE</p>
+ <h1 class="finance-title" style="font:normal 30px/1.28 Georgia,'Times New Roman',serif;color:#1e3965;margin:0 0 12px">${title}</h1>
+ <p style="font-size:13px;color:#398565;font-weight:bold;margin:0 0 24px">${status}</p>
+ <p lang="ar" dir="rtl" style="text-align:left;color:#224777;font-size:23px;margin:0 0 5px">السلام عليكم ورحمة الله وبركاته</p>
+ <p style="font-style:italic;color:#7b8ba4;font-size:13px;margin:0 0 23px">Assalāmu ʿalaykum wa raḥmatullāhi wa barakātuh</p>
+ <p style="line-height:1.8;font-size:15px;color:#435778;margin:0 0 18px"><strong>Dear ${name},</strong></p>
+ <p style="line-height:1.9;font-size:15px;color:#435778;margin:0 0 16px">${intro}</p>
+ <p style="line-height:1.8;font-size:14px;color:#536c8b;margin:0 0 23px">Student: <strong>${child}</strong></p>
+ <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f0f5fe;border:1px solid #dbe6f7;border-radius:12px;margin-bottom:24px"><tr><td style="padding:17px 19px">
+ <p style="font-size:11px;letter-spacing:1.2px;color:#426aa4;font-weight:bold;margin:0 0 13px">FEE ACCOUNT SUMMARY</p>
+ <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+ <tr><td style="padding:7px 0;font-size:13px;color:#7184a3">Billing period</td><td align="right" style="padding:7px 0;font-weight:bold;color:#193962">${period}</td></tr>
+ <tr><td style="padding:7px 0;font-size:13px;color:#7184a3">Invoice total</td><td align="right" style="padding:7px 0;font-weight:bold;color:#193962">${amount}</td></tr>
+ ${extra}
+ <tr><td style="padding:7px 0;font-size:13px;color:#7184a3">Total paid</td><td align="right" style="padding:7px 0;font-weight:bold;color:#193962">${paid}</td></tr>
+ <tr><td style="padding:9px 0 7px;font-size:14px;color:#244778;border-top:1px solid #d8e4f4">Balance remaining</td><td align="right" style="padding:9px 0 7px;font-size:17px;font-weight:bold;color:#244778;border-top:1px solid #d8e4f4">${remaining}</td></tr>
+ <tr><td style="padding:7px 0;font-size:13px;color:#7184a3">Due date</td><td align="right" style="padding:7px 0;font-size:13px;font-weight:bold;color:#193962">${due}</td></tr>
+ </table></td></tr></table>
+ <p style="font-size:13px;color:#5c7290;line-height:1.8;margin:0 0 22px">The amount above reflects the madrasah’s recorded ledger. This email is ${receipt?'a receipt for a payment recorded by staff':'a statement of the amount currently recorded'}; it does not process a bank payment or establish a direct debit.</p>
+ <p style="margin:0 0 26px"><a href="https://portal.attowfiqmasjid.org/" class="finance-cta" style="display:inline-block;background:#386bc8;color:#fff;text-decoration:none;padding:16px 24px;border-radius:9px;font-size:14px;font-weight:bold">View my fee statement &nbsp;→</a></p>
+ <p style="font-size:12px;color:#697d9a;line-height:1.75;margin:0">If you believe a payment is missing or have questions, contact <a href="mailto:${support}" style="color:#3565bc">${support}</a>. Please do not reply with card or bank-account information.</p>
+ <p style="font-size:14px;color:#435778;line-height:1.8;margin:23px 0 0">Jazākum Allāhu khayran,<br><strong>The Madrasah Accounts Team</strong><br>Madrasah At-Towfiq</p>
+ </td></tr><tr><td style="padding:19px 32px;text-align:center;background:#f7f9fd;color:#8296b0;font-size:11px">Rooted in faith, guided by knowledge.</td></tr>
+ </table></td></tr></table></body></html>`;
+}
+async function financeEmailForInvoice(db,env,invoiceId,kind,actor,paymentPence=0){
+ const invoice=await first(db,'SELECT id,student_id,period,amount_pence,due_date FROM fee_invoices WHERE id=?',invoiceId);
+ if(!invoice)return {notification_status:'not_sent'};
+ const paid=await first(db,'SELECT COALESCE(SUM(amount_pence),0) AS total FROM payments WHERE invoice_id=?',invoiceId);
+ const paidPence=Number(paid?.total||0),remainingPence=Math.max(0,Number(invoice.amount_pence)-paidPence);
+ if(kind==='reminder'&&remainingPence===0)return {notification_status:'already_paid'};
+ const recipient=await studentNotificationRecipient(db,invoice.student_id);
+ if(!recipient)return {notification_status:'no_guardian_email'};
+ const html=financeNoticeHtml({recipient,kind,invoice,paidPence,paymentPence,remainingPence,admissionsEmail:env.ADMISSIONS_EMAIL});
+ const subject=kind==='receipt'?'Payment receipt | Madrasah At-Towfiq':kind==='reminder'?'Fee balance reminder | Madrasah At-Towfiq':'New fee invoice | Madrasah At-Towfiq';
+ const sent=await mail(env,recipient.to,subject,html,{replyTo:env.ADMISSIONS_EMAIL});
+ const result=sent.sent?'sent':'not_sent';
+ try{await audit(db,actor,'family_fee_'+kind,'invoice',invoiceId,result);}catch{}
+ return {notification_status:result};
+}
+
 const escapeHtml=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function handle(req,env){
  const u=new URL(req.url), path=u.pathname,method=req.method,db=env.DB;
@@ -827,11 +898,30 @@ async function handle(req,env){
  }
  if(path==='/api/fees'){
   if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT f.*,s.first_name,s.last_name,(SELECT COALESCE(SUM(p.amount_pence),0) FROM payments p WHERE p.invoice_id=f.id) AS paid_pence FROM fee_invoices f JOIN students s ON s.id=f.student_id WHERE ${s.where} ORDER BY f.period DESC,s.first_name`,...s.args)});}
-  requireRole(user,'admin','staff');if(method==='POST'){const b=await input(req);await permittedStudent(db,user,b.student_id);if(!/^\d{4}-\d{2}$/.test(b.period||'')||!isMoney(b.amount_pence))error('Period (YYYY-MM) and positive amount required');const fid=id();await run(db,'INSERT INTO fee_invoices(id,student_id,period,amount_pence,due_date) VALUES(?,?,?,?,?)',fid,b.student_id,b.period,Number(b.amount_pence),b.due_date||null);await audit(db,user,'issue','invoice',fid);return json({ok:true,id:fid});}
+  requireRole(user,'admin','staff');if(method==='POST'){const b=await input(req);await permittedStudent(db,user,b.student_id);if(!/^\d{4}-\d{2}$/.test(b.period||'')||!isMoney(b.amount_pence))error('Period (YYYY-MM) and positive amount required');const fid=id();await run(db,'INSERT INTO fee_invoices(id,student_id,period,amount_pence,due_date) VALUES(?,?,?,?,?)',fid,b.student_id,b.period,Number(b.amount_pence),b.due_date||null);await audit(db,user,'issue','invoice',fid);
+   let notification={notification_status:'not_sent'};
+   try{notification=await financeEmailForInvoice(db,env,fid,'issued',user);}
+   catch(e){try{await audit(db,user,'fee_notification_error','invoice',fid,short(e.message,160));}catch{}}
+   return json({ok:true,id:fid,...notification});}
+ }
+ if(path==='/api/fees/notify' && method==='POST'){
+  requireRole(user,'admin','staff');
+  const b=await input(req);
+  if(!b.invoice_id)error('Select an invoice',400);
+  const invoice=await first(db,'SELECT id,student_id FROM fee_invoices WHERE id=?',b.invoice_id);
+  if(!invoice)error('Invoice not found',404);
+  let result={notification_status:'not_sent'};
+  try{result=await financeEmailForInvoice(db,env,invoice.id,'reminder',user);}
+  catch(err){try{await audit(db,user,'fee_reminder_error','invoice',invoice.id,short(err.message,150));}catch{}}
+  return json({ok:true,...result});
  }
  if(path==='/api/payments'){
   if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT p.*,s.first_name,s.last_name,f.period FROM payments p JOIN students s ON s.id=p.student_id JOIN fee_invoices f ON f.id=p.invoice_id WHERE ${s.where} ORDER BY p.created_at DESC`,...s.args)});}
-  requireRole(user,'admin','staff');if(method==='POST'){const b=await input(req),f=await first(db,'SELECT * FROM fee_invoices WHERE id=?',b.invoice_id);if(!f)error('Invoice not found',404);if(!isMoney(b.amount_pence)||Number(b.amount_pence)<=0)error('Valid payment amount required');const paid=await first(db,'SELECT COALESCE(SUM(amount_pence),0) AS total FROM payments WHERE invoice_id=?',f.id);if(Number(b.amount_pence)>f.amount_pence-paid.total)error('Payment exceeds outstanding invoice balance');const pid=id();await run(db,'INSERT INTO payments(id,invoice_id,student_id,amount_pence,method,reference,recorded_by) VALUES(?,?,?,?,?,?,?)',pid,f.id,f.student_id,Number(b.amount_pence),short(b.method,30)||'manual',short(b.reference,120),user.id);await audit(db,user,'payment','invoice',f.id,`${b.amount_pence} pence`);return json({ok:true,id:pid});}
+  requireRole(user,'admin','staff');if(method==='POST'){const b=await input(req),f=await first(db,'SELECT * FROM fee_invoices WHERE id=?',b.invoice_id);if(!f)error('Invoice not found',404);if(!isMoney(b.amount_pence)||Number(b.amount_pence)<=0)error('Valid payment amount required');const paid=await first(db,'SELECT COALESCE(SUM(amount_pence),0) AS total FROM payments WHERE invoice_id=?',f.id);if(Number(b.amount_pence)>f.amount_pence-paid.total)error('Payment exceeds outstanding invoice balance');const pid=id();await run(db,'INSERT INTO payments(id,invoice_id,student_id,amount_pence,method,reference,recorded_by) VALUES(?,?,?,?,?,?,?)',pid,f.id,f.student_id,Number(b.amount_pence),short(b.method,30)||'manual',short(b.reference,120),user.id);await audit(db,user,'payment','invoice',f.id,`${b.amount_pence} pence`);
+   let notification={notification_status:'not_sent'};
+   try{notification=await financeEmailForInvoice(db,env,f.id,'receipt',user,Number(b.amount_pence));}
+   catch(e){try{await audit(db,user,'fee_receipt_error','invoice',f.id,short(e.message,160));}catch{}}
+   return json({ok:true,id:pid,...notification});}
  }
  if(path==='/api/announcements'){
   if(method==='GET'){let rows=await all(db,'SELECT a.*,u.name AS author FROM announcements a LEFT JOIN users u ON a.created_by=u.id ORDER BY a.created_at DESC LIMIT 100');return json({items:rows.filter(x=>x.audience==='all'||x.audience===user.role||user.role==='admin'||user.role==='staff')});}
