@@ -25,7 +25,7 @@ oldDb.close();
 const db={prepare(sql){const stmt=sqlite.prepare(sql);return {bind(...params){return {first(){return stmt.get(...params)||null;},all(){return {results:stmt.all(...params)};},run(){return stmt.run(...params);}};}};},batch(ops){sqlite.exec('BEGIN');try{const results=ops.map(x=>({meta:{changes:Number(x.run().changes||0)}}));sqlite.exec('COMMIT');return results;}catch(e){sqlite.exec('ROLLBACK');throw e;}}};
 const env={DB:db,SETUP_KEY:'twentyfour-letters-bootstrap-secure',SCHOOL_NAME:'Madrasah At-Towfiq',ASSETS:{fetch:()=>new Response('page')}};
 let cookie='',csrf='';
-async function req(path,body,verb='POST',auth=true){const headers={'origin':'http://localhost:8787'};if(body){headers['Content-Type']='application/json';if(auth)headers['x-csrf-token']=csrf;}if(cookie&&auth)headers.cookie=cookie;const response=await worker.fetch(new Request('http://localhost:8787/api'+path,{method:body?verb:'GET',headers,body:body?JSON.stringify(body):undefined}),env);const data=await response.json();return {status:response.status,data,response};}
+async function req(path,body,verb='POST',auth=true,view=''){const headers={'origin':'http://localhost:8787'};if(view)headers['x-portal-view']=view;if(body){headers['Content-Type']='application/json';if(auth)headers['x-csrf-token']=csrf;}if(cookie&&auth)headers.cookie=cookie;const response=await worker.fetch(new Request('http://localhost:8787/api'+path,{method:body?verb:'GET',headers,body:body?JSON.stringify(body):undefined}),env);const data=await response.json();return {status:response.status,data,response};}
 let z=await req('/auth/setup-status');assert.equal(z.data.needs_setup,true);
 z=await req('/auth/setup',{setup_key:env.SETUP_KEY,name:'Admin User',email:'admin@example.test',password:'this-is-a-secure-test-password'},'POST',false);assert.equal(z.status,200,JSON.stringify(z.data));cookie=z.response.headers.get('set-cookie').split(';')[0];csrf=z.data.csrf;
 // Enforce Cloudflare-compatible hashing and exercise login/password verification.
@@ -93,6 +93,7 @@ assert.ok(z.data.invitation_url,'Without Resend a private guardian activation li
 const autoGuardianUrl=z.data.invitation_url;
 const guardian_id=sqlite.prepare("SELECT id FROM users WHERE email=? AND role='parent'").get(application.guardian_email).id;
 assert.equal(sqlite.prepare('SELECT password_hash FROM users WHERE id=?').get(guardian_id).password_hash,null,'Automatic parent invitation must not activate the account');
+assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(application_id).parent_id,guardian_id,'Accepting immediately links a newly invited guardian');
 const student_id=z.data.student_id;assert.equal(student_id,application_id);
 assert.equal(sqlite.prepare('SELECT student_no FROM students WHERE id=?').get(student_id).student_no,'MATT-'+new Date().getUTCFullYear()+'-0001');
 z=await req('/students');assert.equal(z.data.items.length,1);assert.equal(z.data.items[0].first_name,'Sample');assert.equal(z.data.items[0].dob,application.dob);
@@ -184,14 +185,14 @@ z=await req('/fees/bulk',{mode:'all',period:'2027-01',amount_pence:3000});assert
 z=await req('/search?q=Sample');assert.equal(z.status,200,JSON.stringify(z.data));assert.equal(z.data.students.length,1);
 z=await req('/reports');const report=z.data.items.find(x=>x.id===student_id);assert.ok(report);assert.equal(report.homework_complete,1);assert.equal(report.behaviour_points,3);
 // Guardian activates the invitation automatically created by admission acceptance.
-assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student_id).parent_id,null,'Pending invitation must not link the pupil before activation');
+assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student_id).parent_id,guardian_id,'Pupil is linked before parent activates, while pending account remains inactive');
 z=await req('/guardians');assert.equal(z.status,200);assert.equal(z.data.items.length,3,'Guardian directory includes accepted pupils');
 assert.ok(z.data.items.some(x=>x.student_id===student_id&&x.account_id===guardian_id));
 const invite=new URL(autoGuardianUrl).searchParams.get('invite');
 let pa=await req('/auth/accept-invite',{token:invite,password:'twelve-character-guardian-pass'},'POST',false);assert.equal(pa.status,200);
 const parent_cookie=pa.response.headers.get('set-cookie').split(';')[0];const parent_csrf=pa.data.csrf;
 assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student_id).parent_id,guardian_id,'Activation links the unlinked accepted pupil by verified invitation email');
-assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student2).parent_id,null,'An unrelated pupil must not be linked');
+assert.notEqual(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student2).parent_id,guardian_id,'Other pupil stays with its own guardian');
 const oldCookie=cookie,oldCsrf=csrf;cookie=parent_cookie;csrf=parent_csrf;
 z=await req('/students');assert.equal(z.status,200);assert.equal(z.data.items.length,1);
 z=await req('/behaviour');assert.equal(z.status,200);assert.equal(z.data.items.length,1);
@@ -222,6 +223,54 @@ assert.equal(z.status,200,JSON.stringify(z.data));assert.ok(z.data.invitation_ur
 const staffPass=await req('/auth/accept-invite',{token:new URL(z.data.invitation_url).searchParams.get('invite'),password:'staff-password-long-enough'},'POST',false);
 assert.equal(staffPass.status,200,'Updated staff email accepts the new activation link');
 z=await req('/users',{id:staff_id,email:'admin@example.test'},'PATCH');assert.equal(z.status,409,'Duplicate email is rejected');
+
+// A teacher whose email matches a new guardian remains a teacher and can
+// access their own child using a restricted Family view.
+const teacherParentApplication={...application,first_name:'Hamza',last_name:'StaffChild',guardian_email:'office.b@example.test',guardian_name:'Office Support A'};
+z=await req('/admissions',teacherParentApplication);assert.equal(z.status,200,JSON.stringify(z.data));
+const teacherParentApplicationId=z.data.id;
+const linkedMailFetch=globalThis.fetch;
+let linkedAccountMail=null;
+env.RESEND_API_KEY='test-existing-staff-parent';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async(url,options)=>{
+ linkedAccountMail=JSON.parse(options.body);
+ return new Response(JSON.stringify({id:'existing-account-linked'}),{status:200,headers:{'content-type':'application/json'}});
+};
+try{
+ z=await req('/admissions',{id:teacherParentApplicationId,status:'accepted'},'PATCH');
+ assert.equal(z.status,200,JSON.stringify(z.data));
+ assert.equal(z.data.invitation_status,'linked_existing','Existing teacher receives linked-account notice instead of conflict error');
+ assert.equal(z.data.email_status,'sent');
+ assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(z.data.student_id).parent_id,staff_id);
+ assert.equal(sqlite.prepare('SELECT role FROM users WHERE id=?').get(staff_id).role,'teacher','Staff role remains unchanged');
+ assert.equal(linkedAccountMail.to[0],'office.b@example.test');
+ assert.ok(linkedAccountMail.html.includes('Hamza StaffChild'));
+ assert.ok(linkedAccountMail.html.includes('Family view'));
+}finally{
+ globalThis.fetch=linkedMailFetch;
+ delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
+}
+const storedTeacherChild=sqlite.prepare('SELECT id FROM students WHERE parent_id=?').get(staff_id);
+assert.ok(storedTeacherChild);
+const adminCookieBeforeStaff=cookie,adminCsrfBeforeStaff=csrf;
+cookie=staffPass.response.headers.get('set-cookie').split(';')[0];
+csrf=staffPass.data.csrf;
+z=await req('/auth/me',null,'GET');assert.equal(z.status,200,JSON.stringify(z.data));
+assert.equal(z.data.user.role,'teacher');
+assert.equal(z.data.user.has_family,true,'Staff parent can switch to family access');
+z=await req('/students',null,'GET',true,'family');assert.equal(z.status,200);
+assert.equal(z.data.items.length,1,'Family view only shows linked pupil');
+assert.equal(z.data.items[0].id,storedTeacherChild.id);
+z=await req('/fees',null,'GET',true,'family');assert.equal(z.status,200,'Family mode reads own fees');
+z=await req('/users',null,'GET',true,'family');assert.equal(z.status,403,'Family mode denies staff directory');
+z=await req('/attendance',{records:[{student_id:storedTeacherChild.id,date:'2026-11-18',status:'present'}]},'POST',true,'family');
+assert.equal(z.status,403,'Family mode cannot record attendance');
+z=await req('/students');assert.equal(z.status,200,'Teacher view remains accessible');
+assert.ok(!z.data.items.some(x=>x.id===storedTeacherChild.id),'Teacher view retains class-scoped permissions');
+cookie=adminCookieBeforeStaff;csrf=adminCsrfBeforeStaff;
+
 z=await req('/users',{id:guardian_id,name:'Updated Guardian'},'PATCH');assert.equal(z.status,200);
 
  
@@ -370,6 +419,10 @@ for(const path of ['../public/app.js','../public/index.html','../src/worker.js',
 assert.doesNotThrow(()=>new Function(admissionsUi),'The portal UI script must parse after dialog conversion');
 assert.ok(admissionsUi.includes('function confirmDialog('),'Reusable custom confirm dialog is available');
 assert.ok(admissionsUi.includes('function familyDashboard()'),'Parent family dashboard is present');
+assert.ok(admissionsUi.includes('family-switch'),'Family view switch appears in the UI');
+assert.ok(admissionsUi.includes('x-portal-view'),'Family view requests carry their restricted role');
+assert.ok(admissionsUi.includes("if(a==='family-switch')"),'Switch action is interactive');
+assert.ok(admissionsUi.includes('Linked · activation pending'),'Pending and active guardian status distinguished');
 assert.ok(admissionsUi.includes("if(userCan('parent'))return familyDashboard()"),'Parent accounts receive family-specific dashboard');
 assert.ok(admissionsUi.includes('get(\'attendance\')'),'Family dashboard loads attendance records');
 assert.ok(admissionsUi.includes('get(\'behaviour\')'),'Family dashboard loads behaviour points');

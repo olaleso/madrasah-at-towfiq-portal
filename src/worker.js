@@ -69,9 +69,26 @@ function requireRole(user,...roles){if(!roles.includes(user.role)) error('You do
 function consented(req){const origin=req.headers.get('origin');if(origin&&origin!==new URL(req.url).origin)error('Invalid origin',403);const site=req.headers.get('sec-fetch-site');if(site&&!['same-origin','none'].includes(site))error('Cross-site request blocked',403);}
 function cookie(req){return req.headers.get('cookie')?.split(';').map(x=>x.trim()).find(x=>x.startsWith('at_session='))?.slice(11)||'';}
 function setCookie(req,token,age){const secure=new URL(req.url).protocol==='https:'?'; Secure':'';return `at_session=${token}; HttpOnly; Path=/; SameSite=Lax${secure}; Max-Age=${age}`;}
-async function session(req,env){const token=cookie(req);if(!token)return null;const digest=await sha(token);const user=await first(env.DB,`SELECT u.id,u.name,u.email,u.role,u.active,s.csrf_hash,s.token_hash FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?`,digest,iso());return user?.active?user:null;}
+async function session(req,env){
+ const token=cookie(req);if(!token)return null;
+ const digest=await sha(token);
+ const user=await first(env.DB,`SELECT u.id,u.name,u.email,u.role,u.active,s.csrf_hash,s.token_hash FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?`,digest,iso());
+ if(!user?.active)return null;
+ if(req.headers.get('x-portal-view')==='family' && user.role!=='parent'){
+  const linked=await first(env.DB,"SELECT id FROM students WHERE parent_id=? AND status='active' LIMIT 1",user.id);
+  if(!linked)error('Family access is not enabled for this account',403);
+  user.primary_role=user.role;
+  user.role='parent'; // Restrict ALL API calls to parent permissions in Family view.
+ }
+ return user;
+}
 // Session response constructed separately so cookie is always set on login.
-async function signedIn(req,env,user){const token=random(32),csrf=random(24);await run(env.DB,'INSERT INTO sessions(token_hash,csrf_hash,user_id,expires_at) VALUES(?,?,?,?)',await sha(token),await sha(csrf),user.id,nextIso(SESSION_AGE));return json({ok:true,user:{id:user.id,name:user.name,email:user.email,role:user.role},csrf},200,{'Set-Cookie':setCookie(req,token,SESSION_AGE)});}
+async function signedIn(req,env,user){
+ const token=random(32),csrf=random(24);
+ await run(env.DB,'INSERT INTO sessions(token_hash,csrf_hash,user_id,expires_at) VALUES(?,?,?,?)',await sha(token),await sha(csrf),user.id,nextIso(SESSION_AGE));
+ const family=await first(env.DB,"SELECT id FROM students WHERE parent_id=? AND status='active' LIMIT 1",user.id);
+ return json({ok:true,user:{id:user.id,name:user.name,email:user.email,role:user.role,has_family:!!family},csrf},200,{'Set-Cookie':setCookie(req,token,SESSION_AGE)});
+}
 async function audit(db,user,action,entity,entity_id='',detail=''){await run(db,'INSERT INTO audit_log(id,actor_id,action,entity,entity_id,detail) VALUES(?,?,?,?,?,?)',id(),user?.id||null,action,entity,entity_id,short(detail,600));}
 function studentScope(user,alias='s'){if(user.role==='admin'||user.role==='staff')return {where:'1=1',args:[]};if(user.role==='teacher')return {where:`${alias}.class_id IN (SELECT id FROM classes WHERE teacher_id=?)`,args:[user.id]};return {where:`${alias}.parent_id=?`,args:[user.id]};}
 async function permittedStudent(db,user,sid){const s=await first(db,'SELECT * FROM students WHERE id=?',sid);if(!s)error('Student not found',404);if(['admin','staff'].includes(user.role))return s;if(user.role==='parent'&&s.parent_id===user.id)return s;if(user.role==='teacher'){const c=await first(db,'SELECT id FROM classes WHERE id=? AND teacher_id=?',s.class_id,user.id);if(c)return s;}error('You are not assigned to this student',403);}
@@ -87,31 +104,71 @@ async function inviteGuardianAfterAcceptance(db,env,req,application,actor){
  const guardianEmail=email(application.guardian_email);
  if(!/^\S+@\S+\.\S+$/.test(guardianEmail))return {invitation_status:'invalid_email'};
  const existing=await first(db,'SELECT id,email,name,role,password_hash,active FROM users WHERE email=?',guardianEmail);
- if(existing && existing.role!=='parent')return {invitation_status:'existing_non_parent_account'};
- const pupil=await first(db,'SELECT id,parent_id FROM students WHERE id=?',application.student_id||application.id);
+ const pupil=await first(db,'SELECT id,parent_id,first_name,last_name FROM students WHERE id=?',application.student_id||application.id);
  if(!pupil)return {invitation_status:'student_not_found'};
- if(existing?.password_hash && existing.active){
-  if(!pupil.parent_id)await run(db,'UPDATE students SET parent_id=? WHERE id=? AND parent_id IS NULL',existing.id,pupil.id);
-  return {invitation_status:pupil.parent_id&&pupil.parent_id!==existing.id?'manual_review':'already_active'};
- }
- if(pupil.parent_id && (!existing || pupil.parent_id!==existing.id))return {invitation_status:'manual_review'};
+ // An unrelated pre-existing parent assignment must never be silently replaced.
+ if(pupil.parent_id && (!existing||pupil.parent_id!==existing.id))
+   return {invitation_status:'manual_review'};
+ // Do not use admission acceptance to reactivate a deliberately deactivated account.
+ if(existing?.password_hash && !existing.active)return {invitation_status:'manual_review'};
  let uid=existing?.id;
  if(!uid){
   uid=id();
-  await run(db,'INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,0)',uid,short(application.guardian_name,100)||'Parent / Guardian',guardianEmail,'parent');
+  await run(db,'INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,0)',
+   uid,short(application.guardian_name,100)||'Parent / Guardian',guardianEmail,'parent');
  }
+ // Linking is immediate on acceptance, independent of email delivery.
+ // Pending accounts remain inactive until their invitation is accepted.
+ await run(db,'UPDATE students SET parent_id=? WHERE id=? AND parent_id IS NULL',uid,pupil.id);
+ const name=guardianGreetingName(application.preferred_greeting_name,application.guardian_name);
+ const pupilName=[pupil.first_name,pupil.last_name].map(x=>short(x,80)).filter(Boolean).join(' ');
+ const active=Boolean(existing?.active&&existing?.password_hash);
+ if(active){
+  // An existing teacher/staff/admin may also be a guardian. Keep their staff role
+  // and current password unchanged; show the child in an explicit family view.
+  const html=guardianExistingAccountHtml(name,pupilName,env.ADMISSIONS_EMAIL,existing.role!=='parent');
+  const delivered=await mail(env,guardianEmail,'Your child is linked to your Madrasah At-Towfiq account',html,{replyTo:env.ADMISSIONS_EMAIL});
+  await audit(db,actor,'guardian_link_existing','students',pupil.id,delivered.sent?'email_sent':'delivery_not_confirmed');
+  return {invitation_status:'linked_existing',email_status:delivered.sent?'sent':'not_sent',linked:true};
+ }
+ // For a new or still-pending account, email a single-use password activation
+ // invitation immediately after recording the parent/child relationship.
  const token=random(32);
  await run(db,"DELETE FROM auth_tokens WHERE user_id=? AND purpose='invite'",uid);
  await run(db,'INSERT INTO auth_tokens(token_hash,user_id,purpose,expires_at) VALUES(?,?,?,?)',await sha(token),uid,'invite',nextIso(7*DAY));
  const link='https://portal.attowfiqmasjid.org/?invite='+encodeURIComponent(token);
- const recipientName=guardianGreetingName(application.preferred_greeting_name,application.guardian_name);
- const studentFullName=[application.first_name,application.last_name].map(x=>short(x,80)).filter(Boolean).join(' ');
- const html=guardianInvitationHtml(recipientName,link,env.ADMISSIONS_EMAIL,studentFullName);
- const sent=await mail(env,guardianEmail,'Welcome to Madrasah At-Towfiq | Parent account invitation',html,{replyTo:env.ADMISSIONS_EMAIL});
- await audit(db,actor,'guardian_invitation','users',uid,sent.sent?'email_sent':'delivery_not_confirmed');
- return {invitation_status:sent.sent?'sent':'delivery_not_configured_or_failed',invitation_url:sent.sent?null:link};
+ const html=guardianInvitationHtml(name,link,env.ADMISSIONS_EMAIL,pupilName);
+ const delivered=await mail(env,guardianEmail,'Welcome to Madrasah At-Towfiq | Parent account invitation',html,{replyTo:env.ADMISSIONS_EMAIL});
+ await audit(db,actor,'guardian_invitation','users',uid,delivered.sent?'email_sent':'delivery_not_confirmed');
+ return {invitation_status:delivered.sent?'sent':'delivery_not_configured_or_failed',
+  invitation_url:delivered.sent?null:link,linked:true};
 }
-
+function guardianExistingAccountHtml(name,pupilName,admissionsEmail,showFamilySwitch){
+ const greeting=escapeHtml(short(name||'Parent / Guardian',60));
+ const child=escapeHtml(short(pupilName||'your child',170));
+ const support=escapeHtml(admissionsEmail||'admissions@attowfiqmasjid.org');
+ return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>Your child's portal access | Madrasah At-Towfiq</title>
+ <style>@media(max-width:600px){.guardian-email-wrap{width:100%!important}.guardian-email-pad{padding:24px 19px!important}}</style></head>
+ <body style="margin:0;background:#f2f5fb;font-family:Arial,Helvetica,sans-serif;color:#253d60">
+ <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f2f5fb"><tr><td align="center" style="padding:30px 12px">
+ <table role="presentation" class="guardian-email-wrap" width="580" cellspacing="0" cellpadding="0" style="max-width:580px;width:100%;background:#fff;border:1px solid #dde6f3;border-radius:18px;overflow:hidden">
+ <tr><td align="center" style="padding:28px;background:#172e57;color:#c5dafa">
+ <img src="https://portal.attowfiqmasjid.org/assets/at-towfiq-madrasah-logo.png" alt="Madrasah At-Towfiq" width="180" style="display:block;width:180px;max-width:80%;margin:0 auto 14px;background:#fff;border-radius:9px;padding:7px">
+ <span style="font-size:11px;letter-spacing:2px">MADRASAH AT-TOWFIQ · BOLTON</span></td></tr>
+ <tr><td class="guardian-email-pad" style="padding:35px 40px">
+ <h1 style="font:normal 29px/1.3 Georgia,serif;color:#1c365d;margin:0 0 22px">Welcome to your child's learning journey</h1>
+ <p lang="ar" dir="rtl" style="text-align:left;color:#234975;font-size:23px;margin:0 0 5px">السلام عليكم ورحمة الله وبركاته</p>
+ <p style="font-size:13px;color:#778aa4;margin:0 0 23px;font-style:italic">Assalāmu ʿalaykum wa raḥmatullāhi wa barakātuh</p>
+ <p>Dear <strong>${greeting}</strong>,</p>
+ <p style="line-height:1.9;color:#465a76">We are pleased to confirm that <strong>${child}</strong> has been enrolled at Madrasah At-Towfiq and securely linked to your existing account.</p>
+ <p style="line-height:1.9;color:#465a76">You do not need to create a second account or change your password. Simply sign in using your existing credentials.${showFamilySwitch?' Then select <strong>Family view</strong> to access your child’s learning dashboard.':''}</p>
+ <p><a href="https://portal.attowfiqmasjid.org/" style="display:inline-block;padding:15px 23px;background:#386bc8;color:#fff;text-decoration:none;border-radius:9px;font-weight:bold">Open the parent portal →</a></p>
+ <p style="font-size:13px;line-height:1.85;color:#657d9d;margin:25px 0 0">For help, email <a href="mailto:${support}" style="color:#315fb3">${support}</a>. Please keep your account details private.</p>
+ <p style="font-size:14px;color:#465a76;margin:23px 0 0">Jazākum Allāhu khayran,<br><strong>The Admissions Team</strong><br>Madrasah At-Towfiq</p>
+ </td></tr><tr><td align="center" style="background:#f7f9fd;padding:19px;font-size:11px;color:#8295ae">Rooted in faith, guided by knowledge.</td></tr>
+ </table></td></tr></table></body></html>`;
+}
 
 const guardianGreetingName=(preferred,fullName)=>{
  const chosen=short(preferred||'',60).trim();
@@ -248,7 +305,7 @@ async function studentNotificationRecipient(db,studentId){
  if(row.parent_id){
   // A manually reassigned guardian supersedes the old admission email.
   // Never leak pupil records to the previous contact when a new parent is linked.
-  if(row.linked_role!=='parent'||!row.linked_active)return null;
+  if(!['parent','teacher','staff','admin'].includes(row.linked_role)||!row.linked_active)return null;
   to=email(row.linked_email);guardianName=row.linked_name;
  }else{
   to=email(row.guardian_email);guardianName=row.guardian_name;
@@ -394,7 +451,8 @@ async function handle(req,env){
  const user=await session(req,env);if(!user)error('Your session has expired. Please sign in.',401);
  if(path==='/api/auth/me'&&method==='GET'){
    const csrf=random(24);await run(db,'UPDATE sessions SET csrf_hash=? WHERE token_hash=?',await sha(csrf),user.token_hash);
-   return json({user:{id:user.id,name:user.name,email:user.email,role:user.role},csrf});
+   const family=await first(db,"SELECT id FROM students WHERE parent_id=? AND status='active' LIMIT 1",user.id);
+   return json({user:{id:user.id,name:user.name,email:user.email,role:user.primary_role||user.role,has_family:!!family},csrf});
  }
  if(method!=='GET'){const received=req.headers.get('x-csrf-token');if(!received||!(await safeEqual(await sha(received),user.csrf_hash)))error('Security token expired. Reload your page.',403);}
  if(path==='/api/auth/logout'&&method==='POST'){await run(db,'DELETE FROM sessions WHERE token_hash=?',user.token_hash);return json({ok:true},200,{'Set-Cookie':setCookie(req,'',0)});}
@@ -462,12 +520,13 @@ async function handle(req,env){
    const rows=await all(db,`SELECT s.id AS student_id,s.student_no,s.first_name,s.last_name,
       a.id AS admission_id,a.guardian_name,a.guardian_email,a.guardian_phone,
       s.parent_id,COALESCE(u.id,pending.id) AS account_id,
-      CASE WHEN u.password_hash IS NOT NULL OR pending.password_hash IS NOT NULL THEN 1 ELSE 0 END AS activated,
-      CASE WHEN s.parent_id IS NOT NULL THEN 'linked'
+      CASE WHEN u.active=1 AND u.password_hash IS NOT NULL THEN 1 ELSE 0 END AS activated,
+      CASE WHEN s.parent_id IS NOT NULL AND u.active=1 AND u.password_hash IS NOT NULL THEN 'linked'
+           WHEN s.parent_id IS NOT NULL THEN 'pending_activation'
            WHEN pending.id IS NOT NULL THEN 'invited_or_pending' ELSE 'not_invited' END AS link_status
      FROM students s LEFT JOIN admissions a ON a.student_id=s.id
        LEFT JOIN users u ON u.id=s.parent_id
-       LEFT JOIN users pending ON pending.role='parent' AND pending.email=lower(trim(a.guardian_email))
+       LEFT JOIN users pending ON pending.email=lower(trim(a.guardian_email))
      ORDER BY s.last_name,s.first_name`);
    return json({items:rows});
   }
@@ -546,7 +605,7 @@ async function handle(req,env){
     if(!short(application.first_name)||!short(application.last_name)||!isDate(application.dob))
       error('Complete the pupil name and date of birth before approval');
     const sid=application.id;
-    const guardian=await first(db,"SELECT id FROM users WHERE role='parent' AND active=1 AND email=?",email(application.guardian_email));
+    const guardian=await first(db,'SELECT id FROM users WHERE email=? AND (active=1 OR password_hash IS NULL)',email(application.guardian_email));
     const year=Number(nowDate().slice(0,4));
     const seq=await first(db,'SELECT last_number FROM student_number_sequences WHERE enrollment_year=?',year);
     if(seq?.last_number>=9999)error('Student number capacity reached for '+year+'. Contact an administrator.',409);

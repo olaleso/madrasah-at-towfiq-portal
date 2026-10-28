@@ -136,3 +136,14 @@ if ($LASTEXITCODE -ne 0) { throw "Tests failed. Do not deploy." }
 npm run deploy
 ```
 Sign in as an existing test parent and confirm only their linked children appear. Validate a test admission invite, assignment, points credit/debit, and linked portal message. Avoid sending real safeguarding details or medical data in test messages.
+
+## v1.1.1 – Immediate parent linking and dual-role staff accounts
+
+Before deploying, run `git pull origin main` and `npm run test`. With a verified Resend sender still configured, deploy using `npm run deploy`. No D1 migrations are needed.
+
+1. Create a *fictional* admission with a new guardian email you control. On acceptance, the guardian is linked immediately; an activation email should arrive and the user becomes Active only after following the link.
+2. Test accepting a fictional pupil whose guardian email is associated with an existing **teacher** account. The pupil links to the same account, and a **linked-to-your-account** notification is sent, not a password reset. On next login/refresh, the teacher sees a **Family view** switch; check that family mode exposes only their child, and staff mode retains teaching permissions.
+3. For historical unlinked accepted pupils, open **Parents & guardians → Link & notify** once, after verifying the recorded email and guardian identity. Do not use a different email to evade the unique account rule.
+4. If a pupil has a *different* guardian already linked or an account was deliberately deactivated, the system requires manual review. Avoid exposing pupil records without verification.
+
+No D1 migration, admin reset, student re-enrolment, new secret or duplicate account is required. Email provider acceptance is not final inbox-delivery confirmation.
