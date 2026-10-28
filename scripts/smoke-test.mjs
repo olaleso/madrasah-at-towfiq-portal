@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import worker from '../src/worker.js';
 import assert from 'node:assert/strict';
 import {pbkdf2Sync,randomBytes} from 'node:crypto';
-const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0008_pupil_progress_reports.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0009_compliance_communications.sql',import.meta.url),'utf8'));
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0008_pupil_progress_reports.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0009_compliance_communications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0010_staff_dbs_review.sql',import.meta.url),'utf8'));
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
 for(const filename of ['0001_initial.sql','0002_expanded_admissions.sql','0003_safeguarding_declarations.sql']) oldDb.exec(fs.readFileSync(new URL('../migrations/'+filename,import.meta.url),'utf8'));
@@ -905,8 +905,98 @@ comm=await req('/compliance/concerns',{id:officeConcernId,description:'Account-r
 assert.equal(comm.status,200);
 assert.equal(sqlite.prepare('SELECT status FROM compliance_concerns WHERE id=?').get(officeConcernId).status,'closed');
 
+
+// v1.6.1 – DBS has no legal expiry; admin-only school recheck schedule and private files.
+let dbs=await req('/compliance/dbs');assert.equal(dbs.status,200,JSON.stringify(dbs.data));
+const people=dbs.data.items;assert.ok(people.some(p=>p.staff_id===staff_id),'Teaching staff must appear in DBS register');
+assert.ok(people.every(p=>p.alert==='not_recorded'),'No check is inferred or invented for existing staff');
+assert.equal(dbs.data.storage_ready,false,'Uploads must remain disabled until a private R2 binding is configured');
+const dbsDay=days=>new Date(Date.now()+days*86400000).toISOString().slice(0,10);
+const checkInfo={staff_id:staff_id,check_level:'enhanced_barred',issued_on:dbsDay(-365),review_due:dbsDay(30),reference_last4:'A1B2',checked_on:dbsDay(-300)};
+dbs=await req('/compliance/dbs',{...checkInfo,review_due:'2026-02-30'});
+assert.equal(dbs.status,400,'Reject invalid calendar dates');
+dbs=await req('/compliance/dbs',checkInfo);
+assert.equal(dbs.status,200,JSON.stringify(dbs.data));
+dbs=await req('/compliance/dbs',checkInfo);
+assert.equal(dbs.status,409,'Do not create duplicate staff checks');
+dbs=await req('/compliance/dbs');
+let staffCheck=dbs.data.items.find(p=>p.staff_id===staff_id);
+assert.equal(staffCheck.alert,'due_soon','Recheck window starts 60 days before the locally configured date');
+assert.equal(staffCheck.check_level,'enhanced_barred');
+assert.equal(staffCheck.reference_last4,'A1B2');
+assert.equal(dbs.data.warnings,1);
+assert.ok(!('document_key' in staffCheck),'Private R2 storage key must never be in JSON API output');
+dbs=await req('/compliance/dbs',{...checkInfo,review_due:dbsDay(-3)},'PATCH');
+assert.equal(dbs.status,200);
+dbs=await req('/compliance/dbs');
+staffCheck=dbs.data.items.find(p=>p.staff_id===staff_id);
+assert.equal(staffCheck.alert,'overdue');
+dbs=await req('/compliance/dbs',{...checkInfo,review_due:dbsDay(90)},'PATCH');
+assert.equal(dbs.status,200);
+dbs=await req('/compliance/dbs');
+assert.equal(dbs.data.warnings,0,'Recheck warnings clear when an administrator records an updated future review');
+dbs=await req('/compliance/dbs',{...checkInfo,review_due:dbsDay(25)},'PATCH');
+assert.equal(dbs.status,200);
+// R2 file upload must never silently store certificate images inside the D1 database.
+const dbsFileURL='/compliance/dbs/file?staff_id='+encodeURIComponent(staff_id);
+let noStorage=await req(dbsFileURL);
+assert.equal(noStorage.status,404,'No certificate is assumed to exist');
+const privateFiles=new Map();
+env.DBS_FILES={
+ async put(key,data){privateFiles.set(key,new Uint8Array(data));},
+ async get(key){const data=privateFiles.get(key);return data?{body:new Blob([data]).stream()}:null;},
+ async delete(key){privateFiles.delete(key);}
+};
+const pdfBytes=new Uint8Array([37,80,68,70,45,49,46,55,10,37,37,69,79,70,10]);
+async function dbsUpload(bytes,authorized='YES'){
+ const fd=new FormData();fd.append('certificate',new Blob([bytes],{type:'application/pdf'}),'certificate.pdf');
+ if(authorized)fd.append('retention_authorized',authorized);
+ const res=await worker.fetch(new Request('http://localhost:8787/api'+dbsFileURL,{
+  method:'POST',headers:{origin:'http://localhost:8787','x-csrf-token':csrf,cookie},body:fd
+ }),env);
+ return {status:res.status,data:await res.json()};
+}
+let up=await dbsUpload(pdfBytes,'');assert.equal(up.status,403,'Upload must require affirmative retention authorisation');
+up=await dbsUpload(new Uint8Array([66,65,68,70,73,76,69,33]));
+assert.equal(up.status,415,'Reject unrecognised file magic rather than trusting .pdf extension');
+up=await dbsUpload(pdfBytes);assert.equal(up.status,200,JSON.stringify(up.data));
+assert.equal(privateFiles.size,1);
+assert.ok(up.data.document_purge_after,'Every retained certificate must have a disposal deadline');
+dbs=await req('/compliance/dbs');staffCheck=dbs.data.items.find(p=>p.staff_id===staff_id);
+assert.ok(staffCheck.document_uploaded_at);
+assert.ok(!('document_key' in staffCheck));
+up=await dbsUpload(pdfBytes);assert.equal(up.status,409,'Never overwrite private certificates without deliberate removal');
+dbs=await req('/compliance/dbs',{...checkInfo,issued_on:dbsDay(-100)},'PATCH');
+assert.equal(dbs.status,409,'Changing certificate issue date requires removing old evidence first');
+let downloaded=await worker.fetch(new Request('http://localhost:8787/api'+dbsFileURL,{headers:{cookie}}),env);
+assert.equal(downloaded.status,200,'Admin can download a retained private copy');
+assert.equal(downloaded.headers.get('cache-control'),'no-store, private');
+assert.match(downloaded.headers.get('content-disposition'),/attachment/);
+assert.deepEqual(new Uint8Array(await downloaded.arrayBuffer()),pdfBytes);
+cookie=parent_cookie;csrf=parent_csrf;
+dbs=await req('/compliance/dbs');assert.equal(dbs.status,403,'Guardians cannot enumerate staff DBS metadata');
+dbs=await req(dbsFileURL);assert.equal(dbs.status,403,'Guardians cannot download DBS certificates');
+cookie=officeAuth.response.headers.get('set-cookie').split(';')[0];csrf=officeSession.data.csrf;
+dbs=await req('/compliance/dbs');assert.equal(dbs.status,403,'Non-admin office staff cannot inspect sensitive DBS records');
+cookie=teacherCookie;csrf=teacherSession.data.csrf;
+dbs=await req('/compliance/dbs');assert.equal(dbs.status,403,'Teachers cannot enumerate other staff DBS checks');
+cookie=savedAdminCookie;csrf=savedAdminCsrf;
+dbs=await req(dbsFileURL,{staff_id},'DELETE');assert.equal(dbs.status,200);
+assert.equal(privateFiles.size,0,'Explicit deletion must remove the private R2 object');
+up=await dbsUpload(pdfBytes);assert.equal(up.status,200);
+sqlite.prepare('UPDATE staff_dbs_checks SET document_purge_after=? WHERE user_id=?').run('2020-01-01T00:00:00.000Z',staff_id);
+const pendingPurge=[];
+await worker.scheduled({cron:'0 6 * * *'},env,{waitUntil(p){pendingPurge.push(p);}});
+await Promise.all(pendingPurge);
+assert.equal(privateFiles.size,0,'Scheduled retention cleanup deletes expired certificate copies');
+assert.equal(sqlite.prepare('SELECT document_key FROM staff_dbs_checks WHERE user_id=?').get(staff_id).document_key,null);
+dbs=await req('/compliance/dbs');
+assert.equal(dbs.data.items.find(p=>p.staff_id===staff_id).document_uploaded_at,null,
+ 'Minimal review metadata survives the short-lived file purge');
+delete env.DBS_FILES;
+
 z=await req('/auth/logout',{});assert.equal(z.status,200);
-console.log('PASS: admissions, attendance, fees, scoped reports, two-way communications, consent and office compliance.');
+console.log('PASS: admissions, reports, communications, compliance, DBS recheck alerts, restricted R2 documents and retention.');
 
 const admissionsUi=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 assert.equal(admissionsUi.includes("field('Daytime mobile number'"),false);
@@ -932,6 +1022,11 @@ assert.ok(admissionsUi.includes("data-value=\"progress\""),'Guardian dashboard l
 
 // v1.6.0 UX: real threaded inbox, compliance centre, and styled forms.
 assert.ok(admissionsUi.includes("function compliancePage()"),'Compliance dashboard exists');
+assert.ok(admissionsUi.includes("function dbsRegisterSection()"),'Compliance page must render DBS recheck register');
+assert.ok(admissionsUi.includes("function dbsWarningCount()")||admissionsUi.includes("const dbsWarningCount=()"),'In-app recheck notification count must exist');
+assert.ok(admissionsUi.includes("case 'dbs-upload'"),'Private document upload requires an explicit modal');
+assert.ok(admissionsUi.includes("formId==='dbs-upload-form'"),'Secure file upload path must exist');
+
 assert.ok(admissionsUi.includes("function messageGroups()"),'Messages are grouped by conversation');
 assert.ok(admissionsUi.includes("case 'reply-message'"),'Parent replies use a controlled dialog');
 assert.ok(admissionsUi.includes("formId==='reply-message-form'"),'Replies are posted to the server');

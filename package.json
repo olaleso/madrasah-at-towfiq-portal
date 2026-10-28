@@ -1,6 +1,6 @@
 {
   "name": "madrasah-at-towfiq-portal",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "type": "module",
   "description": "Masjid At-Towfiq Madrasah student management portal with D1 and session authentication",
@@ -10,7 +10,7 @@
     "db:migrate:local": "wrangler d1 migrations apply attowfiq_portal --local",
     "db:migrate:remote": "wrangler d1 migrations apply attowfiq_portal --remote",
     "preview": "node --no-warnings scripts/local-preview.mjs",
-    "test": "node --no-warnings scripts/smoke-test.mjs"
+    "test": "node --check public/app.js && node --check src/worker.js && node --no-warnings scripts/smoke-test.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.53.0"
