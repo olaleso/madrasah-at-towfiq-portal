@@ -344,3 +344,11 @@ npm run deploy
 ```
 
 For a safe test, use fictional parent and staff accounts and an email inbox you control. Create a private message, sign in as its guardian recipient, read and reply, verify that the sender sees the reply and no other guardian does, then test policy review dates and concern reporting. The compliance centre is an operational aid, **not a claim that the school is legally compliant**.
+
+### v1.6.1 — Staff DBS recheck reminders and optional restricted copies
+
+The Compliance Centre now has an **administrator-only** staff DBS register for all active administrator, teacher and office-staff accounts. It records the check level, certificate issue date, optional four-character reference suffix, original-check verification date and the madrasah's next **recheck due date**. DBS certificates do not have a statutory expiry date. The portal flags due dates within 60 days and overdue checks in a warning banner and sidebar badge.
+
+Admins can optionally upload PDF/PNG/JPEG certificates (max 3 MB), download them with no-cache attachment responses or remove them early. Private documents live only in an **R2 bucket** and are subject to a **180-day retention cap**, enforced by a daily cleanup and an independently configured R2 lifecycle rule. The metadata and alert register works without uploaded files; no parents, teachers or non-admin office staff can read this sensitive register.
+
+**Deployment prerequisite:** the new `wrangler.jsonc` refers to a private R2 bucket which must be created before deploying v1.6.1. Read [docs/PRIVATE_DBS_STORAGE.md](docs/PRIVATE_DBS_STORAGE.md) **before** running `npm run deploy`. Remote D1 migration: `0010_staff_dbs_review.sql`. No existing pupil, family, progress report, fee or compliance data is changed.
