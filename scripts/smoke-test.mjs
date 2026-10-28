@@ -753,6 +753,9 @@ const teacherChildReport=await req('/progress-reports',{
 assert.equal(teacherChildReport.status,200,JSON.stringify(teacherChildReport.data));
 const teacherCookie=staffPass.response.headers.get('set-cookie').split(';')[0];
 cookie=teacherCookie;csrf=staffPass.data.csrf;
+// /auth/me rotates CSRF on an existing session; refresh before exercising writes.
+const teacherSession=await req('/auth/me');assert.equal(teacherSession.status,200);
+csrf=teacherSession.data.csrf;
 pr=await req('/progress-reports');assert.equal(pr.status,200);
 assert.ok(pr.data.items.some(x=>x.id===draftId),'Assigned teacher sees class progress reports');
 assert.ok(!pr.data.items.some(x=>x.id===otherReportId),'Teacher cannot read another class report');
