@@ -275,3 +275,19 @@
 .compliance-record .btn{flex-shrink:0}
 @media(max-width:940px){.comms-grid{grid-template-columns:1fr}.comms-bubbles{max-height:450px}}
 @media(max-width:620px){.comms-thread{padding:13px 8px}.comms-bubble{max-width:100%}.compliance-record{flex-wrap:wrap;gap:9px}}
+
+/* v1.6.1 – compliance-only DBS review alerts and private document controls */
+.dbs-global-alert{display:flex;align-items:center;gap:10px;width:100%;padding:15px 19px;margin-bottom:20px;border:1px solid #e6be76;border-radius:12px;background:#fff5df;color:#704d15;cursor:pointer;font:inherit;font-size:13px;font-weight:650;text-align:left}
+.dbs-global-alert:hover{background:#fff0cd}
+.dbs-nav-count{margin-left:auto;background:#dd9438;color:#1e283c;padding:2px 7px;border-radius:30px;font-size:10px;font-weight:800}
+.dbs-register .surface-head h3{display:flex;align-items:center;gap:9px}
+.dbs-register .table td{vertical-align:middle;min-width:95px}
+.dbs-register .dbs-stat-cards{margin:15px 0 17px}
+.dbs-register .dbs-stat-cards .notice{font-size:12px}
+.dbs-warning{display:flex;gap:13px;align-items:flex-start;padding:17px 19px;margin:14px 0;border-radius:12px;border:1px solid #e4b76e;background:#fff5e2;color:#725017}
+.dbs-warning strong{font-size:13px}
+.dbs-warning p{font-size:12px;line-height:1.6;margin-top:5px}
+.dbs-actions{display:flex;gap:6px;flex-wrap:wrap;min-width:160px}
+.dbs-consent{display:flex;align-items:flex-start;gap:10px;padding:15px;margin-top:16px;border-radius:10px;background:#f0f5fc;font-size:13px;line-height:1.7;cursor:pointer}
+.dbs-consent input{margin-top:5px;flex-shrink:0}
+@media(max-width:700px){.dbs-register .surface-head{align-items:flex-start;flex-direction:column}.dbs-global-alert{align-items:flex-start}.dbs-register .table{min-width:850px}}
