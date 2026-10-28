@@ -210,3 +210,14 @@
 .fee-actions .btn{white-space:nowrap}
 .fee-status-line{margin-top:8px}
 @media(max-width:780px){.finance-attention{padding:14px 15px}.fee-actions{flex-direction:column;align-items:stretch}}
+
+/* v1.4.0: deliberate attendance saves and privacy-conscious optional alerts */
+.attendance-alert-option{
+ margin:16px 18px 2px;padding:17px 20px;border:1px solid #dce7f7;
+ border-radius:12px;background:#f3f7ff;color:#29466d;
+}
+.attendance-alert-option label{display:flex;align-items:center;gap:11px;line-height:1.5;cursor:pointer;font-size:14px}
+.attendance-alert-option input[type="checkbox"]{width:18px;height:18px;accent-color:#346bcb;flex-shrink:0}
+.attendance-alert-option p{font-size:12px;color:#536a89;line-height:1.7;margin:8px 0 0 29px}
+.attendance-alert-option input:disabled + strong{color:#7b879c}
+@media(max-width:600px){.attendance-alert-option{margin:13px 0;padding:15px}.attendance-alert-option p{margin-left:0}}

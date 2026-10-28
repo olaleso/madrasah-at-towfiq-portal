@@ -173,3 +173,19 @@ if ($LASTEXITCODE -ne 0) { throw "Tests failed. Do not deploy." }
 npm run deploy
 ```
 Use a guardian email you control to create an individual test invoice. A branded new-invoice notice should arrive. Record a small manual test payment and confirm the receipt email describes the recorded payment and remaining balance. From **Fees & payments**, use **Send statement** to test a manual reminder for an outstanding invoice. A settled invoice must not be sent a balance reminder. Check the parent's own fee account for accurate paid/outstanding amounts and due-date badges. Avoid sending financial reminders to real families until account balances and guardian links are confirmed. Bulk invoice creation continues to be independent of outbound email; send statements individually if follow-up is needed. Email provider acceptance does not guarantee final inbox delivery, and these notices do not charge a payment method.
+
+
+## v1.4.0 — Attendance register + one-time guardian absence notices
+
+This release **requires applying migration 0007** before using the new code. Take an appropriate D1 recovery point. No records are deleted or reset.
+
+```powershell
+git pull origin main
+npm run test
+if ($LASTEXITCODE -ne 0) { throw "Tests failed. Do not migrate or deploy." }
+npm run db:migrate:remote
+if ($LASTEXITCODE -ne 0) { throw "Migration failed. Do not deploy." }
+npm run deploy
+```
+
+After deployment, first verify class filtering and manual register saves. The guardian notice checkbox is OFF by default and available only for the current Europe/London day. Use a fictional pupil/guardian inbox to confirm one absence notice without medical or private attendance notes; repeat the save and confirm no duplicate email. Failed Resend delivery cannot undo the recorded attendance. Retrying a failed email is not automatic, to avoid duplicate notices. Production sender must already be configured.

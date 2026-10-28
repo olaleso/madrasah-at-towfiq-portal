@@ -62,6 +62,12 @@ async function all(db,sql,...bind){return (await db.prepare(sql).bind(...bind).a
 async function first(db,sql,...bind){return db.prepare(sql).bind(...bind).first();}
 async function run(db,sql,...bind){return db.prepare(sql).bind(...bind).run();}
 const nowDate=()=>new Date().toISOString().slice(0,10);
+// Absent notices use the local Bolton calendar day rather than UTC near midnight.
+const schoolLocalDate=()=>{
+ const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+ const val=type=>parts.find(p=>p.type===type)?.value||'';
+ return [val('year'),val('month'),val('day')].join('-');
+};
 const nextIso=(seconds)=>new Date(Date.now()+seconds*1000).toISOString();
 const isDate = s=> /^\d{4}-\d{2}-\d{2}$/.test(String(s||'')) && !Number.isNaN(Date.parse(s+'T00:00:00Z'));
 const isMoney = x=>Number.isInteger(Number(x))&&Number(x)>=0&&Number(x)<=100000000;
@@ -364,7 +370,7 @@ function studentActivityEmail({recipient,kind,subjectTitle,summaryLabel,summaryV
  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
  <title>${heading} | Madrasah At-Towfiq</title><style>@media only screen and (max-width:600px){.notify-wrap{width:100%!important}.notify-pad{padding:27px 21px!important}.notify-title{font-size:25px!important}.notify-button{display:block!important;text-align:center!important}}</style></head>
  <body style="margin:0;padding:0;background:#f1f5fb;font-family:Arial,Helvetica,sans-serif;color:#263c5f">
- <span style="display:none!important;opacity:0;max-height:0;overflow:hidden;color:#f1f5fb">A new ${kind==='homework'?'homework assignment':'behaviour points update'} is available in your child’s parent portal.</span>
+ <span style="display:none!important;opacity:0;max-height:0;overflow:hidden;color:#f1f5fb">A new ${kind==='homework'?'homework assignment':kind==='attendance'?'attendance update':'behaviour points update'} is available in your child’s parent portal.</span>
  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f1f5fb"><tr><td align="center" style="padding:34px 15px">
  <table role="presentation" width="600" class="notify-wrap" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px;background:#fff;border:1px solid #e2eaf6;border-radius:18px;overflow:hidden">
  <tr><td style="background:#172e57;padding:26px 32px 23px;text-align:center">
@@ -425,6 +431,33 @@ async function notifyGuardianAboutRecord(db,env,studentId,kind,item,actor){
  return {notification_status:result};
 }
 
+
+
+// Only send on an explicitly recorded new absence, once per pupil and date.
+// Claiming the unique key first avoids duplicate messages on repeated saves.
+async function notifyGuardianOfAbsence(db,env,studentId,date,actor){
+ const claim=await run(db,"INSERT OR IGNORE INTO attendance_family_alerts(student_id,attendance_date,state) VALUES(?,?,'processing')",studentId,date);
+ if(Number(claim?.meta?.changes??claim?.changes??0)!==1)return 'already_attempted';
+ let outcome='not_sent';
+ try{
+  const recipient=await studentNotificationRecipient(db,studentId);
+  if(!recipient)outcome='no_guardian_email';
+  else{
+   const html=studentActivityEmail({recipient,kind:'attendance',
+    subjectTitle:'An attendance update for your child',summaryLabel:'ATTENDANCE STATUS',summaryValue:'Absent',
+    description:'Recorded for '+safeEmailDate(date),
+    explanation:'The attendance register records an absence for your child. If this is unexpected or incorrect, please contact the madrasah.',
+    admissionsEmail:env.ADMISSIONS_EMAIL});
+   const sent=await mail(env,recipient.to,'Attendance update | Madrasah At-Towfiq',html,{replyTo:env.ADMISSIONS_EMAIL});
+   outcome=sent.sent?'sent':'not_sent';
+  }
+ }catch(err){outcome='not_sent';}
+ try{
+  await run(db,'UPDATE attendance_family_alerts SET state=? WHERE student_id=? AND attendance_date=?',outcome,studentId,date);
+  await audit(db,actor,'parent_absence_notice','attendance',studentId,date+' '+outcome);
+ }catch{}
+ return outcome;
+}
 
 const financeMoney=pence=>'£'+(Number(pence||0)/100).toFixed(2);
 const financePeriod=period=>{
@@ -826,7 +859,38 @@ async function handle(req,env){
  }
  if(path==='/api/attendance'){
   if(method==='GET'){const s=studentScope(user),day=short(u.searchParams.get('date')||nowDate(),10);const rows=await all(db,`SELECT a.*,s.first_name,s.last_name,s.class_id FROM attendance a JOIN students s ON s.id=a.student_id WHERE ${s.where} AND (?='' OR a.date=?) ORDER BY s.first_name`,...s.args,u.searchParams.has('date')?day:'',u.searchParams.has('date')?day:'');return json({items:rows});}
-  requireRole(user,'admin','staff','teacher');if(method==='POST'){const b=await input(req),records=Array.isArray(b.records)?b.records:[b];if(records.length>100)error('Too many records');let count=0;for(const a of records){await permittedStudent(db,user,a.student_id);if(!['present','absent','late','excused'].includes(a.status)||!isDate(a.date))error('Invalid attendance status or date');await run(db,'INSERT INTO attendance(id,student_id,date,status,note,recorded_by) VALUES(?,?,?,?,?,?) ON CONFLICT(student_id,date) DO UPDATE SET status=excluded.status,note=excluded.note,recorded_by=excluded.recorded_by',id(),a.student_id,a.date,a.status,short(a.note,300),user.id);count++;}await audit(db,user,'record','attendance','',`${count} records`);return json({ok:true,count});}
+   requireRole(user,'admin','staff','teacher');
+   if(method==='POST'){
+    const b=await input(req),records=Array.isArray(b.records)?b.records:[b];
+    if(!records.length||records.length>100)error('Choose 1–100 attendance records');
+    const alertFamilies=b.notify_guardians===true,seen=new Set(),prepared=[];
+    // Verify all records, including teacher scope, before writing any.
+    for(const a of records){
+     if(!a||!a.student_id||!['present','absent','late','excused'].includes(a.status)||!isDate(a.date))
+      error('Choose a valid attendance status and date for each selected pupil');
+     const key=a.student_id+'|'+a.date;
+     if(seen.has(key))error('Duplicate pupil attendance entry',400);
+     seen.add(key);
+     const pupil=await permittedStudent(db,user,a.student_id);
+     if(pupil.status!=='active')error('Attendance can only be recorded for active pupils',400);
+     if(alertFamilies&&a.date!==schoolLocalDate())error('Family absence alerts can only be sent for today’s register',400);
+     const previous=alertFamilies?await first(db,'SELECT status FROM attendance WHERE student_id=? AND date=?',a.student_id,a.date):null;
+     prepared.push({student_id:a.student_id,date:a.date,status:a.status,note:short(a.note,300),newAbsence:alertFamilies&&a.status==='absent'&&previous?.status!=='absent'});
+    }
+    await db.batch(prepared.map(a=>db.prepare(
+     'INSERT INTO attendance(id,student_id,date,status,note,recorded_by) VALUES(?,?,?,?,?,?) ON CONFLICT(student_id,date) DO UPDATE SET status=excluded.status,note=excluded.note,recorded_by=excluded.recorded_by'
+    ).bind(id(),a.student_id,a.date,a.status,a.note,user.id)));
+    try{await audit(db,user,'record','attendance','',prepared.length+' records');}catch{}
+    const alert_results={eligible:0,sent:0,not_sent:0,no_guardian_email:0,already_attempted:0};
+    for(const a of prepared.filter(x=>x.newAbsence)){
+     alert_results.eligible++;
+     try{
+      const result=await notifyGuardianOfAbsence(db,env,a.student_id,a.date,user);
+      alert_results[result]=(alert_results[result]||0)+1;
+     }catch{alert_results.not_sent++;}
+    }
+    return json({ok:true,count:prepared.length,alert_results});
+   }
  }
  if(path==='/api/homework'){
   if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT h.*,s.first_name,s.last_name,s.class_id,u.name AS teacher_name FROM homework h JOIN students s ON s.id=h.student_id LEFT JOIN users u ON u.id=h.assigned_by WHERE ${s.where} ORDER BY h.due_date DESC,h.created_at DESC LIMIT 500`,...s.args)});}
