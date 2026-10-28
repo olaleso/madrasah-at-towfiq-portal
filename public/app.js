@@ -333,7 +333,7 @@ function communicationPage(){
      <span class="comms-thread-body"><strong>${h(g.root.subject)}</strong><span>${h(other||'School team')} · ${fmt(g.last.created_at)}</span><small>${h(String(g.last.body||'').slice(0,90))}</small></span>
      ${g.unread?`<span class="comms-unread">${g.unread}</span>`:''}
     </button>`;
-   }).join(''):blank('No conversations yet',isParent?'You can reply when your teacher or the office sends you a private message.':'Write a private message to begin a conversation.')}
+   }).join(''):blank('No conversations yet',isParent?'You can start a message to your child’s assigned teacher or reply to an existing conversation.':'Write a private message to begin a conversation.')}
   </section>
   <section class="surface comms-conversation"><div class="surface-head"><div><h3>${selected?h(selected.root.subject):'Choose a conversation'}</h3><p class="muted tiny" style="margin-top:5px">Private messages remain in the secure portal; email carries only an inbox notice.</p></div>
    ${mine?`<button type="button" class="btn primary smol" data-action="modal" data-value="reply-message" data-id="${h(selected.id)}">${ico('message',14)} Reply</button>`:''}</div>
