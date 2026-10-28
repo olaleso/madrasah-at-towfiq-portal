@@ -586,7 +586,56 @@ function openModal(type,selectedId=''){
  case 'payment':{
    let f=get('fees').find(x=>x.id===selectedId);if(!f)return;title='Record fee payment';form='payment-form';body=`<input type="hidden" name="invoice_id" value="${h(f.id)}"><div class="callout" style="margin-bottom:17px">${ico('cash',23)}<div><h3>${h(f.first_name)} ${h(f.last_name)}</h3><p>${h(f.period)} · Balance ${money(f.amount_pence-f.paid_pence)}</p></div></div><div class="form-grid">${field('Amount received (£)','amount',((f.amount_pence-f.paid_pence)/100).toFixed(2),'number','required min="0.01" step="0.01"')}${select('Payment method','method',htmlOptions([['cash','Cash'],['bank_transfer','Bank transfer'],['card_external','Card (externally processed)'],['other','Other']],'cash'))}${field('Reference / receipt number','reference','','text','','wide')}</div>`;submit='Record payment';break;}
  case 'announcement':{title='Publish an announcement';form='announcement-form';body=`<div class="form-grid">${field('Announcement title','title','','text','required','wide')}${select('Audience','audience',htmlOptions([['all','Everyone'],['parent','Parents'],['teacher','Teachers'],['staff','Staff']],'all'),'','wide')}${field('Message','body','','textarea','required','wide')}</div>`;submit='Publish';break;}
- case 'message':{title='New private message';form='message-form';body=`<div class="form-grid">${select('Recipient','recipient_id',`<option value="">Select a recipient</option>`+get('contacts').map(x=>`<option value="${h(x.id)}">${h(x.name)} · ${cap(x.role)}</option>`).join(''),'required','wide')}${field('Subject','subject','','text','required','wide')}${field('Message','body','','textarea','required','wide')}</div>`;submit='Send in portal';break;}
+
+ case 'reply-message':{
+  const root=get('messages').find(m=>m.id===selectedId&&(!m.thread_root_id));
+  if(!root){toast('Open a conversation before replying',true);return;}
+  if(root.created_by!==S.user.id&&root.recipient_id!==S.user.id){toast('Only participants can reply to this conversation',true);return;}
+  title='Reply · '+root.subject;form='reply-message-form';size=true;submit='Send private reply';
+  const other=root.created_by===S.user.id?root.recipient_name:root.sender_name;
+  body=`<div class="notice" style="margin-bottom:16px">Replying securely to <strong>${h(other||'your correspondent')}</strong>. The recipient is locked to the other participant. Email only carries a neutral inbox alert.</div>
+   <input type="hidden" name="reply_to" value="${h(root.id)}">
+   ${field('Your reply','body','','textarea','required maxlength="3000" placeholder="Write your private reply…"','wide')}
+   <div class="notice">Messages cannot be deleted from this screen. Do not include safeguarding investigations or confidential medical case details.</div>`;
+  break;
+ }
+ case 'policy-record':{
+  if(!userCan('admin'))return;
+  const p=get('compliance/policies').find(x=>x.id===selectedId);
+  title=p?'Review policy record':'Add policy review record';form='policy-record-form';submit=p?'Save policy changes':'Add policy';
+  body=`<input type="hidden" name="id" value="${h(p?.id||'')}"><div class="form-grid">
+   ${field('Policy title','title',p?.title||'','text','required maxlength="160"','wide')}
+   ${select('Category','category',htmlOptions(Object.entries(compliancePolicyCategories),p?.category||'safeguarding'),'required')}
+   ${field('Version','version',p?.version||'1.0','text','required maxlength="32"')}
+   ${field('Policy owner / responsible person','owner',p?.owner||'','text','maxlength="120"','wide')}
+   ${field('Next review date','review_due',p?.review_due||'','date')}
+   ${select('Review status','status',htmlOptions([['draft','Draft / pending'],['current','Current'],['retired','Retired / replaced']],p?.status||'draft'))}
+   ${field('Administrative review notes','notes',p?.notes||'','textarea','maxlength="1200"','wide')}
+  </div><div class="notice" style="margin-top:14px">This tracker records a policy name, version and next review date. It does not store the signed policy document or establish legal compliance.</div>`;
+  break;
+ }
+ case 'compliance-concern':{
+  const c=get('compliance/concerns').find(x=>x.id===selectedId);
+  if(c&&!userCan('admin'))return;
+  title=c?'Review private operational concern':'Log privacy / operational concern';form='compliance-concern-form';size=true;submit=c?'Save follow-up':'Submit concern';
+  body=`<input type="hidden" name="id" value="${h(c?.id||'')}"><div class="notice warn" style="margin-bottom:17px">Restricted internal operational record. Do not enter pupil names, medical or safeguarding case notes. Urgent risks must also be escalated under the school’s formal incident procedures.</div><div class="form-grid">
+    ${c?`<div class="field wide"><label>Concern</label><strong>${h(c.title)}</strong></div><input type="hidden" name="kind" value="${h(c.kind)}"><input type="hidden" name="title" value="${h(c.title)}"><input type="hidden" name="occurred_on" value="${h(c.occurred_on)}">`:
+      select('Concern type','kind',htmlOptions(Object.entries(complianceConcernKinds),'privacy_request'),'required')+
+      field('Short subject (no personal names)','title','','text','required maxlength="180"','wide')+
+      field('Date of occurrence','occurred_on',schoolToday(),'date','required')}
+    ${field('High-level description','description',c?.description||'','textarea','maxlength="2000" placeholder="Describe the issue without personal identifiers"','wide')}
+    ${field('Actions taken / follow-up','action_taken',c?.action_taken||'','textarea','maxlength="2000"','wide')}
+    ${c?select('Review status','status',htmlOptions([['open','Open'],['in_review','In review'],['closed','Closed']],c.status),'required'):''}
+  </div>`;
+  break;
+ }
+ case 'message':{title='New private message';form='message-form';size=true;
+  body=`<div class="notice" style="margin-bottom:14px">Private messages are stored in the portal. The recipient receives only a neutral email notification—not the message content. If referring to a pupil, choose the correct pupil and guardian.</div><div class="form-grid">
+  ${select('Recipient','recipient_id',`<option value="">Select an active recipient</option>`+get('contacts').map(x=>`<option value="${h(x.id)}">${h(x.name)} · ${cap(x.role)}</option>`).join(''),'required','wide')}
+  ${select('Linked pupil (where relevant)','student_id',learnerOptions('','No pupil attached'),'','wide')}
+  ${field('Subject','subject','','text','required maxlength="160"','wide')}
+  ${field('Private message','body','','textarea','required maxlength="3000"','wide')}</div>`;
+  submit='Send private message';break;}
  case 'event':{title='Add community event';form='event-form';body=`<div class="form-grid">${field('Event name','title','','text','required','wide')}${field('Date','event_date',when(7),'date','required')}${select('Category','category',htmlOptions([['community','Community'],['parents','Parents'],['learning','Learning'],['religious','Islamic occasion']],'community'))}${field('Event details','description','','textarea','','wide')}</div>`;submit='Create event';break;}
  case 'quiz':{title='Create a knowledge question';form='quiz-form';body=`<div class="form-grid">${field('Question','question','','textarea','required','wide')}${['Option A','Option B','Option C','Option D'].map((x,i)=>field(x,'option'+i,'','text','required')).join('')}${select('Correct answer','answer_index',htmlOptions([[0,'A'],[1,'B'],[2,'C'],[3,'D']],0))}${field('Category','category','Islamic Knowledge')}</div>`;submit='Publish question';break;}
  case 'edit-user':{
@@ -638,6 +687,12 @@ async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
  if(a==='attendance-mark-present'){
   document.querySelectorAll('#attendance-form select[name^="a-"]').forEach(el=>{if(!el.value)el.value='present';});
   toast('Unmarked pupils set to Present. Review and save the register to record them.');return;
+ }
+ if(a==='message-thread'){
+  S.messageThread=selectedId;
+  const unread=get('messages').filter(m=>(m.conversation_id||m.thread_root_id||m.id)===selectedId&&m.recipient_id===S.user.id&&!m.read_at);
+  await Promise.all(unread.map(m=>post('/messages',{id:m.id},'PATCH')));
+  await load(['messages']);renderPage();return;
  }
  if(a==='classroom-profile'){await navigate('students');if(!get('students').some(x=>x.id===selectedId))return;S.studentId=selectedId;S.studentTab='overview';renderPage();return;}
  if(a==='nav'){
@@ -798,7 +853,10 @@ async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.
  }
  else if(formId==='payment-form'){const result=await post('/payments',{invoice_id:raw.invoice_id,amount_pence:Math.round(Number(raw.amount)*100),method:raw.method,reference:raw.reference});toast(result.notification_status==='sent'?'Payment recorded · receipt email accepted for delivery':result.notification_status==='no_guardian_email'?'Payment recorded · no eligible guardian email for receipt':'Payment recorded · receipt email not sent; check Resend/email log',result.notification_status!=='sent');}
  else if(formId==='announcement-form'){await post('/announcements',raw);toast('Announcement published');}
- else if(formId==='message-form'){await post('/messages',raw);toast('Message sent to recipient’s portal inbox');}
+ else if(formId==='message-form'){if(!raw.student_id)delete raw.student_id;const result=await post('/messages',raw);S.messageThread=result.conversation_id;toast(result.notification_status==='sent'?'Message saved · inbox notification email accepted':'Message saved in the private portal inbox (email not sent)');}
+ else if(formId==='reply-message-form'){const result=await post('/messages',{reply_to:raw.reply_to,body:raw.body});S.messageThread=result.conversation_id;toast(result.notification_status==='sent'?'Reply saved · email alert accepted':'Reply saved in the private portal inbox');}
+ else if(formId==='policy-record-form'){const {id,...payload}=raw;await post('/compliance/policies',id?{...payload,id}:payload,id?'PATCH':'POST');toast('Policy review record saved');}
+ else if(formId==='compliance-concern-form'){const {id,...payload}=raw;await post('/compliance/concerns',id?{...payload,id}:payload,id?'PATCH':'POST');toast(id?'Concern follow-up saved':'Restricted concern recorded for administrative review');}
  else if(formId==='event-form'){await post('/events',raw);toast('Event created');}
  else if(formId==='quiz-form'){await post('/quizzes',{question:raw.question,options:[raw.option0,raw.option1,raw.option2,raw.option3],answer_index:Number(raw.answer_index),category:raw.category});toast('Quiz question published');}
  else if(formId==='edit-user-form'){
@@ -834,7 +892,7 @@ else if(formId==='attendance-form'){
  close();if(S.studentId && ['student-form','homework-form','grade-homework-form','behaviour-form','payment-form','invoice-form','progress-report-form'].includes(formId)){await navigate('students',{keepStudent:true});}else await navigate(refresh);
 }
 document.addEventListener('click',async e=>{const el=e.target.closest('[data-action]');if(!el)return;const a=el.dataset.action;try{if(a==='copy-invite'){const v=$('#invitation-url');await navigator.clipboard.writeText(v.value);toast('Invitation link copied');return;}await action(a,el);}catch(err){toast(err.message,true);console.error(err);}});
-document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','class-assignment-form','class-roster-form','admission-form','invoice-form','payment-form','announcement-form','message-form','event-form','quiz-form','invite-form','guardian-invite-form','edit-user-form','password-form','attendance-form','progress-report-form','settings-form','automation-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
+document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','class-assignment-form','class-roster-form','admission-form','invoice-form','payment-form','announcement-form','message-form','reply-message-form','policy-record-form','compliance-concern-form','event-form','quiz-form','invite-form','guardian-invite-form','edit-user-form','password-form','attendance-form','progress-report-form','settings-form','automation-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
 document.addEventListener('input',e=>{if(e.target.closest('#homework-form')&&['verse_from','verse_to'].includes(e.target.name))updateSurahVerseLimits();if(e.target.name==='greeting_name'&&e.target.closest('#guardian-invite-form')){const preview=$('#guardian-invite-preview');if(preview)preview.textContent='Dear '+(e.target.value.trim()||'Parent')+',';}});
 document.addEventListener('change',async e=>{const el=e.target;if(el.closest('#invoice-form'))updateInvoiceTargets();if(el.closest('#homework-form')&&(['surah_from','surah_to','verse_from','verse_to'].includes(el.name)))updateSurahVerseLimits();if(el.name==='type'&&el.closest('#homework-form')){const surah=['hifdh','murajaa'].includes(el.value);$('#surah-fields')?.classList.toggle('hide',!surah);$('#page-fields')?.classList.toggle('hide',surah);}if(el.dataset.date==='attendance'){S.attendanceDate=el.value;await navigate('attendance');}if(el.dataset.attendanceClass!==undefined){S.attendanceClass=el.value;renderPage();return;}if(el.dataset.classroomClass!==undefined){S.classroomClass=el.value;renderPage();return;}if(el.dataset.filter){S.filter=el.value;renderPage();}if(el.dataset.admission){try{
   const application=get('admissions').find(x=>x.id===el.dataset.admission);
