@@ -355,13 +355,13 @@ function dbsRegisterSection(){
    ${warn.length?`<div class="dbs-warning">${ico('bell',19)} <div><strong>${overdue.length?overdue.length+' overdue DBS recheck'+(overdue.length===1?'':'s')+'. ':''}${warn.length} record${warn.length===1?'':'s'} require${warn.length===1?'s':''} attention.</strong><p>Review the dates and arrange fresh checks according to the madrasah’s safeguarding policy. This does not determine anyone’s suitability to work.</p></div></div>`:''}
    <div class="cards three dbs-stat-cards"><div class="notice">Active staff and teachers: <strong>${records.length}</strong></div><div class="notice">Due within 60 days: <strong>${warn.length}</strong></div><div class="notice">Rechecks overdue: <strong>${overdue.length}</strong></div></div>
    ${records.length?`<div class="table-scroll"><table class="table"><thead><tr><th>Staff / role</th><th>Check level</th><th>Issued</th><th>School recheck due</th><th>Review status</th><th>Document</th><th>Actions</th></tr></thead><tbody>
-    ${records.map(p=>`<tr><td class="cell-name">${h(p.staff_name)}<div class="cell-sub">${h(cap(p.role))}</div></td><td>${h(dbsLevels[p.check_level]||'Not recorded')}</td><td>${fmt(p.issued_on)}</td><td>${fmt(p.review_due)}</td><td>${dbsStatusTag(p)}</td><td>${p.document_uploaded_at?`<span class="tiny">Retained until ${fmt(p.document_purge_after)}</span>`:`<span class="muted tiny">No copy</span>`}</td>
+    ${records.map(p=>`<tr><td class="cell-name">${h(p.staff_name)}<div class="cell-sub">${h(cap(p.role))}</div></td><td>${h(dbsLevels[p.check_level]||'Not recorded')}</td><td>${fmt(p.issued_on)}</td><td>${fmt(p.review_due)}</td><td>${dbsStatusTag(p)}</td><td>${p.document_uploaded_at?`<span class="tiny">Retained until ${fmt(p.document_purge_after)}</span>`:p.document_received_at?`<span class="muted tiny">Copy removed after retention</span>`:`<span class="tiny red">Upload required</span>`}</td>
      <td><div class="dbs-actions"><button class="btn smol white" data-action="modal" data-value="dbs-record" data-id="${h(p.staff_id)}">${p.check_id?'Edit':'Record'}</button>
-     ${p.check_id&&S.dbsStorageReady&&!p.document_uploaded_at?`<button class="btn smol outline" data-action="modal" data-value="dbs-upload" data-id="${h(p.staff_id)}">${ico('upload',13)} Upload</button>`:''}
+     
      ${p.check_id&&p.document_uploaded_at?`<button class="btn smol outline" data-action="dbs-download" data-id="${h(p.staff_id)}">${ico('download',13)} Download</button><button class="btn smol white" data-action="dbs-delete-file" data-id="${h(p.staff_id)}">${ico('trash',13)} Remove</button>`:''}
      </div></td></tr>`).join('')}
     </tbody></table></div>`:blank('No staff members yet','Create staff or teacher accounts to track DBS checking dates.')}
-   <div class="notice" style="margin-top:15px">${ico('info',16)} Certificate uploads use a private R2 bucket, never a public asset URL. ${S.dbsStorageReady?'Private document storage is connected.':'Private document storage is NOT configured: enable it before attempting to upload certificates.'} Copies are removed after 180 days; review dates and minimal metadata are retained. Do not retain copies without a documented lawful need.</div>
+   <div class="notice" style="margin-top:15px">${ico('info',16)} New DBS records must include the certificate in the same form. Documents are stored in private R2 for up to 180 days. If secure storage is unavailable, the record will not save. A received-evidence timestamp remains after a retained copy is removed.</div>
  </section>`;
 }
 
@@ -626,16 +626,30 @@ function openModal(type,selectedId=''){
   if(!userCan('admin'))return;
   const p=get('compliance/dbs').find(x=>x.staff_id===selectedId);
   if(!p)return;
-  title='DBS recheck · '+p.staff_name;form='dbs-record-form';size=true;submit='Save DBS review schedule';
-  body=`<input type="hidden" name="staff_id" value="${h(p.staff_id)}"><div class="notice" style="margin-bottom:16px">DBS certificates do not expire. Enter the original <strong>issue date</strong> and the <strong>school’s planned renewal / recheck due date</strong>. Only authorised administrators can view this register.</div>
-  <div class="form-grid">
-   ${select('Type of DBS check','check_level',htmlOptions(Object.entries(dbsLevels),p.check_level||'enhanced'),'required')}
-   ${field('Certificate issue date','issued_on',p.issued_on||'','date','required')}
-   ${field('School recheck due date','review_due',p.review_due||'','date','required')}
-   ${field('Reference number – last four characters only (optional)','reference_last4',p.reference_last4||'','text','maxlength="4" pattern="[A-Za-z0-9]{0,4}"')}
-   ${field('Original certificate checked on (optional)','checked_on',p.checked_on||'','date')}
-  </div>
-  <div class="notice" style="margin-top:15px">Warnings appear 60 days before the recheck due date, and remain visible while overdue. Uploading the certificate is optional and separate from saving this record.</div>`;
+  const requiresCertificate=!p.document_received_at;
+  title='DBS check · '+p.staff_name;form='dbs-record-form';size=true;submit='Save DBS record';
+  body=`<input type="hidden" name="staff_id" value="${h(p.staff_id)}">
+    <input type="hidden" id="dbs-original-issued" value="${h(p.issued_on||'')}">
+    <input type="hidden" id="dbs-original-received" value="${p.document_received_at?'yes':'no'}">
+    <div class="notice" style="margin-bottom:16px">Enter the certificate issue date and the school’s recheck due date. <strong>Uploading the DBS certificate is mandatory when registering a new check or completing a previously incomplete record.</strong></div>
+    <div class="form-grid">
+      ${select('DBS check level','check_level',htmlOptions(Object.entries(dbsLevels),p.check_level||'enhanced'),'required')}
+      ${field('Certificate issue date','issued_on',p.issued_on||'','date','required')}
+      ${field('School recheck due date','review_due',p.review_due||'','date','required')}
+      ${field('Reference suffix (last four characters, optional)','reference_last4',p.reference_last4||'','text','maxlength="4" pattern="[A-Za-z0-9]{0,4}"')}
+      ${field('Original certificate checked on (optional)','checked_on',p.checked_on||'','date')}
+      <div class="field wide">
+       <label for="dbs-certificate-file">DBS certificate (PDF / PNG / JPEG, up to 3 MB) <strong id="dbs-file-required-label">${requiresCertificate?'— required':'— required when replacing the certificate'}</strong></label>
+       <input id="dbs-certificate-file" type="file" name="certificate" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" ${requiresCertificate?'required':''}>
+       <p class="small muted" style="margin-top:6px">The certificate is uploaded privately and is not shared with parents or teachers.</p>
+      </div>
+      <label class="dbs-consent wide" id="dbs-retention-label" ${requiresCertificate?'':'hidden'}>
+       <input type="checkbox" name="retention_authorized" value="YES" ${requiresCertificate?'required':''}>
+       I confirm that temporary retention is necessary and permitted under the madrasah’s DBS and data protection procedures.
+      </label>
+    </div>
+    ${p.document_uploaded_at?`<div class="notice" style="margin-top:14px">Previously uploaded copy retained until ${fmt(p.document_purge_after)}. It will be preserved unless you select a replacement file.</div>`:''}
+    <div class="notice" style="margin-top:14px">DBS certificates have no official expiry. Recheck reminders are based on the school’s policy date. Retained copies are removed after 180 days.</div>`;
   break;
  }
  case 'dbs-upload':{
@@ -924,9 +938,18 @@ async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.
  else if(formId==='message-form'){if(!raw.student_id)delete raw.student_id;const result=await post('/messages',raw);S.messageThread=result.conversation_id;toast(result.notification_status==='sent'?'Message saved · inbox notification email accepted':'Message saved in the private portal inbox (email not sent)');}
  else if(formId==='reply-message-form'){const result=await post('/messages',{reply_to:raw.reply_to,body:raw.body});S.messageThread=result.conversation_id;toast(result.notification_status==='sent'?'Reply saved · email alert accepted':'Reply saved in the private portal inbox');}
  else if(formId==='dbs-record-form'){
+   const file=form.elements.certificate.files?.[0];
    const previous=get('compliance/dbs').find(p=>p.staff_id===raw.staff_id);
-   await post('/compliance/dbs',raw,previous?.check_id?'PATCH':'POST');
-   toast('DBS review dates saved · in-app recheck monitoring active');
+   const needsFile=!previous?.document_received_at||raw.issued_on!==previous?.issued_on;
+   if(needsFile&&!file)throw Error('Attach the DBS certificate before saving the check.');
+   if(file&&file.size>3*1024*1024)throw Error('Certificate exceeds the 3 MB size limit.');
+   if(file&&!form.elements.retention_authorized.checked)throw Error('Confirm authorised temporary retention of the certificate.');
+   const response=await fetch('/api/compliance/dbs/submit',{
+     method:'POST',credentials:'same-origin',headers:{'x-csrf-token':S.csrf},body:new FormData(form)
+   });
+   let result={};try{result=await response.json();}catch{}
+   if(!response.ok)throw Error(result.error||'DBS certificate and dates could not be saved');
+   toast(result.certificate_received?'Certificate securely uploaded; DBS record saved':'DBS review dates updated');
  }
  else if(formId==='dbs-upload-form'){
    const file=form.elements.certificate.files?.[0];
@@ -978,7 +1001,22 @@ else if(formId==='attendance-form'){
 document.addEventListener('click',async e=>{const el=e.target.closest('[data-action]');if(!el)return;const a=el.dataset.action;try{if(a==='copy-invite'){const v=$('#invitation-url');await navigator.clipboard.writeText(v.value);toast('Invitation link copied');return;}await action(a,el);}catch(err){toast(err.message,true);console.error(err);}});
 document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','class-assignment-form','class-roster-form','admission-form','invoice-form','payment-form','announcement-form','message-form','reply-message-form','dbs-record-form','dbs-upload-form','policy-record-form','compliance-concern-form','event-form','quiz-form','invite-form','guardian-invite-form','edit-user-form','password-form','attendance-form','progress-report-form','settings-form','automation-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
 document.addEventListener('input',e=>{if(e.target.closest('#homework-form')&&['verse_from','verse_to'].includes(e.target.name))updateSurahVerseLimits();if(e.target.name==='greeting_name'&&e.target.closest('#guardian-invite-form')){const preview=$('#guardian-invite-preview');if(preview)preview.textContent='Dear '+(e.target.value.trim()||'Parent')+',';}});
-document.addEventListener('change',async e=>{const el=e.target;if(el.closest('#invoice-form'))updateInvoiceTargets();if(el.closest('#homework-form')&&(['surah_from','surah_to','verse_from','verse_to'].includes(el.name)))updateSurahVerseLimits();if(el.name==='type'&&el.closest('#homework-form')){const surah=['hifdh','murajaa'].includes(el.value);$('#surah-fields')?.classList.toggle('hide',!surah);$('#page-fields')?.classList.toggle('hide',surah);}if(el.dataset.date==='attendance'){S.attendanceDate=el.value;await navigate('attendance');}if(el.dataset.attendanceClass!==undefined){S.attendanceClass=el.value;renderPage();return;}if(el.dataset.classroomClass!==undefined){S.classroomClass=el.value;renderPage();return;}if(el.dataset.filter){S.filter=el.value;renderPage();}if(el.dataset.admission){try{
+function updateDbsCertificateRequirement(){
+ const form=document.querySelector('#dbs-record-form');
+ if(!form)return;
+ const file=form.elements.certificate;
+ const issue=form.elements.issued_on?.value||'';
+ const original=form.querySelector('#dbs-original-issued')?.value||'';
+ const previouslyReceived=form.querySelector('#dbs-original-received')?.value==='yes';
+ const necessary=!previouslyReceived||issue!==original;
+ file.required=necessary;
+ form.querySelector('#dbs-file-required-label').textContent=necessary?'— required':'— required when replacing the certificate';
+ const consent=form.querySelector('#dbs-retention-label');
+ const showing=necessary||!!file.files?.length;
+ consent.hidden=!showing;
+ form.elements.retention_authorized.required=showing;
+}
+document.addEventListener('change',async e=>{const el=e.target;if(el.closest('#dbs-record-form')&&['issued_on','certificate'].includes(el.name))updateDbsCertificateRequirement();if(el.closest('#invoice-form'))updateInvoiceTargets();if(el.closest('#homework-form')&&(['surah_from','surah_to','verse_from','verse_to'].includes(el.name)))updateSurahVerseLimits();if(el.name==='type'&&el.closest('#homework-form')){const surah=['hifdh','murajaa'].includes(el.value);$('#surah-fields')?.classList.toggle('hide',!surah);$('#page-fields')?.classList.toggle('hide',surah);}if(el.dataset.date==='attendance'){S.attendanceDate=el.value;await navigate('attendance');}if(el.dataset.attendanceClass!==undefined){S.attendanceClass=el.value;renderPage();return;}if(el.dataset.classroomClass!==undefined){S.classroomClass=el.value;renderPage();return;}if(el.dataset.filter){S.filter=el.value;renderPage();}if(el.dataset.admission){try{
   const application=get('admissions').find(x=>x.id===el.dataset.admission);
   let classId='';
   if(el.value==='accepted'){

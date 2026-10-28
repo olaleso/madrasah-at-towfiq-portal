@@ -238,3 +238,7 @@ The new migration `0010_staff_dbs_review.sql` only adds the administrative DBS c
 
 Once deployed, admins open **Compliance Centre → Staff DBS checking register**. Record the certificate's actual issue date and the **school-defined recheck due date** (DBS certificates have **no official expiry date**). Review alerts appear 60 days ahead and while overdue. Uploading an original certificate image is **optional and high-risk**; it requires a documented need, private R2 storage, and short retention. Never make the private R2 bucket public.
 
+
+### v1.6.2 — Certificate required when recording a DBS check
+
+Use **Compliance → Staff DBS checking register → Record/Edit**. The certificate upload is now inside the same form. The server requires a real PDF, PNG or JPEG upload when creating a new record, repairing a previous metadata-only entry, or changing the certificate issue date. All date fields and file are saved together, and a storage failure does not save the new check. The pre-existing private R2 bucket and 180-day lifecycle rule remain required. `0011_dbs_evidence_received.sql` preserves a simple date indicating evidence was received after the copy has been purged. See README and `docs/PRIVATE_DBS_STORAGE.md` for the privacy rules.
