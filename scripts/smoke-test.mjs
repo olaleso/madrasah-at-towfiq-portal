@@ -825,6 +825,33 @@ assert.equal(comm.status,403,'A sender cannot mark their own reply as read for i
 comm=await req('/compliance/consents');assert.equal(comm.status,403,'Parents cannot enumerate admission declarations');
 comm=await req('/compliance/policies');assert.equal(comm.status,403);
 comm=await req('/compliance/concerns');assert.equal(comm.status,403);
+// Parent-initiated conversations are limited to their linked child’s lead teacher.
+let tc=await req('/contacts');assert.equal(tc.status,200);
+assert.ok(tc.data.items.some(x=>x.id===staff_id&&x.role==='teacher'),
+ 'The guardian can choose the assigned lead teacher');
+assert.ok(!tc.data.items.some(x=>x.id===foreignRoot),
+ 'Contact directory lists account IDs, not unrelated conversations');
+assert.ok(tc.data.items.every(x=>x.role==='teacher'),'Parents cannot enumerate all staff contacts');
+let newParent=await req('/messages',{recipient_id:staff_id,subject:'Question about revision',body:'May we review the assigned surah at home?'});
+assert.equal(newParent.status,400,'A guardian must choose a linked pupil for a new teacher conversation');
+newParent=await req('/messages',{recipient_id:staff_id,student_id:student2,subject:'Different pupil',body:'Forbidden'});
+assert.equal(newParent.status,403,'Parents cannot message a teacher about an unlinked child');
+newParent=await req('/messages',{recipient_id:sqlite.prepare("SELECT id FROM users WHERE role='admin' LIMIT 1").get().id,student_id,subject:'Unauthorised staff contact',body:'Forbidden'});
+assert.equal(newParent.status,403,'Parents can only start conversations with their child’s assigned teacher');
+newParent=await req('/messages',{recipient_id:staff_id,student_id,subject:'Question about revision',body:'May we review the assigned surah at home?'});
+assert.equal(newParent.status,200,JSON.stringify(newParent.data));
+assert.equal(sqlite.prepare('SELECT recipient_id,created_by,student_id FROM messages WHERE id=?').get(newParent.data.id).recipient_id,staff_id);
+const parentStartedId=newParent.data.id;
+cookie=teacherCookie;csrf=teacherSession.data.csrf;
+const teacherInbox=await req('/messages');assert.equal(teacherInbox.status,200);
+assert.ok(teacherInbox.data.items.some(x=>x.id===parentStartedId),'Assigned teacher sees guardian-initiated conversation');
+const teacherReply=await req('/messages',{reply_to:parentStartedId,body:'Yes, please revise the passage together each evening.'});
+assert.equal(teacherReply.status,200,JSON.stringify(teacherReply.data));
+assert.equal(teacherReply.data.conversation_id,parentStartedId);
+cookie=parent_cookie;csrf=parent_csrf;
+const parentInbox=await req('/messages');assert.ok(parentInbox.data.items.some(x=>x.id===teacherReply.data.id),
+ 'Guardian sees the teacher’s response in the same private conversation');
+
 cookie=savedAdminCookie;csrf=savedAdminCsrf;
 comm=await req('/messages');assert.ok(comm.data.items.some(x=>x.id===parentReply.id),'Office can read parent replies');
 comm=await req('/messages',{id:parentReply.id},'PATCH');assert.equal(comm.status,200,'Office marks its own received reply read');
