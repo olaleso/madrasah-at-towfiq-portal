@@ -206,3 +206,17 @@ npm run db:migrate:remote
 if ($LASTEXITCODE -ne 0) { throw "D1 migration failed; deployment cancelled." }
 npm run deploy
 ```
+
+## v1.6.0 — Communications and compliance
+**Migration:** `0009_compliance_communications.sql`. Back up the remote D1 database; **migrate before deploying** the new Worker. All existing messages are preserved, and pre-upgrade messages are treated as initial conversation roots.
+
+```powershell
+git pull origin main
+npm run test
+if ($LASTEXITCODE -ne 0) { throw "Tests failed; stop." }
+npm run db:migrate:remote
+if ($LASTEXITCODE -ne 0) { throw "Migration failed; stop." }
+npm run deploy
+```
+
+**Acceptance checks:** with fictional accounts, confirm: an office-to-parent message, the guardian's in-portal reply, message read state, restricted conversation visibility and neutral-content email; admin policy creation/review, staff read-only policy view, and staff-submitted concerns visible only to their author and administrators. Photo/first-aid entries are **historical admission statements**, not current consent approval or an automated compliance determination. This upgrade does not send new mass mail.
