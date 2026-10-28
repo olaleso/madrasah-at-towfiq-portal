@@ -805,7 +805,7 @@ comm=await req('/messages');assert.equal(comm.status,200);
 assert.ok(comm.data.items.some(x=>x.id===msgRoot),'Guardian sees an existing private message');
 assert.ok(!comm.data.items.some(x=>x.id===foreignRoot),'Guardian must not see an unrelated conversation');
 comm=await req('/messages',{recipient_id:staff_id,subject:'Parent-initiated',body:'This must be denied'});
-assert.equal(comm.status,403,'Guardian cannot start a conversation with an arbitrary user');
+assert.equal(comm.status,400,'Guardian cannot start a new conversation without selecting their own child');
 comm=await req('/messages',{reply_to:foreignRoot,body:'Not my conversation'});
 assert.equal(comm.status,403,'Guardian cannot enter a conversation not addressed to them');
 comm=await req('/messages',{id:msgRoot},'PATCH');assert.equal(comm.status,200,JSON.stringify(comm.data));
