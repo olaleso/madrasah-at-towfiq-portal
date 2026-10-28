@@ -462,6 +462,29 @@ function openModal(type,selectedId=''){
  <div class="wide" id="surah-fields"><div class="form-grid">${surahSelect('surah_from','From surah')}${field('From verse','verse_from','1','number','min="1" step="1"')}${surahSelect('surah_to','To surah')}${field('To verse','verse_to','7','number','min="1" step="1"')}</div><p id="quran-verse-hint" class="small muted" style="margin-top:9px">Choose both Surahs to see permitted verse ranges.</p></div>
  <div class="wide hide" id="page-fields">${field('Qaaidah / Islamic Studies page number','page_number','','text','placeholder="e.g. 12–14"')}</div>
  ${field('Due by date','due_date',when(7),'date','required')}<div class="field"><span class="strong small">Completion status</span><div class="notice" style="margin-top:9px">Starts as <strong>Incomplete</strong>. After reviewing the work, choose <strong>Update</strong> from the homework tracker to mark it Complete or add teacher feedback.</div></div> ${field('Assignment instructions & comments','comments','','textarea','placeholder="What should the student practise?"','wide')}</div>`;break;}
+
+ case 'progress-report':{
+   const r=get('progress-reports').find(x=>x.id===selectedId);
+   const pupil=r?student(r.student_id):student(selectedId);
+   const active=get('students').filter(x=>x.status==='active');
+   title=r?'Edit monthly learner progress':'Create monthly learner report';
+   form='progress-report-form';size=true;submit=r?'Save report changes':'Save learning report';
+   const choices=[['','Not assessed'],...Object.entries(learningLevels)];
+   body=`<input type="hidden" name="id" value="${h(r?.id||'')}">
+    <div class="notice" style="margin-bottom:15px">Drafts are visible only to authorised staff. Choosing <strong>Publish</strong> immediately shares the full report with the child’s currently linked guardian. Do not include medical, disciplinary or safeguarding notes.</div>
+    <div class="form-grid">
+      ${r?`<div class="field wide"><label>Pupil</label><div class="notice">${h(sidName(pupil))}</div><input type="hidden" name="student_id" value="${h(r.student_id)}"></div>`:
+       select('Pupil','student_id',`<option value="">Choose an active pupil</option>`+active.map(x=>`<option value="${h(x.id)}" ${pupil?.id===x.id?'selected':''}>${h(sidName(x))} · ${h(x.class_name||'Unassigned')}</option>`).join(''),'required','wide')}
+      ${r?`<div class="field"><label>Report month</label><strong>${h(progressPeriodLabel(r.period))}</strong><input type="hidden" name="period" value="${h(r.period)}"></div>`:
+       field('Report month','period',schoolToday().slice(0,7),'month','required')}
+      ${select('Sharing status','status',htmlOptions([['draft','Save as private draft'],['published','Publish to the family']],r?.status||'draft'),'required')}
+      ${Object.entries(learningAreas).map(([key,label])=>select(label,key,htmlOptions(choices,r?.[key]||''))).join('')}
+      ${field('Teacher summary of learning','summary',r?.summary||'','textarea','maxlength="1200" placeholder="Strengths, learning achieved, and areas where the pupil needs support"','wide')}
+      ${field('Practical next steps for home','next_steps',r?.next_steps||'','textarea','maxlength="800" placeholder="Reading, memorisation or revision guidance to practise at home"','wide')}
+    </div>
+    <div class="notice" style="margin-top:14px">Publishing requires at least one subject assessment and a meaningful summary of 10 or more characters. One report per pupil per month. Reports are not emailed automatically.</div>`;
+   break;
+ }
  case 'grade-homework':{
    let r=get('homework').find(x=>x.id===selectedId);if(!r)return;
    title='Update homework progress';form='grade-homework-form';
@@ -656,6 +679,17 @@ async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.
  }
  if(formId==='student-form'){let {id:studentId,...payload}=raw;for(const k of ['class_id','parent_id','dob'])if(payload[k]==='')payload[k]=null;if(!studentId)throw Error('New students must be enrolled from Admissions');await post('/students',{...payload,id:studentId},'PATCH');toast('Student profile updated');}
  else if(formId==='homework-form'){if(['hifdh','murajaa'].includes(raw.type))validateQuranVerses(raw);if(raw.type==='qaaidah'||raw.type==='islamic_studies'){raw.surah_from='';raw.surah_to='';raw.verse_from=null;raw.verse_to=null;}const result=await post('/homework',raw);toast(notificationResultMessage(result,'homework'),result.notification_status!=='sent');}
+
+ else if(formId==='progress-report-form'){
+  const original=get('progress-reports').find(r=>r.id===raw.id);
+  if(raw.status==='published'&&(!original||original.status!=='published')){
+   const ok=await confirmDialog({title:'Publish this learner report?',message:'The current linked guardian will be able to read the full report immediately.',details:'Review the teacher summary and next steps carefully. Publishing does not automatically send an email.',tone:'info',actionLabel:'Publish to family'});
+   if(!ok)return;
+  }
+  const payload={...raw};if(!payload.id)delete payload.id;
+  const result=await post('/progress-reports',payload,original?'PATCH':'POST');
+  toast(result.published?'Report published and visible to the linked family':'Private progress report draft saved');
+ }
  else if(formId==='grade-homework-form'){await post('/homework',raw,'PATCH');toast('Homework progress updated');}
  else if(formId==='behaviour-form'){if(!raw.reason_code)throw Error('Select a behaviour reason');const result=await post('/behaviour',raw);toast(notificationResultMessage(result,'behaviour'),result.notification_status!=='sent');}
  else if(formId==='class-form'){let {id:cid,...rest}=raw;await post('/classes',cid?{...rest,id:cid}:rest,cid?'PATCH':'POST');toast('Class saved');}
@@ -725,7 +759,7 @@ else if(formId==='attendance-form'){
  }
  else if(formId==='settings-form'){const toSave={...raw,monthly_fee_pence:String(Math.round(Number(raw.monthly_fee_pounds)*100))};delete toSave.monthly_fee_pounds;for(const [key,value] of Object.entries(toSave))await post('/settings',{key,value});toast('School settings saved');}
  else if(formId==='automation-form'){await post('/settings',{key:'jumah_enabled',value:raw.jumah_enabled});await post('/settings',{key:'jumah_message',value:raw.jumah_message});toast('Jumu’ah reminder settings saved. Check the verified sender before enabling.');}
- close();if(S.studentId && ['student-form','homework-form','grade-homework-form','behaviour-form','payment-form','invoice-form'].includes(formId)){await navigate('students',{keepStudent:true});}else await navigate(refresh);
+ close();if(S.studentId && ['student-form','homework-form','grade-homework-form','behaviour-form','payment-form','invoice-form','progress-report-form'].includes(formId)){await navigate('students',{keepStudent:true});}else await navigate(refresh);
 }
 document.addEventListener('click',async e=>{const el=e.target.closest('[data-action]');if(!el)return;const a=el.dataset.action;try{if(a==='copy-invite'){const v=$('#invitation-url');await navigator.clipboard.writeText(v.value);toast('Invitation link copied');return;}await action(a,el);}catch(err){toast(err.message,true);console.error(err);}});
 document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','class-assignment-form','class-roster-form','admission-form','invoice-form','payment-form','announcement-form','message-form','event-form','quiz-form','invite-form','guardian-invite-form','edit-user-form','password-form','attendance-form','progress-report-form','settings-form','automation-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
