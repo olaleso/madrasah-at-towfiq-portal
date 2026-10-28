@@ -789,8 +789,97 @@ cookie=savedAdminCookie;csrf=savedAdminCsrf;
 assert.ok(sqlite.prepare('SELECT COUNT(*) AS count FROM pupil_progress_reports').get().count>=4,
  'New report records remain separate from existing homework and attendance');
 
+
+// v1.6.0 – secure two-way correspondence, consent snapshots and office compliance.
+const msgRoot=sqlite.prepare("SELECT id FROM messages WHERE subject='Private pupil progress'").get()?.id;
+assert.ok(msgRoot,'Existing pre-upgrade private messages remain in the inbox');
+let comm=await req('/messages');assert.equal(comm.status,200);
+assert.ok(comm.data.items.some(x=>x.id===msgRoot),'Office sees previously sent messages');
+assert.ok(comm.data.items.some(x=>x.id===msgRoot&&x.conversation_id===msgRoot),
+ 'Legacy messages become conversation roots without rewriting existing records');
+const foreignThread=await req('/messages',{recipient_id:staff_id,subject:'Office-only message',body:'Visible only to its participants'});
+assert.equal(foreignThread.status,200,JSON.stringify(foreignThread.data));
+const foreignRoot=foreignThread.data.id;
+cookie=parent_cookie;csrf=parent_csrf;
+comm=await req('/messages');assert.equal(comm.status,200);
+assert.ok(comm.data.items.some(x=>x.id===msgRoot),'Guardian sees an existing private message');
+assert.ok(!comm.data.items.some(x=>x.id===foreignRoot),'Guardian must not see an unrelated conversation');
+comm=await req('/messages',{recipient_id:staff_id,subject:'Parent-initiated',body:'This must be denied'});
+assert.equal(comm.status,403,'Guardian cannot start a conversation with an arbitrary user');
+comm=await req('/messages',{reply_to:foreignRoot,body:'Not my conversation'});
+assert.equal(comm.status,403,'Guardian cannot enter a conversation not addressed to them');
+comm=await req('/messages',{id:msgRoot},'PATCH');assert.equal(comm.status,200,JSON.stringify(comm.data));
+assert.ok(sqlite.prepare('SELECT read_at FROM messages WHERE id=?').get(msgRoot).read_at,
+ 'Recipient read marker is persisted');
+comm=await req('/messages',{reply_to:msgRoot,recipient_id:staff_id,body:'Recipient spoof attempt'});
+assert.equal(comm.status,403,'Reply recipients cannot be substituted');
+comm=await req('/messages',{reply_to:msgRoot,body:'Thank you, I have seen the homework note.'});
+assert.equal(comm.status,200,JSON.stringify(comm.data));
+assert.equal(comm.data.conversation_id,msgRoot);
+const parentReply=sqlite.prepare('SELECT * FROM messages WHERE id=?').get(comm.data.id);
+assert.equal(parentReply.thread_root_id,msgRoot);
+assert.equal(parentReply.recipient_id,savedAdminCookie?sqlite.prepare("SELECT id FROM users WHERE email='admin@example.test'").get().id:null);
+assert.equal(parentReply.created_by,guardian_id);
+comm=await req('/messages',{id:parentReply.id},'PATCH');
+assert.equal(comm.status,403,'A sender cannot mark their own reply as read for its recipient');
+comm=await req('/compliance/consents');assert.equal(comm.status,403,'Parents cannot enumerate admission declarations');
+comm=await req('/compliance/policies');assert.equal(comm.status,403);
+comm=await req('/compliance/concerns');assert.equal(comm.status,403);
+cookie=savedAdminCookie;csrf=savedAdminCsrf;
+comm=await req('/messages');assert.ok(comm.data.items.some(x=>x.id===parentReply.id),'Office can read parent replies');
+comm=await req('/messages',{id:parentReply.id},'PATCH');assert.equal(comm.status,200,'Office marks its own received reply read');
+comm=await req('/compliance/consents');assert.equal(comm.status,200,JSON.stringify(comm.data));
+const declared=comm.data.items.find(x=>x.student_id===student_id);
+assert.ok(declared,'Original accepted admission is represented in the consent snapshot');
+assert.equal(Number(declared.consent_first_aid),1);
+assert.equal(Number(declared.consent_photos),0);
+comm=await req('/compliance/policies');assert.equal(comm.status,200);
+assert.deepEqual(comm.data.items,[],'No fictitious policy compliance is implied');
+comm=await req('/compliance/policies',{title:'Child protection policy',category:'safeguarding',version:'1.0',owner:'DSL',review_due:'bad-date',status:'current',notes:''});
+assert.equal(comm.status,400,'Review date must be validated');
+comm=await req('/compliance/policies',{title:'Child protection policy',category:'safeguarding',version:'1.0',owner:'Designated lead',review_due:'2027-06-01',status:'draft',notes:'Pending approval'});
+assert.equal(comm.status,200,JSON.stringify(comm.data));
+const policyId=comm.data.id;
+comm=await req('/compliance/policies',{id:policyId,title:'Child protection policy',category:'safeguarding',version:'1.1',owner:'Designated lead',review_due:'2027-06-01',status:'current',notes:'Approved by trustees'},'PATCH');
+assert.equal(comm.status,200);
+assert.equal(sqlite.prepare('SELECT version,status FROM compliance_policies WHERE id=?').get(policyId).version,'1.1');
+comm=await req('/compliance/concerns',{kind:'possible_breach',title:'Simulated access error',occurred_on:'2026-10-28',description:'Fictional audit exercise',action_taken:'Restricted accounts verified'});
+assert.equal(comm.status,200,JSON.stringify(comm.data));
+const adminConcernId=comm.data.id;
+const officeInvite=await req('/users',{name:'Compliance Office',email:'compliance.office@example.test',role:'staff'});
+assert.equal(officeInvite.status,200,JSON.stringify(officeInvite.data));
+assert.ok(officeInvite.data.invitation_url,'Fictional staff receives setup link');
+const officeAuth=await req('/auth/accept-invite',{token:new URL(officeInvite.data.invitation_url).searchParams.get('invite'),password:'compliance-test-password-123'},'POST',false);
+assert.equal(officeAuth.status,200,JSON.stringify(officeAuth.data));
+cookie=officeAuth.response.headers.get('set-cookie').split(';')[0];csrf=officeAuth.data.csrf;
+const officeSession=await req('/auth/me');assert.equal(officeSession.status,200);
+csrf=officeSession.data.csrf;
+comm=await req('/compliance/policies');assert.equal(comm.status,200);
+assert.ok(comm.data.items.some(x=>x.id===policyId),'Office can review current policy register');
+comm=await req('/compliance/policies',{title:'Unauthorised policy',category:'data_protection',status:'current',notes:''});
+assert.equal(comm.status,403,'Only admins can change formal policy records');
+comm=await req('/compliance/concerns');assert.equal(comm.status,200);
+assert.ok(!comm.data.items.some(x=>x.id===adminConcernId),'Office staff cannot read another reporter’s concern');
+comm=await req('/compliance/concerns',{kind:'access_review',title:'Review of permissions',occurred_on:'2026-10-28',description:'Account-role review needed',action_taken:''});
+assert.equal(comm.status,200,JSON.stringify(comm.data));
+const officeConcernId=comm.data.id;
+comm=await req('/compliance/concerns');assert.ok(comm.data.items.some(x=>x.id===officeConcernId));
+assert.ok(!comm.data.items.some(x=>x.id===adminConcernId));
+comm=await req('/compliance/concerns',{id:officeConcernId,description:'Attempted closure',action_taken:'',status:'closed'},'PATCH');
+assert.equal(comm.status,403,'Only administrators can close privacy concerns');
+comm=await req('/compliance/consents');assert.equal(comm.status,200,'Staff can review admission declarations');
+cookie=teacherCookie;csrf=teacherSession.data.csrf;
+comm=await req('/compliance/consents');assert.equal(comm.status,403,'Teachers cannot read the office-wide consent register');
+comm=await req('/compliance/concerns');assert.equal(comm.status,403,'Teachers cannot enumerate private office concerns');
+cookie=savedAdminCookie;csrf=savedAdminCsrf;
+comm=await req('/compliance/concerns');assert.equal(comm.status,200);
+assert.ok(comm.data.items.some(x=>x.id===adminConcernId)&&comm.data.items.some(x=>x.id===officeConcernId));
+comm=await req('/compliance/concerns',{id:officeConcernId,description:'Account-role review needed',action_taken:'Audit complete; access limited',status:'closed'},'PATCH');
+assert.equal(comm.status,200);
+assert.equal(sqlite.prepare('SELECT status FROM compliance_concerns WHERE id=?').get(officeConcernId).status,'closed');
+
 z=await req('/auth/logout',{});assert.equal(z.status,200);
-console.log('PASS: admissions, attendance, fees, teacher-scoped monthly reports, family draft privacy and portal checks.');
+console.log('PASS: admissions, attendance, fees, scoped reports, two-way communications, consent and office compliance.');
 
 const admissionsUi=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 assert.equal(admissionsUi.includes("field('Daytime mobile number'"),false);
@@ -812,6 +901,17 @@ assert.ok(admissionsUi.includes("formId==='progress-report-form'"),'The report s
 assert.ok(admissionsUi.includes("progressReportCards("),'Pupil reports are shown using the reusable renderer');
 assert.ok(admissionsUi.includes('h(r.summary)'),'Progress narratives must be escaped against HTML injection');
 assert.ok(admissionsUi.includes("data-value=\"progress\""),'Guardian dashboard links to progress reports');
+
+
+// v1.6.0 UX: real threaded inbox, compliance centre, and styled forms.
+assert.ok(admissionsUi.includes("function compliancePage()"),'Compliance dashboard exists');
+assert.ok(admissionsUi.includes("function messageGroups()"),'Messages are grouped by conversation');
+assert.ok(admissionsUi.includes("case 'reply-message'"),'Parent replies use a controlled dialog');
+assert.ok(admissionsUi.includes("formId==='reply-message-form'"),'Replies are posted to the server');
+assert.ok(admissionsUi.includes("case 'policy-record'"),'Policy register can be managed');
+assert.ok(admissionsUi.includes("case 'compliance-concern'"),'Office can submit a concern');
+assert.ok(admissionsUi.includes("case'compliance':content=compliancePage();"),'Compliance navigation has a rendered page');
+assert.ok(admissionsUi.includes("h(m.body)"),'Private messages are HTML escaped');
 
 const notificationsWorker=fs.readFileSync(new URL('../src/worker.js',import.meta.url),'utf8');
 assert.ok(notificationsWorker.includes('studentNotificationRecipient'),'Guardian-only notification routing exists');
