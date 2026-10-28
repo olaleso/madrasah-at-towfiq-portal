@@ -70,6 +70,7 @@ const schoolLocalDate=()=>{
 };
 const nextIso=(seconds)=>new Date(Date.now()+seconds*1000).toISOString();
 const isDate = s=> /^\d{4}-\d{2}-\d{2}$/.test(String(s||'')) && !Number.isNaN(Date.parse(s+'T00:00:00Z'));
+const isDbsDate = date=>isDate(date)&&new Date(date+'T00:00:00Z').toISOString().slice(0,10)===date;
 const isMoney = x=>Number.isInteger(Number(x))&&Number(x)>=0&&Number(x)<=100000000;
 function requireRole(user,...roles){if(!roles.includes(user.role)) error('You do not have permission to perform this action',403);}
 function consented(req){const origin=req.headers.get('origin');if(origin&&origin!==new URL(req.url).origin)error('Invalid origin',403);const site=req.headers.get('sec-fetch-site');if(site&&!['same-origin','none'].includes(site))error('Cross-site request blocked',403);}
@@ -1217,10 +1218,10 @@ async function handle(req,env){
   const level=short(b.check_level,30);
   const issued=short(b.issued_on,10),due=short(b.review_due,10),reference=short(b.reference_last4,4).toUpperCase();
   if(!['basic','standard','enhanced','enhanced_barred'].includes(level))error('Select a DBS check level');
-  if(!isDate(issued)||!isDate(due)||issued>due||issued>schoolLocalDate())error('Enter valid issue and future recheck dates (issue cannot be in the future)');
+  if(!isDbsDate(issued)||!isDbsDate(due)||issued>due||issued>schoolLocalDate())error('Enter valid issue and future recheck dates (issue cannot be in the future)');
   if(!/^[A-Z0-9]{0,4}$/.test(reference))error('Reference suffix must contain up to four letters or digits');
   const checked=short(b.checked_on,10);
-  if(checked&&(!isDate(checked)||checked>schoolLocalDate()))error('Enter a valid verification date');
+  if(checked&&(!isDbsDate(checked)||checked>schoolLocalDate()))error('Enter a valid verification date');
   if(existing&&existing.document_key && issued!==existing.issued_on)
    error('Remove the retained certificate copy before replacing its issue date',409);
   if(existing){
