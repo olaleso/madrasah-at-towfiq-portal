@@ -314,3 +314,33 @@ npm run deploy
 ```
 
 **Verification:** Use fictional pupils linked to guardian inboxes you control. Confirm that drafts are staff-only, a published report appears for only the correct parent, an assigned teacher cannot see another class's reports, and unpublishing removes a report from the family view. Do not test with safeguarding information.
+
+## v1.6.0 — Compliance & Communications centre
+
+### Communications (all authorised roles)
+- **Two-way private conversations:** admin/staff/assigned teachers can start conversations; parents can start a message only to their active pupil’s assigned lead teacher, or reply within an existing conversation they participate in. Message replies inherit the original participants, subject and pupil link; the recipient is resolved by the server and cannot be changed by the sender.
+- **In-app inbox:** conversation history, sent/received labels and individually tracked unread/read timestamps. Only the actual recipient can mark a message read. Parent/teacher views see only messages they sent or received and, for pupil-specific messages, only when the pupil is still linked to that guardian or assigned to that teacher. Admin/staff retain office oversight access.
+- **Email alert:** when Resend is configured, the other participant receives a private inbox notification, showing the linked pupil’s full name when applicable but **never the message body**. A failed/no-provider email does not roll back the saved portal message.
+- **Announcements:** the existing authorised audience-specific noticeboard remains available. Only admin/staff publish or remove announcements.
+- **Safety limits:** ordinary private messages are not a designated safeguarding record or emergency reporting route. They are persistent, auditable portal messages; the user interface does not offer deletion.
+
+### Compliance (administrator and office staff)
+- **Policy review register:** title, category, version, owner, status (draft/current/retired), next review date and administrative review notes. Only admins can create/change policy records. Due/overdue reviews are highlighted, but the tracker does not store original signed policy documents.
+- **Admission declarations snapshot:** authorised office users can view the most recent **accepted admission** record’s emergency first-aid and internal-photo declarations per active pupil. Snapshot is **not live consent**; a non-agreement and a missing declaration are displayed conservatively, not assumed to be permission. Changes or withdrawal must be handled by the school's actual consent workflow.
+- **Restricted privacy/operational concern log:** admin/staff can submit minimal metadata for privacy requests, possible breaches, access reviews or other operational issues; office staff see **only their own** submissions; administrators see all and update review notes/status (open/in_review/closed). Do **not** record names or sensitive pupil/safeguarding case details in this operational tracker. Formal reporting/escalation remains separate.
+- **Permissions:** parents and teachers cannot enumerate the compliance register or concerns. All state-changing requests use existing authenticated CSRF protection and audit logging.
+
+### Migration & rollout
+`migrations/0009_compliance_communications.sql` extends the existing `messages` table for thread roots and read receipts and adds two independent administrative tables. It **does not alter or delete existing message, family, admission, fee, attendance or report records**.
+
+Take a recovery point for your **production D1** before migrating. In the existing local project folder run:
+```powershell
+git pull origin main
+npm run test
+if ($LASTEXITCODE -ne 0) { throw "Regression tests failed. Deployment stopped." }
+npm run db:migrate:remote
+if ($LASTEXITCODE -ne 0) { throw "Production migration failed. Deployment stopped." }
+npm run deploy
+```
+
+For a safe test, use fictional parent and staff accounts and an email inbox you control. Create a private message, sign in as its guardian recipient, read and reply, verify that the sender sees the reply and no other guardian does, then test policy review dates and concern reporting. The compliance centre is an operational aid, **not a claim that the school is legally compliant**.
