@@ -120,3 +120,8 @@ After applying the code with `git pull origin main`, run `npm run test` followed
 ## v1.0.16 parent learning notifications
 
 Run `git pull origin main`, `npm run test` and `npm run deploy` (no D1 migration). Verified Resend sending and Worker `RESEND_API_KEY` must remain configured. Create fictional homework and a positive and negative behaviour event to an authorised test guardian, then verify exactly one email per new record, including due date/points and a link to `https://portal.attowfiqmasjid.org/`. Resend status `sent` means the provider accepted the message, not proof the final mailbox received it. Check email logs and spam filtering. These events are separate from the application-received and acceptance invitations already implemented.
+
+## v1.0.17 — Admin interface confirmation refresh
+
+This is a client UI-only change. Pull from main, run the full smoke tests, then redeploy the existing Worker. No D1 migration or database backup beyond your normal deployment safeguards is required. After deployment, hard-refresh your browser and try changing an admission status to `Accepted`: a branded madrasah dialog appears instead of Chrome's default prompt. Test Cancel and ensure status remains unchanged. For any student deletion, **do not** complete deletion on live records; only verify the dialog requires typing `DELETE` and cancel it. Test the invoice and broadcast confirmations without sending a real invoice/broadcast by cancelling.
+

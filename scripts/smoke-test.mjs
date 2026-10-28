@@ -325,8 +325,33 @@ assert.ok(admissionsUi.includes("guardian-invite-form"),'Guardian invitation use
 assert.ok(admissionsUi.includes("guardian-invite-hero"),'Guardian invitation contains personalised summary');
 assert.ok(admissionsUi.includes('name="greeting_name"'),'Guardian preferred name can be reviewed');
 assert.equal(admissionsUi.includes("confirm('Send or regenerate an invitation"),false,'Never use a native browser confirm for parent invitations');
+
+ 
+// v1.0.17: never show browser-owned confirm/prompt/alert pop-ups in shipped UI.
+for(const path of ['../public/app.js','../public/index.html','../src/worker.js','../scripts/local-preview.mjs']){
+ const code=fs.readFileSync(new URL(path,import.meta.url),'utf8');
+ assert.doesNotMatch(code,/\b(?:window\.|globalThis\.)?(?:confirm|prompt|alert)\s*\(/,'Native browser dialog is forbidden in '+path);
+}
+assert.doesNotThrow(()=>new Function(admissionsUi),'The portal UI script must parse after dialog conversion');
+assert.ok(admissionsUi.includes('function confirmDialog('),'Reusable custom confirm dialog is available');
+assert.ok(admissionsUi.includes('role="alertdialog"'),'Custom dialog communicates accessible alert dialog semantics');
+assert.ok(admissionsUi.includes('aria-modal="true"'),'Custom dialog announces modal focus');
+assert.ok(admissionsUi.includes('requiredText:\'DELETE\''),'Permanent student deletion still requires typing DELETE');
+assert.ok(admissionsUi.includes("typed.value.trim()!==requiredText"),'Destructive approval remains disabled until exact typed confirmation');
+assert.ok(admissionsUi.includes("if(e.key==='Escape')"),'Keyboard Escape cancels the branded confirmation');
+assert.ok(admissionsUi.includes('if(activeConfirmation)return Promise.resolve(false)'),'Parallel confirmation actions must not both execute');
+for(const caseId of ['delete-student','delete-event','delete-announcement','toggle-user','demo-seed','send-jumah']){
+ assert.ok(admissionsUi.includes("if(a==='"+caseId+"')"),'Action still available: '+caseId);
+}
+assert.ok(admissionsUi.includes("actionLabel:'Accept and enrol pupil'"),'Admissions acceptance is now a branded confirmation');
+assert.ok(admissionsUi.includes("if(!approved){el.value=application?.status||'new';return;}"),'Cancelling enrolment must restore original application status');
+assert.ok(admissionsUi.includes("actionLabel:'Issue '+count+' invoices'"),'Bulk invoice confirmation is now branded');
+assert.ok(admissionsUi.includes("actionLabel:'Send broadcast to all'"),'Bulk broadcast confirmation is now branded');
+
 const portalStyles=fs.readFileSync(new URL('../public/styles.css',import.meta.url),'utf8');
 assert.ok(portalStyles.includes('.guardian-invite-modal'),'Branded invitation styles must be present');
+assert.ok(portalStyles.includes('.action-confirm-overlay'),'Every branded confirmation has dedicated overlay styling');
+assert.ok(portalStyles.includes('.action-confirm-dialog.tone-danger'),'Irreversible actions have visible danger styling');
 
 const officialEmailConfig=JSON.parse(fs.readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
 assert.equal(officialEmailConfig.vars.EMAIL_FROM,'Madrasah At-Towfiq <notifications@attowfiqmasjid.org>');

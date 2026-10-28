@@ -192,6 +192,73 @@ function updateSurahVerseLimits(){
 
 function surahSelect(name,label){return select(label,name,`<option value="">Choose surah</option>`+surahs.map((s,i)=>`<option value="${h(s)}">${i+1}. ${h(s)}</option>`).join(''));}
 function modal(title,body,form='',large=false,submit='Save changes'){document.querySelector('.modal-overlay')?.remove();const overlay=document.createElement('div');overlay.className='modal-overlay';overlay.innerHTML=`<div class="modal ${large?'large':''}" role="dialog" aria-modal="true" aria-label="${h(title)}"><div class="modal-head"><div><div class="caps blue" style="margin-bottom:7px">MADRASAH AT-TOWFIQ</div><h2>${h(title)}</h2></div><button type="button" class="iconbtn" aria-label="Close dialog" data-action="close-modal">${ico('close',19)}</button></div>${form?`<form id="${form}"><div class="modal-body">${body}</div><div class="modal-foot"><button type="button" class="btn white" data-action="close-modal">Cancel</button><button type="submit" class="btn primary">${submit} ${ico('arrow',16)}</button></div></form>`:`<div class="modal-body">${body}</div><div class="modal-foot"><button type="button" class="btn white" data-action="close-modal">Close</button></div>`}</div>`;overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});document.body.append(overlay);const focus=overlay.querySelector('input:not([type="hidden"]),select,textarea,button');if(focus)focus.focus();}
+
+/**
+ * Non-blocking, branded action confirmation.
+ * Keeps existing edit forms in place (e.g. invoice bulk issue and Jumu'ah preview).
+ * A sensitive deletion can require exact typed acknowledgement.
+ */
+let activeConfirmation=null;
+function confirmDialog({title,message,details='',actionLabel='Confirm',tone='info',requiredText=''}) {
+ if(activeConfirmation)return Promise.resolve(false); // Ignore parallel clicks; never approve a second action.
+ activeConfirmation=new Promise(resolve=>{
+  // A single pending dialog prevents accidental parallel confirmations.
+  const previous=document.activeElement;
+  const overlay=document.createElement('div');
+  overlay.className='action-confirm-overlay';
+  const serious=tone==='danger'||tone==='warning';
+  const safeTone=['info','warning','danger'].includes(tone)?tone:'info';
+  overlay.innerHTML=`<div class="action-confirm-dialog tone-${safeTone}" role="alertdialog" aria-modal="true" aria-labelledby="action-confirm-title" aria-describedby="action-confirm-description" tabindex="-1">
+    <div class="action-confirm-top">
+      <span class="action-confirm-brand">${ico('shield',14)} MADRASAH AT-TOWFIQ</span>
+      <button type="button" class="action-confirm-close" data-confirm-choice="cancel" aria-label="Cancel and close">${ico('close',18)}</button>
+    </div>
+    <div class="action-confirm-content">
+      <div class="action-confirm-emblem">${ico(serious?'shield':'check',26)}</div>
+      <h2 id="action-confirm-title">${h(title)}</h2>
+      <p id="action-confirm-description">${h(message)}</p>
+      ${details?`<div class="action-confirm-details">${ico('info',18)}<p>${h(details)}</p></div>`:''}
+      ${requiredText?`<div class="action-confirm-typed"><label for="action-confirm-input">Type <strong>${h(requiredText)}</strong> to authorise this action</label><input id="action-confirm-input" type="text" autocomplete="off" spellcheck="false" placeholder="${h(requiredText)}" aria-describedby="action-confirm-hint" /><p id="action-confirm-hint">This irreversible action requires the exact confirmation word.</p></div>`:''}
+    </div>
+    <div class="action-confirm-footer">
+      <button type="button" class="btn white" data-confirm-choice="cancel">Cancel</button>
+      <button type="button" class="btn primary action-confirm-approve ${serious?'action-confirm-caution':''}" data-confirm-choice="approve" ${requiredText?'disabled':''}>${ico(serious?'shield':'check',16)} ${h(actionLabel)}</button>
+    </div>
+  </div>`;
+  let settled=false;
+  const finish=value=>{
+   if(settled)return;
+   settled=true;
+   overlay.remove();
+   activeConfirmation=null;
+   if(previous?.isConnected&&typeof previous.focus==='function')previous.focus();
+   resolve(value);
+  };
+  const approval=overlay.querySelector('[data-confirm-choice="approve"]');
+  const typed=overlay.querySelector('#action-confirm-input');
+  typed?.addEventListener('input',()=>{approval.disabled=typed.value.trim()!==requiredText;});
+  overlay.addEventListener('click',e=>{
+   const btn=e.target.closest('[data-confirm-choice]');
+   if(btn){
+    if(btn.dataset.confirmChoice==='approve'&&!btn.disabled)finish(true);
+    else if(btn.dataset.confirmChoice==='cancel')finish(false);
+   }else if(e.target===overlay)finish(false);
+  });
+  overlay.addEventListener('keydown',e=>{
+   if(e.key==='Escape'){e.preventDefault();e.stopPropagation();finish(false);return;}
+   if(e.key==='Tab'){
+    const focusables=[...overlay.querySelectorAll('button:not([disabled]),input:not([disabled])')];
+    const at=focusables.indexOf(document.activeElement);
+    if(e.shiftKey&&at===0){e.preventDefault();focusables.at(-1)?.focus();}
+    else if(!e.shiftKey&&at===focusables.length-1){e.preventDefault();focusables[0]?.focus();}
+   }
+  });
+  document.body.append(overlay);
+  (typed||overlay.querySelector('[data-confirm-choice="cancel"]'))?.focus();
+ });
+ return activeConfirmation;
+}
+
 function openModal(type,selectedId=''){
  let s=student(selectedId),body='',title='',form='',size=false,submit='Save';
  switch(type){
@@ -323,16 +390,37 @@ async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
   return;
  }
  if(a==='student-tab'){S.studentTab=key;if(key==='behaviour'&&!get('behaviour-catalog').length)await load(['behaviour-catalog']);renderPage();return;}
- if(a==='delete-student'){const s=student(selectedId);if(!confirm(`Permanently delete ${sidName(s)} and ALL linked attendance, homework, behaviour, invoices and payments? This cannot be undone.`))return;if(prompt(`Type DELETE to confirm permanent deletion of ${sidName(s)}:`)!=='DELETE')return;await post('/students',{id:selectedId},'DELETE');document.querySelector('.modal-overlay')?.remove();S.studentId=null;toast('Student and linked records permanently deleted');await navigate('students');return;}
- if(a==='delete-event'){if(confirm('Delete this event?')){await post('/events',{id:selectedId},'DELETE');toast('Event deleted');await navigate('events');}return;}
- if(a==='delete-announcement'){if(confirm('Delete this announcement?')){await post('/announcements',{id:selectedId},'DELETE');toast('Announcement deleted');await navigate('events');}return;}
- if(a==='toggle-user'){if(!confirm('Update this account access?'))return;await post('/users',{id:selectedId,active:el.dataset.active==='1'},'PATCH');toast('Account updated');await navigate('staff');return;}
- if(a==='demo-seed'){if(!confirm('Create fictional demo students, sample homework and attendance in the CURRENT database? Do not use this on a real production database.'))return;const r=await post('/demo-seed',{});toast(`Created ${r.students} fictional student profiles`);await navigate('dashboard');return;}
+ if(a==='delete-student'){
+  const s=student(selectedId);if(!s)return;
+  const approved=await confirmDialog({title:'Permanently delete student?',message:'Delete '+sidName(s)+' and all linked school records?',details:'Attendance, homework, behaviour, invoices and payment records will be permanently deleted. This cannot be undone.',actionLabel:'Delete student permanently',tone:'danger',requiredText:'DELETE'});
+  if(!approved)return;
+  await post('/students',{id:selectedId},'DELETE');document.querySelector('.modal-overlay')?.remove();S.studentId=null;toast('Student and linked records permanently deleted');await navigate('students');return;
+ }
+ if(a==='delete-event'){
+  if(!await confirmDialog({title:'Delete this event?',message:'Remove this event from the madrasah calendar?',details:'The event will no longer appear in the portal.',actionLabel:'Delete event',tone:'danger'}))return;
+  await post('/events',{id:selectedId},'DELETE');toast('Event deleted');await navigate('events');return;
+ }
+ if(a==='delete-announcement'){
+  if(!await confirmDialog({title:'Delete this announcement?',message:'Remove this announcement from the portal?',details:'Families and staff will no longer see this announcement.',actionLabel:'Delete announcement',tone:'danger'}))return;
+  await post('/announcements',{id:selectedId},'DELETE');toast('Announcement deleted');await navigate('events');return;
+ }
+ if(a==='toggle-user'){
+  const account=get('users').find(u=>u.id===selectedId),enable=el.dataset.active==='1';
+  if(!await confirmDialog({title:enable?'Activate staff account?':'Deactivate staff account?',message:(enable?'Restore access for ':'Suspend access for ')+(account?.name||'this user')+'?',details:enable?'This person will be able to access their authorised portal role.':'This person will be prevented from signing in until reactivated.',actionLabel:enable?'Activate account':'Deactivate account',tone:enable?'info':'warning'}))return;
+  await post('/users',{id:selectedId,active:enable},'PATCH');toast('Account updated');await navigate('staff');return;
+ }
+ if(a==='demo-seed'){
+  if(!await confirmDialog({title:'Create demonstration records?',message:'Add fictional pupils, homework and attendance to the current database?',details:'Never use demo data in a production madrasah database. This feature may be blocked by the server.',actionLabel:'Create demonstration data',tone:'warning'}))return;
+  const r=await post('/demo-seed',{});toast(`Created ${r.students} fictional student profiles`);await navigate('dashboard');return;
+ }
  if(a==='export-report'){let rows=get('reports');let out=[['Student ID','First name','Last name','Class','Present','Attendance sessions','Homework complete','Homework total','Behaviour points'],...rows.map(x=>[x.student_no,x.first_name,x.last_name,x.class_name,x.present,x.attendance_total,x.homework_complete,x.homework_total,x.behaviour_points])].map(r=>r.map(v=>'"'+String(v??'').replaceAll('"','""')+'"').join(',')).join('\r\n');const blob=new Blob([out],{type:'text/csv;charset=utf-8;'}),link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download='at-towfiq-student-report-'+today()+'.csv';link.click();URL.revokeObjectURL(link.href);toast('Report downloaded. Please handle student data securely.');return;}
  if(a==='play-quiz'){const q=get('quizzes').find(x=>x.id===selectedId);if(!q)return;modal('Knowledge challenge',`<p style="font:normal 22px/1.45 Georgia,serif;margin-bottom:19px">${h(q.question)}</p><div class="caps muted" style="margin-bottom:9px">CHOOSE ONE ANSWER</div>${q.options.map((o,i)=>`<button type="button" class="games-choice" data-action="answer-quiz" data-id="${h(q.id)}" data-answer="${i}"><span>${String.fromCharCode(65+i)}. ${h(o)}</span>${ico('chevron',16)}</button>`).join('')}`);return;}
  if(a==='answer-quiz'){const result=await post('/quizzes/answer',{quiz_id:selectedId,answer_index:Number(el.dataset.answer)});document.querySelector('.modal-overlay')?.remove();toast(result.correct?'Masha’Allah! +10 points earned.':'Thank you for trying! Review the lesson and try another question.');await navigate('games');return;}
  if(a==='automation-preview'){const info=await api('/automation/preview');const settings=await api('/settings');const set=Object.fromEntries(settings.items.map(x=>[x.key,x.value]));modal('Jumu’ah automation',`<div class="notice">Preview before emailing ${info.recipient_count} active staff, teachers and parents. Sending needs a verified Resend sender and an API key.</div><form id="automation-form" class="form-grid" style="margin-top:18px">${select('Weekly reminders enabled?','jumah_enabled',htmlOptions([['false','No (disabled)'],['true','Yes (send every Friday)']],String(info.enabled)),'','wide')}${field('Message','jumah_message',info.body,'textarea','','wide')}<button class="btn primary wide" type="submit">Save reminder settings</button></form><div class="divider"></div><div class="surface" style="box-shadow:none"><p class="caps blue">EMAIL PREVIEW</p><h3 style="margin:12px 0">${h(info.subject)}</h3><p class="muted" style="line-height:1.8">${h(info.body)}</p></div><button class="btn outline" data-action="send-jumah">${ico('mail',16)} Send test broadcast to all recipients now</button>`,false,true);return;}
- if(a==='send-jumah'){if(!confirm('This will email ALL active teachers, staff and parent accounts. Send now?'))return;const r=await post('/automation/send',{confirm:'SEND_JUMAH'});toast(`${r.sent} of ${r.total} reminder emails sent`);document.querySelector('.modal-overlay')?.remove();await navigate('automation');return;}
+ if(a==='send-jumah'){
+  if(!await confirmDialog({title:'Send Jumu’ah broadcast?',message:'Email all active teachers, office staff and parent accounts?',details:'This is a real broadcast to every eligible recipient, not a single test message. Check the content and recipient count before continuing.',actionLabel:'Send broadcast to all',tone:'warning'}))return;
+  const r=await post('/automation/send',{confirm:'SEND_JUMAH'});toast(`${r.sent} of ${r.total} reminder emails sent`);document.querySelector('.modal-overlay')?.remove();await navigate('automation');return;
+ }
 }
 function notificationResultMessage(result,recordType){
  const label=recordType==='homework'?'Homework assignment':'Behaviour points';
@@ -367,7 +455,7 @@ async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.
     await post('/fees',{student_id:raw.student_id,period:raw.period,due_date:raw.due_date,amount_pence});toast('Invoice issued');
   }else{
     const total=money(amount_pence*count);
-    if(!confirm(`Issue ${count} individual invoices for ${raw.period}?\n\n${money(amount_pence)} per pupil · ${total} in total.\n\nExisting invoices for this billing month will be skipped. This cannot be undone from this screen.`))return;
+    if(!await confirmDialog({title:'Issue '+count+' invoices?',message:money(amount_pence)+' per pupil · '+total+' in total for '+raw.period+'.',details:'Existing invoices for the selected billing month will be skipped. Review the total and selection before issuing. This cannot be undone from this screen.',actionLabel:'Issue '+count+' invoices',tone:'warning'}))return;
     const result=await post('/fees/bulk',{mode,student_ids:mode==='selected'?ids:[],period:raw.period,due_date:raw.due_date,amount_pence,confirm:'ISSUE_BULK_INVOICES'});
     toast(`Issued ${result.created} invoices · ${result.skipped} already existed`);
   }
@@ -404,7 +492,10 @@ document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form
 document.addEventListener('input',e=>{if(e.target.closest('#homework-form')&&['verse_from','verse_to'].includes(e.target.name))updateSurahVerseLimits();if(e.target.name==='greeting_name'&&e.target.closest('#guardian-invite-form')){const preview=$('#guardian-invite-preview');if(preview)preview.textContent='Dear '+(e.target.value.trim()||'Parent')+',';}});
 document.addEventListener('change',async e=>{const el=e.target;if(el.closest('#invoice-form'))updateInvoiceTargets();if(el.closest('#homework-form')&&(['surah_from','surah_to','verse_from','verse_to'].includes(el.name)))updateSurahVerseLimits();if(el.name==='type'&&el.closest('#homework-form')){const surah=['hifdh','murajaa'].includes(el.value);$('#surah-fields')?.classList.toggle('hide',!surah);$('#page-fields')?.classList.toggle('hide',surah);}if(el.dataset.date==='attendance'){S.attendanceDate=el.value;await navigate('attendance');}if(el.dataset.filter){S.filter=el.value;renderPage();}if(el.dataset.admission){try{
   const application=get('admissions').find(x=>x.id===el.dataset.admission);
-  if(el.value==='accepted'&&!confirm(`Accept ${application?.child_name||'this applicant'} and create their student profile? This can be done only once.`)){el.value=application?.status||'new';return;}
+  if(el.value==='accepted'){
+   const approved=await confirmDialog({title:'Accept admission application?',message:'Offer a place to '+(application?.child_name||'this applicant')+' and create their student profile?',details:'The student will be enrolled with a permanent registration number. The guardian will receive a parent account invitation. This step can be completed only once.',actionLabel:'Accept and enrol pupil',tone:'info'});
+   if(!approved){el.value=application?.status||'new';return;}
+  }
   const result=await post('/admissions',{id:el.dataset.admission,status:el.value},'PATCH');
   toast(result.enrolled?'Application accepted — pupil enrolled in Student directory':'Admission status updated');
   await navigate('admissions');

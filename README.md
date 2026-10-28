@@ -215,3 +215,13 @@ Fixes MATT registration-number year formatting for newly accepted students, and 
 - The notification HTML shares the navy/blue design, official logo, Arabic and transliterated taslīm, personalised greeting and secure portal call to action. Only essential pupil data are included; detailed teacher feedback and sensitive notes remain in the protected portal.
 - No D1 migration or admin reset. Verify actual delivery with a fictional guardian address before enabling real family communications; the admissions reply-to mailbox must be able to receive replies.
 
+
+## v1.0.17 — Branded confirmation dialogs across the portal
+
+- Replaced **every native browser** `confirm()` and `prompt()` call in the frontend with one responsive, branded `confirmDialog()` component. Audit includes admission acceptance, permanent student deletion, events, announcements, staff access toggles, bulk invoice issuing, Jumu'ah broadcasts and demonstration data.
+- Each confirmation clearly states the action, consequence, and context. Destructive and mass-impact actions use stronger warning/danger styling. Permanent pupil deletion retains the exact **DELETE** typed confirmation requirement before the approve button can be enabled.
+- The action overlay is independent of the form modal, so an invoice confirmation can be cancelled without losing entered data. Backdrop click, Close, Escape and Cancel all resolve **false**. Keyboard focus is restored and Tab is contained while the confirmation is open. Extra simultaneous clicks cannot approve another operation.
+- Cancelling an admission acceptance restores the previous application dropdown state; no admissions, account or financial mutation is performed. Backend authorisation and safety checks remain unchanged.
+- `npm run test` now scans shipped runtime files to prohibit `confirm()`, `prompt()` and `alert()` from being introduced again, parses the app script and checks key high-impact workflows.
+- Frontend-only release: no SQL migrations, D1 resets, email secrets or admin account changes. Deploy with `git pull origin main && npm run test && npm run deploy` on PowerShell (run one command per line).
+
