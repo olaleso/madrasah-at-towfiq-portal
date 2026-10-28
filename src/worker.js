@@ -1065,7 +1065,7 @@ async function handle(req,env){
     const emailHtml=`<div style="background:#f2f5fb;padding:28px 14px;font-family:Arial,sans-serif;color:#243b61">
       <div style="max-width:560px;margin:auto;background:#fff;padding:28px;border-radius:12px">
       <h2 style="color:#19345e">Madrasah At-Towfiq · Private message</h2>
-      <p>Assalamu alaikum. A new private message is waiting in your secure Madrasah At-Towfiq portal inbox.</p>
+      <p>Assalamu alaikum. A new private message${linkedPupil?' concerning <strong>'+escapeHtml([linkedPupil.first_name,linkedPupil.last_name].filter(Boolean).join(' '))+'</strong>':''} is waiting in your secure Madrasah At-Towfiq portal inbox.</p>
       <p>For your privacy, the message content is not included in this email.</p>
       <a href="https://portal.attowfiqmasjid.org/" style="background:#376ac5;color:white;padding:12px 16px;border-radius:8px;display:inline-block;text-decoration:none">Open secure portal</a>
       </div></div>`;
