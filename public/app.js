@@ -318,7 +318,7 @@ function communicationPage(){
  const mine=selected?.root&&(selected.root.created_by===S.user.id||selected.root.recipient_id===S.user.id);
  return `${pagehead(isParent?'Family communications':'Communications hub','Secure, two-way family correspondence and audience-specific announcements.',
  (userCan('admin','staff')?`<button class="btn white" data-action="modal" data-value="announcement">${ico('bell',16)} Publish notice</button>`:'')
- +(userCan('admin','staff','teacher')?`<button class="btn primary" data-action="modal" data-value="message">${ico('plus',16)} New private message</button>`:''))}
+ +(userCan('admin','staff','teacher')||get('contacts').length?`<button class="btn primary" data-action="modal" data-value="message">${ico('plus',16)} New private message</button>`:''))}
  <div class="cards three communications-metrics">
   <div class="metric"><span class="metric-label">Conversations</span><strong class="metric-value">${groups.length}</strong><span class="trend">Secure portal messages</span></div>
   <div class="metric"><span class="metric-label">Unread for me</span><strong class="metric-value">${get('messages').filter(x=>x.recipient_id===S.user.id&&!x.read_at).length}</strong><span class="trend">Click a conversation to mark received messages read</span></div>
@@ -342,7 +342,7 @@ function communicationPage(){
  </div>
  <section class="surface" style="margin-top:18px"><div class="surface-head"><h3>Madrasah noticeboard</h3><button type="button" class="btn smol outline" data-action="nav" data-value="events">See all school events</button></div>
   ${anns.length?anns.slice(0,6).map(a=>`<div class="list-row"><span class="metric-icon">${ico('bell',17)}</span><div class="grow"><strong>${h(a.title)}</strong><div class="sub">${h(a.body.slice(0,220))} · ${fmt(a.created_at)}</div></div>${tag(cap(a.audience),'blue')}</div>`).join(''):blank('No announcements','School notices will appear here after publication.')}</section>
- <div class="notice" style="margin-top:15px">${ico('shield',16)} Parent accounts can reply to an existing conversation but cannot contact unrelated families. Do not put sensitive safeguarding or medical case details into general portal messages.</div>`;
+ <div class="notice" style="margin-top:15px">${ico('shield',16)} Guardians can message their own child’s assigned teacher or reply to an existing conversation. They cannot contact unrelated pupils, staff or families. Do not put sensitive safeguarding or medical case details into general portal messages.</div>`;
 }
 function compliancePage(){
  const consent=get('compliance/consents'),policies=get('compliance/policies'),concerns=get('compliance/concerns');
@@ -630,7 +630,7 @@ function openModal(type,selectedId=''){
   break;
  }
  case 'message':{title='New private message';form='message-form';size=true;
-  body=`<div class="notice" style="margin-bottom:14px">Private messages are stored in the portal. The recipient receives only a neutral email notification—not the message content. If referring to a pupil, choose the correct pupil and guardian.</div><div class="form-grid">
+  body=`<div class="notice" style="margin-bottom:14px">Private messages stay in the portal. The other participant receives an inbox email alert, not the message text. Parents must select their enrolled child and the assigned teacher; staff should verify the pupil and guardian.</div><div class="form-grid">
   ${select('Recipient','recipient_id',`<option value="">Select an active recipient</option>`+get('contacts').map(x=>`<option value="${h(x.id)}">${h(x.name)} · ${cap(x.role)}</option>`).join(''),'required','wide')}
   ${select('Linked pupil (where relevant)','student_id',learnerOptions('','No pupil attached'),'','wide')}
   ${field('Subject','subject','','text','required maxlength="160"','wide')}
