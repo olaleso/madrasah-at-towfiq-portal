@@ -604,8 +604,8 @@ assert.ok(admissionsUi.includes('if(activeConfirmation)return Promise.resolve(fa
 for(const caseId of ['delete-student','delete-event','delete-announcement','toggle-user','demo-seed','send-jumah']){
  assert.ok(admissionsUi.includes("if(a==='"+caseId+"')"),'Action still available: '+caseId);
 }
-assert.ok(admissionsUi.includes("actionLabel:'Accept and enrol pupil'"),'Admissions acceptance is now a branded confirmation');
-assert.ok(admissionsUi.includes("if(!approved){el.value=application?.status||'new';return;}"),'Cancelling enrolment must restore original application status');
+assert.ok(admissionsUi.includes("actionLabel:'Accept & enrol pupil'"),'Admissions acceptance requires a branded class-selection confirmation');
+assert.ok(admissionsUi.includes("if(!classId){el.value=application?.status||'new';return;}"),'Cancelling class selection must restore original application status');
 assert.ok(admissionsUi.includes("actionLabel:'Issue '+count+' invoices'"),'Bulk invoice confirmation is now branded');
 assert.ok(admissionsUi.includes("actionLabel:'Send broadcast to all'"),'Bulk broadcast confirmation is now branded');
 
