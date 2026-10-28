@@ -741,7 +741,11 @@ async function handle(req,env){
   }
  }
  if(path==='/api/contacts'&&method==='GET'){
-  const contacts=user.role==='parent'?[]:user.role==='teacher'?await all(db,"SELECT DISTINCT u.id,u.name,u.email,u.role FROM users u JOIN students s ON s.parent_id=u.id JOIN classes c ON c.id=s.class_id WHERE c.teacher_id=? AND u.active=1 ORDER BY u.name",user.id):await all(db,"SELECT id,name,email,role FROM users WHERE active=1 AND id<>? ORDER BY name",user.id);return json({items:contacts});
+  const contacts=user.role==='parent'
+    ?await all(db,"SELECT DISTINCT u.id,u.name,u.role FROM users u JOIN classes c ON c.teacher_id=u.id JOIN students s ON s.class_id=c.id WHERE s.parent_id=? AND s.status='active' AND u.active=1 ORDER BY u.name",user.id)
+    :user.role==='teacher'
+     ?await all(db,"SELECT DISTINCT u.id,u.name,u.email,u.role FROM users u JOIN students s ON s.parent_id=u.id JOIN classes c ON c.id=s.class_id WHERE c.teacher_id=? AND u.active=1 ORDER BY u.name",user.id)
+     :await all(db,"SELECT id,name,email,role FROM users WHERE active=1 AND id<>? ORDER BY name",user.id);return json({items:contacts});
  }
  if(path==='/api/students/bulk'&&method==='POST')error('New pupils must be enrolled through an accepted admission application',403);
  if(path==='/api/students'){
@@ -1037,7 +1041,7 @@ async function handle(req,env){
     subject=short(root.subject,160);
     if(b.recipient_id&&b.recipient_id!==target.id)error('The recipient cannot be changed during a reply',403);
    }else{
-    requireRole(user,'admin','staff','teacher');
+    requireRole(user,'admin','staff','teacher','parent');
     if(typeof b.subject!=='string'||!b.subject.trim()||b.subject.length>160)error('Subject required (up to 160 characters)');
     if(!b.recipient_id)error('Select a recipient');
     target=await first(db,'SELECT id,name,email,role,active FROM users WHERE id=?',short(b.recipient_id,100));
@@ -1047,6 +1051,16 @@ async function handle(req,env){
      if(target.role!=='parent')error('Teachers can only message linked guardians',403);
      const linked=await first(db,'SELECT s.id FROM students s JOIN classes c ON c.id=s.class_id WHERE s.parent_id=? AND c.teacher_id=? LIMIT 1',target.id,user.id);
      if(!linked)error('Recipient is not a guardian in your assigned class',403);
+    }
+    if(user.role==='parent'){
+     // Parent-initiated correspondence must be for their own active pupil
+     // and addressed only to that pupil's currently assigned lead teacher.
+     if(!b.student_id)error('Select your linked pupil before messaging a teacher');
+     linkedPupil=await permittedStudent(db,user,short(b.student_id,100));
+     if(linkedPupil.status!=='active')error('Messages require an actively enrolled pupil',403);
+     const assignment=await first(db,'SELECT teacher_id FROM classes WHERE id=?',linkedPupil.class_id);
+     if(target.role!=='teacher'||assignment?.teacher_id!==target.id)
+      error('Parents can only contact their own child’s assigned teacher',403);
     }
     if(b.student_id){
      linkedPupil=await permittedStudent(db,user,short(b.student_id,100));
