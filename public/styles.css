@@ -58,3 +58,38 @@
 .invoice-choice input{width:18px;height:18px;flex:none;accent-color:#4469cf;margin-top:2px}
 .invoice-choice span{display:grid;gap:3px}.invoice-choice small{color:#72819a;font-size:12px;font-weight:450}
 .invoice-target-summary{border-radius:12px;background:#eaf1ff;color:#23477b;font-weight:700;padding:13px 15px}
+
+/* Branded, accessible parent / guardian invitation workflow */
+.guardian-invite-overlay{align-items:center;padding:24px 14px}
+.guardian-invite-modal{width:min(585px,100%);max-height:min(92vh,860px);border:1px solid #dce5f3;border-radius:22px;box-shadow:0 30px 100px #0c254b65}
+.guardian-invite-modal .modal-head{background:linear-gradient(125deg,#f8fbff,#eef5ff);padding:24px 28px 21px}
+.guardian-invite-modal .modal-head h2{font-size:22px;letter-spacing:-.45px}
+.guardian-invite-modal .modal-body{padding:23px 28px 27px}
+.guardian-invite-modal .modal-foot{padding:19px 28px;background:#fbfcff}
+.guardian-invite-hero{display:flex;gap:16px;align-items:flex-start;margin-bottom:22px}
+.guardian-invite-symbol{height:53px;width:53px;flex:0 0 53px;display:grid;place-items:center;border-radius:16px;color:#3568c7;background:#e8f0ff;border:1px solid #d3e2fa}
+.guardian-invite-eyebrow{margin:1px 0 6px;color:#3b65aa;font-size:10px;letter-spacing:1.65px;font-weight:800}
+.guardian-invite-hero h3{font-size:19px;line-height:1.33;letter-spacing:-.4px;margin:0 0 7px;color:#1b3157}
+.guardian-invite-hero p:last-child{font-size:12px;line-height:1.75;color:#6a7e9b;margin:0}
+.guardian-invite-overview{display:grid;grid-template-columns:1fr 1fr;gap:17px 13px;padding:19px;border-radius:15px;background:#f7f9fd;border:1px solid #e7edf7;margin-bottom:20px}
+.guardian-invite-overview>div{min-width:0}
+.guardian-invite-overview span{display:block;font-size:10px;color:#8595ae;font-weight:800;letter-spacing:1.15px;margin-bottom:7px}
+.guardian-invite-overview strong{font-size:13px;color:#243d66;display:flex;align-items:center;gap:7px;word-break:break-word;line-height:1.5}
+.guardian-invite-overview small{display:block;font-size:11px;color:#8392a8;margin-top:4px;line-height:1.5}
+.guardian-invite-full{grid-column:1/-1;border-top:1px solid #e5ebf5;padding-top:16px}
+.guardian-invite-full strong{color:#2b5ba8}
+.guardian-invite-greeting label{display:block;font-weight:750;color:#2c4265;font-size:12px;margin-bottom:8px}
+.guardian-invite-greeting input{border:1px solid #d4e1f2;background:white;border-radius:10px;padding:12px 14px;font-size:14px;color:#213657;width:100%;outline:none}
+.guardian-invite-greeting input:focus{border-color:#4978d4;box-shadow:0 0 0 3px #dceaff}
+.guardian-invite-greeting p{font-size:11px;color:#7586a1;line-height:1.65;margin:8px 0 19px}
+.guardian-invite-note{display:flex;align-items:flex-start;gap:11px;border-radius:12px;background:#eef5ff;border:1px solid #d9e7fa;padding:14px 15px;color:#3869b9}
+.guardian-invite-note svg{flex:0 0 auto;margin-top:2px}
+.guardian-invite-note p{margin:0;display:grid;gap:5px}
+.guardian-invite-note strong{font-size:12px;color:#355c99;line-height:1.55}
+.guardian-invite-note span{font-size:11px;line-height:1.65;color:#5d7496}
+.guardian-invite-success{text-align:center;padding:12px 4px 7px}
+.guardian-invite-success-icon{display:grid;place-items:center;width:69px;height:69px;margin:0 auto 15px;border-radius:21px;color:#2d9865;background:#e7f8ed}
+.guardian-invite-success h3{color:#1e365c;font-size:21px;line-height:1.4;margin:0 0 10px}
+.guardian-invite-success>p{max-width:410px;margin:0 auto 23px;font-size:13px;line-height:1.8;color:#677d9c}
+.guardian-invite-success .guardian-invite-note{text-align:left}
+@media(max-width:600px){.guardian-invite-overlay{align-items:flex-start;padding:12px}.guardian-invite-modal{max-height:calc(100dvh - 24px);border-radius:17px}.guardian-invite-modal .modal-head{padding:20px 19px 18px}.guardian-invite-modal .modal-body{padding:20px 19px}.guardian-invite-modal .modal-foot{padding:16px 19px}.guardian-invite-hero{gap:11px}.guardian-invite-symbol{width:43px;height:43px;flex-basis:43px}.guardian-invite-overview{gap:14px 10px;padding:15px}.guardian-invite-overview strong{font-size:12px}}

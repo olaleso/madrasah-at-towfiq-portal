@@ -186,3 +186,11 @@ Fixes MATT registration-number year formatting for newly accepted students, and 
 - When admission acceptance succeeds, the backend attempts an invitation to the recorded parent email. Matching already-active parent accounts are linked without creating duplicate accounts. Parent accounts awaiting activation are linked on invitation acceptance, not beforehand.
 - **Email delivery prerequisites:** A verified sender address in `EMAIL_FROM` (not the example.org placeholder) and a Cloudflare Worker `RESEND_API_KEY` secret are required. Without them or when provider delivery fails, an authorized staff member is shown a **private one-time activation link**; email is not claimed sent. Staff can retry from Parents & guardians, after verifying the contact identity. Do not include real pupil data in an invitation email.
 - The change is code only, requiring no D1 schema migration or reset. Verify that setup and safeguarding are complete before using real child/guardian records.
+
+
+## v1.0.14 — Formal parent invitation design
+
+- Replaces the native browser confirmation on **Parents & guardians → Invite / retry** with a responsive, branded invitation dialog showing the pupil, recorded guardian contact and a **reviewable preferred greeting name**. The greeting preview updates as the administrator types. Regenerating invalidates previous activation links.
+- Replaces the plain-text-looking parent invitation with a responsive, table-based HTML email in navy/blue using the public Madrasah At-Towfiq logo, Arabic and transliterated taslīm, formal salutation (“Dear [preferred first name]”), admission confirmation, clear activation button, single-use 7-day expiry, and admissions reply address. Parent names and activation URLs are HTML-escaped, and the email subject contains no pupil identity.
+- Existing admissions store a single guardian full-name field. The automatic first invitation uses the last word of that field as its provisional greeting (common surname-first forms). Staff should verify the name using the editable invitation dialog when inviting or resending, especially when name order differs.
+- No D1 migrations or resets. `npm run test` validates the email payload using an intercepted Resend request; production delivery still depends on valid verified Resend configuration.

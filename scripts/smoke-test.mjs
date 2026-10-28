@@ -79,6 +79,42 @@ const secondApplication={...application,first_name:'Bilal',last_name:'Test',guar
 z=await req('/admissions',secondApplication);assert.equal(z.status,200);const secondApplicationId=z.data.id;
 z=await req('/admissions',{id:secondApplicationId,status:'accepted'},'PATCH');assert.equal(z.status,200);const student2=z.data.student_id;
 assert.equal(sqlite.prepare('SELECT student_no FROM students WHERE id=?').get(student2).student_no,'MATT-'+new Date().getUTCFullYear()+'-0002');
+
+ 
+// Exercise the actual HTML email sent through Resend, without making a network request.
+const originalFetch=globalThis.fetch;
+let resendPayload;
+env.RESEND_API_KEY='integration-test-resend-token';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async(url,options)=>{
+ assert.equal(String(url),'https://api.resend.com/emails');
+ resendPayload=JSON.parse(options.body);
+ return new Response(JSON.stringify({id:'test-email-id'}),{status:200,headers:{'Content-Type':'application/json'}});
+};
+try{
+ const resendResult=await req('/guardians',{student_id:student2,greeting_name:'Ibrahim'});
+ assert.equal(resendResult.status,200,JSON.stringify(resendResult.data));
+ assert.equal(resendResult.data.invitation_status,'sent');
+ assert.equal(resendResult.data.invitation_url,null,'Do not expose live invitation links in a successful send response');
+ assert.equal(resendPayload.from,env.EMAIL_FROM);
+ assert.equal(resendPayload.to[0],secondApplication.guardian_email);
+ assert.equal(resendPayload.reply_to,env.ADMISSIONS_EMAIL);
+ assert.ok(resendPayload.html.includes('Dear Ibrahim,'),'Custom preferred first name must appear in greeting');
+ assert.ok(resendPayload.html.includes('السلام عليكم ورحمة الله وبركاته'),'Islamic greeting must be included');
+ assert.ok(resendPayload.html.includes('Assalāmu'),'Transliterated taslīm must appear');
+ assert.ok(resendPayload.html.includes('at-towfiq-madrasah-logo.png'),'Email includes official logo');
+ assert.ok(resendPayload.html.includes('Activate my parent account'),'Email contains prominent activation CTA');
+ assert.ok(resendPayload.html.includes('expires in 7 days'),'Invitation expiry must be explicit');
+ assert.ok(resendPayload.html.includes('https://portal.attowfiqmasjid.org/?invite='),'Link must use the official portal domain');
+ assert.ok(!resendPayload.subject.includes('Bilal'),'Subject must not disclose a pupil identity');
+}finally{
+ globalThis.fetch=originalFetch;
+ delete env.RESEND_API_KEY;
+ delete env.EMAIL_FROM;
+ delete env.ADMISSIONS_EMAIL;
+}
+
 z=await req('/admissions',{...application,first_name:'Inactive',last_name:'Test',guardian_email:'inactive@example.test'});assert.equal(z.status,200);const thirdApplicationId=z.data.id;
 z=await req('/admissions',{id:thirdApplicationId,status:'accepted'},'PATCH');assert.equal(z.status,200);
 z=await req('/students',{id:z.data.student_id,status:'inactive'},'PATCH');assert.equal(z.status,200);
@@ -149,6 +185,13 @@ assert.ok(admissionsUi.includes("function guardiansPage()"),'Student-linked guar
 assert.ok(admissionsUi.includes("function staffPage()"),'Dedicated staff directory exists');
 assert.ok(admissionsUi.includes("case 'edit-user'"),'Staff profile edit modal exists');
 assert.ok(admissionsUi.includes('function invitationNotice('),'Invitation delivery result surfaced to staff');
+assert.ok(admissionsUi.includes("guardian-invite-form"),'Guardian invitation uses the styled form');
+assert.ok(admissionsUi.includes("guardian-invite-hero"),'Guardian invitation contains personalised summary');
+assert.ok(admissionsUi.includes('name="greeting_name"'),'Guardian preferred name can be reviewed');
+assert.equal(admissionsUi.includes("confirm('Send or regenerate an invitation"),false,'Never use a native browser confirm for parent invitations');
+const portalStyles=fs.readFileSync(new URL('../public/styles.css',import.meta.url),'utf8');
+assert.ok(portalStyles.includes('.guardian-invite-modal'),'Branded invitation styles must be present');
+
 const officialEmailConfig=JSON.parse(fs.readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
 assert.equal(officialEmailConfig.vars.EMAIL_FROM,'Madrasah At-Towfiq <notifications@attowfiqmasjid.org>');
 assert.equal(officialEmailConfig.vars.ADMISSIONS_EMAIL,'admissions@attowfiqmasjid.org');

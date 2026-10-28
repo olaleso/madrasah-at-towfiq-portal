@@ -258,7 +258,7 @@ function invitationNotice(result,guardianName='parent / guardian'){
  if(result.invitation_url){
   modal('Activation link requires delivery',`<div class="notice warn">The invitation email was not confirmed as sent. Verify the recipient's identity, then share this single-use link securely with <strong>${h(guardianName)}</strong>.</div><div class="field" style="margin-top:16px"><label>Private activation link</label><textarea id="invitation-url" readonly>${h(result.invitation_url)}</textarea></div><button type="button" class="btn primary" style="margin-top:13px" data-action="copy-invite">${ico('file',15)} Copy activation link</button>`);
  } else if(result.invitation_status==='sent'||result.emailed){
-   toast('Guardian invitation sent by email');
+   modal('Invitation sent successfully',`<div class="guardian-invite-success"><span class="guardian-invite-success-icon">${ico('check',32)}</span><h3>The parent invitation is on its way</h3><p>A secure account activation email has been accepted by the email provider for <strong>${h(guardianName)}</strong>.</p><div class="guardian-invite-note">${ico('info',19)}<p><strong>What happens next?</strong><span>The parent can open the message and create their password using the one-time link. Please ask them to check their spam folder if the message does not arrive.</span></p></div></div>`);
  } else if(result.invitation_status==='already_active'){
    toast('Guardian account already active; pupil linked if previously unlinked');
  } else if(result.invitation_status==='manual_review'||result.invitation_status==='existing_non_parent_account'){
@@ -296,7 +296,31 @@ async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
  if(a==='student-profile'){S.studentId=selectedId;S.studentTab='overview';renderPage();return;}
  if(a==='student-back'){S.studentId=null;renderPage();return;}
  if(a==='guardian-student'){await navigate('students');S.studentId=selectedId;S.studentTab='overview';renderPage();return;}
- if(a==='invite-guardian'){if(!confirm('Send or regenerate an invitation for this pupil’s recorded guardian email?'))return;const r=await post('/guardians',{student_id:selectedId});await navigate('guardians');invitationNotice(r);return;}
+ if(a==='invite-guardian'){
+  const g=get('guardians').find(x=>x.student_id===selectedId);
+  if(!g){toast('Guardian record not found. Reload the directory and try again.',true);return;}
+  if(!g.guardian_email){toast('Add the guardian email to the admission record before inviting.',true);return;}
+  const name=(g.guardian_name||'').trim();
+  const preferred=name.split(/\s+/).filter(Boolean).at(-1)||'Parent';
+  const previouslyInvited=Boolean(g.account_id);
+  const body=`<input type="hidden" name="student_id" value="${h(g.student_id)}">
+    <div class="guardian-invite-hero"><span class="guardian-invite-symbol">${ico('mail',25)}</span>
+      <div><p class="guardian-invite-eyebrow">SECURE PARENT ACCESS</p><h3>Welcome a family to the madrasah</h3><p>A personalised invitation will be sent from the official Madrasah At-Towfiq email address.</p></div></div>
+    <div class="guardian-invite-overview">
+      <div><span>STUDENT</span><strong>${h(g.first_name)} ${h(g.last_name)}</strong><small>${h(g.student_no||'')}</small></div>
+      <div><span>PARENT / GUARDIAN</span><strong>${h(name||'Not recorded')}</strong><small>Recorded admission contact</small></div>
+      <div class="guardian-invite-full"><span>INVITATION WILL BE SENT TO</span><strong>${ico('mail',15)} ${h(g.guardian_email)}</strong></div>
+    </div>
+    <div class="guardian-invite-greeting"><label for="guardian-greeting-name">Parent's preferred first name</label>
+      <input id="guardian-greeting-name" name="greeting_name" maxlength="60" required autocomplete="off" value="${h(preferred)}">
+      <p>Check this name before sending. Email greeting: <strong id="guardian-invite-preview">Dear ${h(preferred)},</strong> Edit the name above to make sure it is correct.</p>
+    </div>
+    <div class="guardian-invite-note">${ico('shield',19)}<p><strong>${previouslyInvited?'This will replace the previous invitation.':'A private, single-use activation link will be created.'}</strong><span>The link expires after 7 days. Verify that the guardian's identity and email address are correct before sending. If a new invitation is generated, the earlier link stops working.</span></p></div>`;
+  modal(previouslyInvited?'Resend parent invitation':'Invite parent / guardian',body,'guardian-invite-form',false,previouslyInvited?'Resend invitation':'Send invitation');
+  document.querySelector('.modal-overlay')?.classList.add('guardian-invite-overlay');
+  document.querySelector('.modal')?.classList.add('guardian-invite-modal');
+  return;
+ }
  if(a==='student-tab'){S.studentTab=key;if(key==='behaviour'&&!get('behaviour-catalog').length)await load(['behaviour-catalog']);renderPage();return;}
  if(a==='delete-student'){const s=student(selectedId);if(!confirm(`Permanently delete ${sidName(s)} and ALL linked attendance, homework, behaviour, invoices and payments? This cannot be undone.`))return;if(prompt(`Type DELETE to confirm permanent deletion of ${sidName(s)}:`)!=='DELETE')return;await post('/students',{id:selectedId},'DELETE');document.querySelector('.modal-overlay')?.remove();S.studentId=null;toast('Student and linked records permanently deleted');await navigate('students');return;}
  if(a==='delete-event'){if(confirm('Delete this event?')){await post('/events',{id:selectedId},'DELETE');toast('Event deleted');await navigate('events');}return;}
@@ -349,6 +373,15 @@ async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.
    if(result.invitation_url){invitationNotice(result,raw.name);}else toast(result.emailed?'Updated account — verification email sent':'Staff account updated');
    return;
  }
+ else if(formId==='guardian-invite-form'){
+   const guardian=get('guardians').find(x=>x.student_id===raw.student_id);
+   if(!raw.greeting_name?.trim())throw Error('Enter the parent’s preferred first name.');
+   const result=await post('/guardians',{student_id:raw.student_id,greeting_name:raw.greeting_name.trim()});
+   document.querySelector('.modal-overlay')?.remove();
+   await navigate('guardians');
+   invitationNotice(result,guardian?.guardian_name||'parent / guardian');
+   return;
+ }
  else if(formId==='invite-form'){const r=await post('/users',raw);close();if(r.invitation_url){modal('Invitation created',`<div class="notice">Outgoing email is not configured. Share this one-time activation URL privately with <strong>${h(raw.name)}</strong>.</div><div class="field" style="margin-top:16px"><label>Secure invitation URL</label><textarea id="invitation-url" readonly>${h(r.invitation_url)}</textarea></div><button type="button" class="btn primary" style="margin-top:13px" data-action="copy-invite">${ico('file',15)} Copy invitation link</button>`);}else toast('Invitation sent by email');await load(['users']);renderPage();return;}
  else if(formId==='password-form'){await post('/auth/password',raw);toast('Your password has been changed');}
  else if(formId==='attendance-form'){const students=get('students').filter(x=>x.status==='active'),fd=new FormData(form);await post('/attendance',{records:students.map(x=>({student_id:x.id,date:S.attendanceDate,status:fd.get('a-'+x.id)||'present',note:fd.get('n-'+x.id)||''}))});toast('Daily attendance register saved');}
@@ -357,8 +390,8 @@ async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.
  close();if(S.studentId && ['student-form','homework-form','grade-homework-form','behaviour-form','payment-form','invoice-form'].includes(formId)){await navigate('students',{keepStudent:true});}else await navigate(refresh);
 }
 document.addEventListener('click',async e=>{const el=e.target.closest('[data-action]');if(!el)return;const a=el.dataset.action;try{if(a==='copy-invite'){const v=$('#invitation-url');await navigator.clipboard.writeText(v.value);toast('Invitation link copied');return;}await action(a,el);}catch(err){toast(err.message,true);console.error(err);}});
-document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','admission-form','invoice-form','payment-form','announcement-form','message-form','event-form','quiz-form','invite-form','edit-user-form','password-form','attendance-form','settings-form','automation-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
-document.addEventListener('input',e=>{if(e.target.closest('#homework-form')&&['verse_from','verse_to'].includes(e.target.name))updateSurahVerseLimits();});
+document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','admission-form','invoice-form','payment-form','announcement-form','message-form','event-form','quiz-form','invite-form','guardian-invite-form','edit-user-form','password-form','attendance-form','settings-form','automation-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
+document.addEventListener('input',e=>{if(e.target.closest('#homework-form')&&['verse_from','verse_to'].includes(e.target.name))updateSurahVerseLimits();if(e.target.name==='greeting_name'&&e.target.closest('#guardian-invite-form')){const preview=$('#guardian-invite-preview');if(preview)preview.textContent='Dear '+(e.target.value.trim()||'Parent')+',';}});
 document.addEventListener('change',async e=>{const el=e.target;if(el.closest('#invoice-form'))updateInvoiceTargets();if(el.closest('#homework-form')&&(['surah_from','surah_to','verse_from','verse_to'].includes(el.name)))updateSurahVerseLimits();if(el.name==='type'&&el.closest('#homework-form')){const surah=['hifdh','murajaa'].includes(el.value);$('#surah-fields')?.classList.toggle('hide',!surah);$('#page-fields')?.classList.toggle('hide',surah);}if(el.dataset.date==='attendance'){S.attendanceDate=el.value;await navigate('attendance');}if(el.dataset.filter){S.filter=el.value;renderPage();}if(el.dataset.admission){try{
   const application=get('admissions').find(x=>x.id===el.dataset.admission);
   if(el.value==='accepted'&&!confirm(`Accept ${application?.child_name||'this applicant'} and create their student profile? This can be done only once.`)){el.value=application?.status||'new';return;}

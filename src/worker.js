@@ -103,13 +103,58 @@ async function inviteGuardianAfterAcceptance(db,env,req,application,actor){
  const token=random(32);
  await run(db,"DELETE FROM auth_tokens WHERE user_id=? AND purpose='invite'",uid);
  await run(db,'INSERT INTO auth_tokens(token_hash,user_id,purpose,expires_at) VALUES(?,?,?,?)',await sha(token),uid,'invite',nextIso(7*DAY));
- const link=new URL('/?invite='+encodeURIComponent(token),req.url).href;
- const sent=await mail(env,guardianEmail,'Madrasah At-Towfiq — Activate your parent account',
-  '<p>Assalamu alaikum,</p><p>A pupil associated with this guardian email has been admitted to Madrasah At-Towfiq.</p>'+
-  '<p><a href="'+escapeHtml(link)+'">Activate your secure parent account</a></p>'+
-  '<p>This single-use link expires in 7 days. If you did not expect this invitation, contact the madrasah.</p>',{replyTo:env.ADMISSIONS_EMAIL});
+ const link='https://portal.attowfiqmasjid.org/?invite='+encodeURIComponent(token);
+ const recipientName=guardianGreetingName(application.preferred_greeting_name,application.guardian_name);
+ const html=guardianInvitationHtml(recipientName,link,env.ADMISSIONS_EMAIL);
+ const sent=await mail(env,guardianEmail,'Welcome to Madrasah At-Towfiq | Parent account invitation',html,{replyTo:env.ADMISSIONS_EMAIL});
  await audit(db,actor,'guardian_invitation','users',uid,sent.sent?'email_sent':'delivery_not_confirmed');
  return {invitation_status:sent.sent?'sent':'delivery_not_configured_or_failed',invitation_url:sent.sent?null:link};
+}
+
+
+const guardianGreetingName=(preferred,fullName)=>{
+ const chosen=short(preferred||'',60).trim();
+ if(chosen)return chosen.split(/\s+/)[0];
+ // The current admissions form stores one full-name field (often surname first).
+ // Manual invites let staff review/edit the preferred name when ordering differs.
+ const parts=short(fullName||'',120).trim().split(/\s+/).filter(Boolean);
+ return parts.length?parts[parts.length-1]:'Parent / Guardian';
+};
+function guardianInvitationHtml(name,activationUrl,admissionsEmail){
+ const first=escapeHtml(short(name||'Parent / Guardian',60));
+ const link=escapeHtml(activationUrl);
+ const contact=escapeHtml(admissionsEmail||'admissions@attowfiqmasjid.org');
+ const logo='https://portal.attowfiqmasjid.org/assets/at-towfiq-madrasah-logo.png';
+ return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Madrasah At-Towfiq – Parent invitation</title>
+<style>@media only screen and (max-width:600px){.mail-wrap{width:100%!important}.mail-pad{padding:27px 22px!important}.mail-title{font-size:27px!important}.mail-button{display:block!important;text-align:center!important}}</style></head>
+<body style="margin:0;padding:0;background:#f2f5fb;color:#172d50;font-family:Arial,Helvetica,sans-serif">
+<span style="display:none!important;font-size:1px;color:#f2f5fb;max-height:0;max-width:0;opacity:0;overflow:hidden">Your private invitation to the Madrasah At-Towfiq parent portal.</span>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f2f5fb"><tr><td align="center" style="padding:36px 15px">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" class="mail-wrap" style="max-width:600px;width:100%;background:#fff;border:1px solid #e2e9f4;border-radius:18px;overflow:hidden">
+<tr><td style="padding:29px 34px 24px;background:#172e57;text-align:center">
+<img src="${logo}" alt="Madrasah At-Towfiq" width="190" style="display:block;margin:0 auto 16px;width:190px;max-width:80%;height:auto;border:0;background:#ffffff;border-radius:9px;padding:7px">
+<p style="margin:0;color:#b8d7ff;font-size:11px;font-weight:bold;letter-spacing:2.3px">MADRASAH AT-TOWFIQ · BOLTON</p></td></tr>
+<tr><td class="mail-pad" style="padding:39px 42px 22px">
+<p style="margin:0 0 12px;color:#3067bc;font-size:12px;font-weight:bold;letter-spacing:1.3px;text-transform:uppercase">Parent &amp; guardian account invitation</p>
+<h1 class="mail-title" style="margin:0 0 25px;color:#18325b;font-family:Georgia,'Times New Roman',serif;font-size:31px;line-height:1.27;font-weight:normal">Welcome to our learning community</h1>
+<p lang="ar" dir="rtl" style="margin:0 0 4px;text-align:left;color:#183b70;font-size:24px;line-height:1.8">السلام عليكم ورحمة الله وبركاته</p>
+<p style="margin:0 0 24px;color:#75849a;font-size:13px;font-style:italic">Assalāmu ʿalaykum wa raḥmatullāhi wa barakātuh</p>
+<p style="margin:0 0 18px;color:#1d3558;font-size:16px;line-height:1.8"><strong>Dear ${first},</strong></p>
+<p style="margin:0 0 17px;color:#435573;font-size:15px;line-height:1.85">We are pleased to inform you that your child’s application for admission to <strong>Madrasah At-Towfiq</strong> has been accepted.</p>
+<p style="margin:0 0 23px;color:#435573;font-size:15px;line-height:1.85">You are formally invited to activate your secure parent account. Through the portal, you can follow your child’s homework, attendance and learning progress, and receive important madrasah updates.</p>
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 25px;background:#f0f5fd;border:1px solid #dce9f9;border-radius:11px"><tr><td style="padding:17px 19px;color:#315b92;font-size:13px;line-height:1.75"><strong>Your next step</strong><br>Activate your account securely and create your personal password.</td></tr></table>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 23px"><tr><td bgcolor="#386bc8" style="border-radius:9px;background:#386bc8"><a class="mail-button" href="${link}" style="display:inline-block;padding:17px 27px;font-weight:bold;font-size:14px;letter-spacing:.1px;text-decoration:none;color:#ffffff">Activate my parent account &nbsp;→</a></td></tr></table>
+<p style="margin:0 0 12px;color:#667a96;font-size:13px;line-height:1.75"><strong>For your security:</strong> this link can be used once and expires in 7 days. Please keep it private.</p>
+<p style="margin:0 0 29px;color:#667a96;font-size:12px;line-height:1.7">If the button does not open, copy this link into your browser:<br><a href="${link}" style="color:#325fb7;word-break:break-all;overflow-wrap:anywhere">${link}</a></p>
+<p style="margin:0 0 8px;color:#435573;font-size:15px;line-height:1.85">We look forward to working with you to nurture your child’s knowledge, good character and faith.</p>
+<p style="margin:0 0 10px;color:#435573;font-size:15px;line-height:1.85">Jazākum Allāhu khayran,<br><strong>The Admissions Team</strong><br>Madrasah At-Towfiq</p>
+</td></tr><tr><td style="padding:23px 34px;background:#f7f9fd;border-top:1px solid #e7edf6;text-align:center">
+<p style="margin:0 0 7px;color:#506483;font-size:12px;line-height:1.7">Questions? <a href="mailto:${contact}" style="color:#325fb7;text-decoration:none">${contact}</a></p>
+<p style="margin:0;color:#8798b0;font-size:11px;line-height:1.6">Madrasah At-Towfiq · Bolton, United Kingdom<br>If you were not expecting this invitation, please contact the admissions team.</p>
+</td></tr></table>
+<p style="margin:20px 0 0;text-align:center;font-size:11px;color:#8798b0">Rooted in faith, guided by knowledge.</p>
+</td></tr></table></body></html>`;
 }
 
 const escapeHtml=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -257,7 +302,7 @@ async function handle(req,env){
    if(!b.student_id)error('Student required');
    const admission=await first(db,"SELECT a.* FROM admissions a JOIN students s ON s.id=a.student_id WHERE a.student_id=? AND a.status='accepted'",b.student_id);
    if(!admission)error('Accepted admission not found',404);
-   const outcome=await inviteGuardianAfterAcceptance(db,env,req,admission,user);
+   const outcome=await inviteGuardianAfterAcceptance(db,env,req,{...admission,preferred_greeting_name:short(b.greeting_name,60)},user);
    return json({ok:true,...outcome});
   }
  }
