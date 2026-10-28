@@ -993,31 +993,89 @@ async function handle(req,env){
   if(method==='POST'){if(!b.title||!b.body)error('Title and message required');if(!['all','parent','teacher','staff','admin'].includes(b.audience||'all'))error('Invalid audience');const aid=id();await run(db,'INSERT INTO announcements(id,title,body,audience,created_by) VALUES(?,?,?,?,?)',aid,short(b.title,150),short(b.body,2500),b.audience||'all',user.id);await audit(db,user,'publish','announcement',aid);return json({ok:true});}
   if(method==='DELETE'){requireRole(user,'admin','staff');await run(db,'DELETE FROM announcements WHERE id=?',b.id);return json({ok:true});}
  }
+
+ // Threaded private portal conversations. Only actual participants can reply.
+ // Recipient is derived from the root message for all replies, never trusted from the client.
  if(path==='/api/messages'){
-  if(method==='GET'){const rows=user.role==='admin'||user.role==='staff'?await all(db,'SELECT m.*,u.name AS recipient_name FROM messages m LEFT JOIN users u ON u.id=m.recipient_id ORDER BY m.created_at DESC LIMIT 200'):await all(db,'SELECT m.*,u.name AS recipient_name FROM messages m LEFT JOIN users u ON u.id=m.recipient_id WHERE m.recipient_id=? ORDER BY m.created_at DESC LIMIT 200',user.id);return json({items:rows});}
-  requireRole(user,'admin','staff','teacher');if(method==='POST'){const b=await input(req);if(!b.subject||!b.body||!b.recipient_id)error('Recipient, subject and message required');const target=await first(db,'SELECT * FROM users WHERE id=?',b.recipient_id);if(!target)error('Recipient not found',404);if(user.role==='teacher'){if(target.role!=='parent')error('Teachers can only message parents');const child=await first(db,'SELECT s.id FROM students s JOIN classes c ON c.id=s.class_id WHERE s.parent_id=? AND c.teacher_id=? LIMIT 1',b.recipient_id,user.id);if(!child)error('Recipient is not a parent of your class',403);}let linkedPupil=null;
- if(b.student_id){
-  linkedPupil=await permittedStudent(db,user,b.student_id);
-  // When addressing a parent about a pupil, the recipient must be that
-  // pupil's current linked guardian; never send to an unrelated parent.
-  if(target.role==='parent' && linkedPupil.parent_id!==target.id)
-   error('This parent is not linked to the selected pupil',403);
- }
- const mid=id();await run(db,'INSERT INTO messages(id,recipient_id,subject,body,student_id,created_by) VALUES(?,?,?,?,?,?)',mid,b.recipient_id,short(b.subject,160),short(b.body,3000),b.student_id||null,user.id);await audit(db,user,'send','message',mid);if(env.RESEND_API_KEY&&env.EMAIL_FROM&&!env.EMAIL_FROM.includes('example.org')){
-   const pupilName=linkedPupil?[linkedPupil.first_name,linkedPupil.last_name].filter(Boolean).join(' '):'';
-   const emailHtml=`<div style="background:#f2f5fb;padding:30px 15px;font-family:Arial,sans-serif;color:#243b61">
-    <div style="max-width:570px;margin:auto;background:#fff;border:1px solid #e2eaf4;border-radius:15px;overflow:hidden">
-    <div style="background:#172e57;color:#fff;padding:25px;text-align:center"><strong>Madrasah At-Towfiq · Bolton</strong></div>
-    <div style="padding:29px;line-height:1.85"><p lang="ar" style="color:#244578;font-size:22px">السلام عليكم ورحمة الله وبركاته</p>
-    <h2 style="color:#1e3965">A private message is waiting</h2>
-    <p>${pupilName?'A new message relating to <strong>'+escapeHtml(pupilName)+'</strong> has been added to your secure portal inbox.':'You have received a new private message in your madrasah portal inbox.'}</p>
-    <p>For your privacy, the message itself is not included in this email.</p>
-    <a href="https://portal.attowfiqmasjid.org/" style="background:#376ac5;color:#fff;padding:14px 21px;border-radius:9px;display:inline-block;text-decoration:none;font-weight:bold">Open secure portal</a>
-    <p style="font-size:12px;color:#71829a;margin-top:27px">Madrasah At-Towfiq · Rooted in faith, guided by knowledge.</p></div></div></div>`;
-   try{await mail(env,target.email,'New private portal message | Madrasah At-Towfiq',emailHtml,{replyTo:env.ADMISSIONS_EMAIL});}
-   catch(err){try{await audit(db,user,'message_email_failed','message',mid,short(err.message,160));}catch{}}
+  if(method==='GET'){
+   const scope=user.role==='admin'||user.role==='staff'
+    ?{where:'1=1',args:[]}
+    :user.role==='parent'
+     ?{where:"(m.recipient_id=? OR m.created_by=?) AND (m.student_id IS NULL OR EXISTS (SELECT 1 FROM students s WHERE s.id=m.student_id AND s.parent_id=?))",args:[user.id,user.id,user.id]}
+     :{where:"(m.recipient_id=? OR m.created_by=?) AND (m.student_id IS NULL OR EXISTS (SELECT 1 FROM students s JOIN classes c ON c.id=s.class_id WHERE s.id=m.student_id AND c.teacher_id=?))",args:[user.id,user.id,user.id]};
+   return json({items:await all(db,\`SELECT m.*,COALESCE(m.thread_root_id,m.id) AS conversation_id,
+     receiver.name AS recipient_name,sender.name AS sender_name
+     FROM messages m LEFT JOIN users receiver ON receiver.id=m.recipient_id
+     LEFT JOIN users sender ON sender.id=m.created_by
+     WHERE \${scope.where} ORDER BY m.created_at DESC,m.id DESC LIMIT 500\`,...scope.args)});
   }
-  return json({ok:true});}
+  if(method==='PATCH'){
+   const b=await input(req);if(!b.id)error('Message ID required');
+   const message=await first(db,'SELECT recipient_id FROM messages WHERE id=?',short(b.id,100));
+   if(!message)error('Message not found',404);
+   if(message.recipient_id!==user.id)error('Only the recipient can mark this message read',403);
+   await run(db,'UPDATE messages SET read_at=COALESCE(read_at,?) WHERE id=?',iso(),short(b.id,100));
+   return json({ok:true});
+  }
+  if(method==='POST'){
+   const b=await input(req);
+   if(typeof b.body!=='string'||!b.body.trim()||b.body.length>3000)error('Write a message of up to 3000 characters');
+   let target=null,subject='',linkedPupil=null,threadRoot=null;
+   if(b.reply_to){
+    const root=await first(db,'SELECT * FROM messages WHERE id=? AND thread_root_id IS NULL',short(b.reply_to,100));
+    if(!root)error('Conversation not found',404);
+    if(user.id!==root.created_by&&user.id!==root.recipient_id)
+     error('Only a participant can reply to this conversation',403);
+    if(root.student_id){
+     // Guardian/class link changes must immediately revoke access to pupil messages.
+     linkedPupil=await permittedStudent(db,user,root.student_id);
+    }
+    threadRoot=root.id;
+    target=await first(db,'SELECT id,name,email,role,active FROM users WHERE id=?',
+     user.id===root.created_by?root.recipient_id:root.created_by);
+    if(!target?.active)error('The other participant is not an active account',409);
+    subject=short(root.subject,160);
+    if(b.recipient_id&&b.recipient_id!==target.id)error('The recipient cannot be changed during a reply',403);
+   }else{
+    requireRole(user,'admin','staff','teacher');
+    if(typeof b.subject!=='string'||!b.subject.trim()||b.subject.length>160)error('Subject required (up to 160 characters)');
+    if(!b.recipient_id)error('Select a recipient');
+    target=await first(db,'SELECT id,name,email,role,active FROM users WHERE id=?',short(b.recipient_id,100));
+    if(!target?.active)error('Select an active recipient',404);
+    if(target.id===user.id)error('Choose a different recipient');
+    if(user.role==='teacher'){
+     if(target.role!=='parent')error('Teachers can only message linked guardians',403);
+     const linked=await first(db,'SELECT s.id FROM students s JOIN classes c ON c.id=s.class_id WHERE s.parent_id=? AND c.teacher_id=? LIMIT 1',target.id,user.id);
+     if(!linked)error('Recipient is not a guardian in your assigned class',403);
+    }
+    if(b.student_id){
+     linkedPupil=await permittedStudent(db,user,short(b.student_id,100));
+     if(target.role==='parent'&&linkedPupil.parent_id!==target.id)
+      error('The selected pupil is not linked to this recipient',403);
+    }
+    subject=short(b.subject,160);
+   }
+   const mid=id();
+   await run(db,'INSERT INTO messages(id,recipient_id,subject,body,student_id,created_by,thread_root_id) VALUES(?,?,?,?,?,?,?)',
+    mid,target.id,subject,short(b.body,3000),linkedPupil?.id||null,user.id,threadRoot);
+   try{await audit(db,user,threadRoot?'reply':'send','message',mid,threadRoot?'thread '+threadRoot:'private conversation');}catch{}
+   let notification_status='not_sent';
+   if(env.RESEND_API_KEY&&env.EMAIL_FROM&&!env.EMAIL_FROM.includes('example.org')){
+    // Email is a generic inbox alert: no message text, learner name or confidential metadata.
+    const emailHtml=\`<div style="background:#f2f5fb;padding:28px 14px;font-family:Arial,sans-serif;color:#243b61">
+      <div style="max-width:560px;margin:auto;background:#fff;padding:28px;border-radius:12px">
+      <h2 style="color:#19345e">Madrasah At-Towfiq · Private message</h2>
+      <p>Assalamu alaikum. A new private message is waiting in your secure Madrasah At-Towfiq portal inbox.</p>
+      <p>For your privacy, the message content is not included in this email.</p>
+      <a href="https://portal.attowfiqmasjid.org/" style="background:#376ac5;color:white;padding:12px 16px;border-radius:8px;display:inline-block;text-decoration:none">Open secure portal</a>
+      </div></div>\`;
+    try{const result=await mail(env,target.email,'New private portal message | Madrasah At-Towfiq',emailHtml,{replyTo:env.ADMISSIONS_EMAIL});
+     notification_status=result.sent?'sent':'not_sent';}
+    catch(err){try{await audit(db,user,'message_email_failed','message',mid,short(err.message,160));}catch{}}
+   }
+   return json({ok:true,id:mid,conversation_id:threadRoot||mid,notification_status});
+  }
+  error('Method not allowed',405);
  }
  if(path==='/api/events'){
   if(method==='GET')return json({items:await all(db,'SELECT * FROM events ORDER BY event_date ASC LIMIT 200')});requireRole(user,'admin','staff');const b=await input(req);
@@ -1032,6 +1090,72 @@ async function handle(req,env){
  if(path==='/api/leaderboard'&&method==='GET')return json({items:await all(db,'SELECT u.name,COUNT(a.id) AS played,SUM(a.points) AS points FROM quiz_attempts a JOIN users u ON u.id=a.user_id GROUP BY a.user_id ORDER BY points DESC,played DESC LIMIT 30')});
  if(path==='/api/settings'){
   if(method==='GET')return json({items:await all(db,'SELECT * FROM school_settings ORDER BY key')});requireRole(user,'admin');const b=await input(req);if(method==='POST'){if(!['monthly_fee_pence','school_email','school_phone','school_address','academic_year','jumah_schedule','jumah_message','jumah_enabled','brand_note'].includes(b.key))error('Invalid setting');await run(db,'INSERT INTO school_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',b.key,short(b.value,1200));await audit(db,user,'setting','settings',b.key);return json({ok:true});}
+ }
+
+ if(path==='/api/compliance/consents'&&method==='GET'){
+  requireRole(user,'admin','staff');
+  const items=await all(db,\`SELECT s.id AS student_id,s.student_no,s.first_name,s.last_name,c.name AS class_name,
+   a.id AS admission_id,a.consent_first_aid,a.consent_photos,a.created_at AS declared_at
+   FROM students s LEFT JOIN classes c ON c.id=s.class_id
+   LEFT JOIN admissions a ON a.id=(SELECT id FROM admissions WHERE student_id=s.id AND status='accepted'
+      ORDER BY created_at DESC LIMIT 1)
+   WHERE s.status='active' ORDER BY s.last_name,s.first_name LIMIT 1500\`);
+  return json({items});
+ }
+ if(path==='/api/compliance/policies'){
+  requireRole(user,'admin','staff');
+  if(method==='GET')return json({items:await all(db,'SELECT p.*,u.name AS recorded_by_name FROM compliance_policies p LEFT JOIN users u ON u.id=p.created_by ORDER BY CASE WHEN p.status=\'current\' THEN 0 WHEN p.status=\'draft\' THEN 1 ELSE 2 END,p.review_due,p.title LIMIT 300')});
+  requireRole(user,'admin');
+  if(method!=='POST'&&method!=='PATCH')error('Method not allowed',405);
+  const b=await input(req),existing=method==='PATCH'
+   ?await first(db,'SELECT id FROM compliance_policies WHERE id=?',short(b.id,100)):null;
+  if(method==='PATCH'&&!existing)error('Policy record not found',404);
+  const title=short(b.title,160),category=short(b.category,32),status=short(b.status,16);
+  if(!title)error('Policy title required');
+  if(!['safeguarding','data_protection','health_safety','education','other'].includes(category))error('Invalid policy category');
+  if(!['draft','current','retired'].includes(status))error('Invalid policy status');
+  if(b.review_due&&!isDate(b.review_due))error('Choose a valid next review date');
+  if(typeof b.notes!=='string'||b.notes.length>1200)error('Review notes cannot exceed 1200 characters');
+  const recordId=existing?.id||id();
+  if(existing){
+   await run(db,'UPDATE compliance_policies SET title=?,category=?,version=?,owner=?,review_due=?,status=?,notes=?,updated_at=? WHERE id=?',
+    title,category,short(b.version,32)||'1.0',short(b.owner,120),b.review_due||null,status,short(b.notes,1200),iso(),recordId);
+  }else{
+   await run(db,'INSERT INTO compliance_policies(id,title,category,version,owner,review_due,status,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?)',
+    recordId,title,category,short(b.version,32)||'1.0',short(b.owner,120),b.review_due||null,status,short(b.notes,1200),user.id);
+  }
+  await audit(db,user,existing?'update':'create','compliance_policy',recordId,status);
+  return json({ok:true,id:recordId});
+ }
+ if(path==='/api/compliance/concerns'){
+  requireRole(user,'admin','staff');
+  if(method==='GET'){
+   const rows=user.role==='admin'
+    ?await all(db,\`SELECT c.*,u.name AS reported_by_name FROM compliance_concerns c LEFT JOIN users u ON u.id=c.reported_by ORDER BY c.created_at DESC LIMIT 300\`)
+    :await all(db,\`SELECT c.*,u.name AS reported_by_name FROM compliance_concerns c LEFT JOIN users u ON u.id=c.reported_by WHERE c.reported_by=? ORDER BY c.created_at DESC LIMIT 100\`,user.id);
+   return json({items:rows});
+  }
+  if(method!=='POST'&&method!=='PATCH')error('Method not allowed',405);
+  const b=await input(req),existing=method==='PATCH'
+   ?await first(db,'SELECT * FROM compliance_concerns WHERE id=?',short(b.id,100)):null;
+  if(method==='PATCH'){requireRole(user,'admin');if(!existing)error('Concern record not found',404);}
+  const kind=existing?.kind||short(b.kind,40),title=existing?.title||short(b.title,180),occurred=existing?.occurred_on||short(b.occurred_on,10);
+  if(!['privacy_request','possible_breach','access_review','operational'].includes(kind))error('Choose a concern category');
+  if(!title||!isDate(occurred))error('Concern title and valid occurrence date required');
+  if(typeof b.description!=='string'||b.description.length>2000
+   ||typeof b.action_taken!=='string'||b.action_taken.length>2000)error('Description or action notes exceed 2000 characters');
+  const status=method==='POST'?'open':short(b.status,20);
+  if(!['open','in_review','closed'].includes(status))error('Invalid concern status');
+  const recordId=existing?.id||id();
+  if(existing){
+   await run(db,'UPDATE compliance_concerns SET description=?,action_taken=?,status=?,updated_at=? WHERE id=?',
+    short(b.description,2000),short(b.action_taken,2000),status,iso(),recordId);
+  }else{
+   await run(db,'INSERT INTO compliance_concerns(id,kind,title,occurred_on,description,action_taken,status,reported_by) VALUES(?,?,?,?,?,?,?,?)',
+    recordId,kind,title,occurred,short(b.description,2000),short(b.action_taken,2000),'open',user.id);
+  }
+  await audit(db,user,existing?'update':'create','compliance_concern',recordId,kind+' '+status);
+  return json({ok:true,id:recordId});
  }
  if(path==='/api/email-log'&&method==='GET'){requireRole(user,'admin');return json({items:await all(db,'SELECT * FROM email_log ORDER BY created_at DESC LIMIT 100')});}
  if(path==='/api/audit'&&method==='GET'){requireRole(user,'admin');return json({items:await all(db,'SELECT a.*,u.name AS actor FROM audit_log a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.created_at DESC LIMIT 150')});}
