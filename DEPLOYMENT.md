@@ -189,3 +189,20 @@ npm run deploy
 ```
 
 After deployment, first verify class filtering and manual register saves. The guardian notice checkbox is OFF by default and available only for the current Europe/London day. Use a fictional pupil/guardian inbox to confirm one absence notice without medical or private attendance notes; repeat the save and confirm no duplicate email. Failed Resend delivery cannot undo the recorded attendance. Retrying a failed email is not automatic, to avoid duplicate notices. Production sender must already be configured.
+
+## v1.5.0 — Classroom and family progress reports
+
+1. Confirm the previous version and take a production D1 recovery point.
+2. Pull `main` and run `npm run test` locally.
+3. Apply **pending** migration `0008_pupil_progress_reports.sql` using `npm run db:migrate:remote`. Inspect the migration status; do not recreate the database.
+4. Deploy with `npm run deploy` only after the migration succeeds.
+5. With fictional test pupil accounts, check teacher classroom scope, report drafts, explicit publication, parent visibility, unpublishing and assigned-teacher isolation. Publishing does **not** send an email automatically.
+
+```powershell
+git pull origin main
+npm run test
+if ($LASTEXITCODE -ne 0) { throw "Tests failed; deployment cancelled." }
+npm run db:migrate:remote
+if ($LASTEXITCODE -ne 0) { throw "D1 migration failed; deployment cancelled." }
+npm run deploy
+```
