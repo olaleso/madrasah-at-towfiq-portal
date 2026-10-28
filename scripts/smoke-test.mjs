@@ -65,6 +65,8 @@ try{
  assert.ok(receiptMailPayload.subject.includes('Application received'));
  assert.ok(!receiptMailPayload.subject.includes(application.first_name),'Do not disclose child names in email subjects');
  assert.ok(receiptMailPayload.html.includes('Dear Example Guardian,'));
+ assert.ok(receiptMailPayload.html.includes('Sample Learner'),'Admission acknowledgement includes the full pupil name');
+ assert.ok(!receiptMailPayload.subject.includes('Sample Learner'),'Student name must not be in subject line');
  assert.ok(receiptMailPayload.html.includes('السلام عليكم ورحمة الله وبركاته'));
  assert.ok(receiptMailPayload.html.includes('Assalāmu'));
  assert.ok(receiptMailPayload.html.includes('at-towfiq-madrasah-logo.png'));
@@ -152,6 +154,7 @@ try{
  assert.equal(resendPayload.to[0],secondApplication.guardian_email);
  assert.equal(resendPayload.reply_to,env.ADMISSIONS_EMAIL);
  assert.ok(resendPayload.html.includes('Dear Ibrahim,'),'Custom preferred first name must appear in greeting');
+ assert.ok(resendPayload.html.includes('Bilal Test'),'Admission acceptance invitation must include pupil full name');
  assert.ok(resendPayload.html.includes('السلام عليكم ورحمة الله وبركاته'),'Islamic greeting must be included');
  assert.ok(resendPayload.html.includes('Assalāmu'),'Transliterated taslīm must appear');
  assert.ok(resendPayload.html.includes('at-towfiq-madrasah-logo.png'),'Email includes official logo');
@@ -243,6 +246,7 @@ try{
  assert.equal(sentNotifications[0].reply_to,env.ADMISSIONS_EMAIL);
  assert.ok(sentNotifications[0].subject.includes('New homework assignment'));
  assert.ok(sentNotifications[0].html.includes('Qaaidah'));
+ assert.ok(sentNotifications[0].html.includes('Bilal Test'),'Homework email must display pupil forename and surname');
  assert.ok(sentNotifications[0].html.includes('Page 22'));
  assert.ok(sentNotifications[0].html.includes('10 November 2026'));
  assert.ok(sentNotifications[0].html.includes('السلام عليكم ورحمة الله وبركاته'));
@@ -256,6 +260,7 @@ try{
  assert.equal(notification.data.notification_status,'sent');
  assert.equal(sentNotifications.length,2);
  assert.ok(sentNotifications[1].html.includes('POINTS AWARDED'));
+ assert.ok(sentNotifications[1].html.includes('Bilal Test'),'Positive behaviour email must display pupil full name');
  assert.ok(sentNotifications[1].html.includes('+3 points'));
  assert.ok(!sentNotifications[1].html.includes('Private teacher notes'));
  notification=await req('/behaviour',{student_id:student2,reason_code:'disrespect',notes:'Keep this note confidential'});
@@ -263,6 +268,7 @@ try{
  assert.equal(notification.data.notification_status,'sent');
  assert.equal(sentNotifications.length,3);
  assert.ok(sentNotifications[2].html.includes('POINTS DEDUCTED'));
+ assert.ok(sentNotifications[2].html.includes('Bilal Test'),'Deduction email must display pupil full name');
  assert.ok(sentNotifications[2].html.includes('-2 points'));
  assert.ok(sentNotifications[2].html.includes('Disrespectful language'));
  assert.ok(!sentNotifications[2].html.includes('Keep this note confidential'));
@@ -272,6 +278,8 @@ try{
  assert.equal(notification.status,200);
  assert.equal(notification.data.notification_status,'sent');
  assert.equal(sentNotifications[3].to[0],application.guardian_email);
+ assert.ok(sentNotifications[3].html.includes('Updated Learner'),'Notifications use updated student record names, not stale admission fields');
+ assert.ok(sentNotifications.every(p=>!p.subject.includes('Learner')&&!p.subject.includes('Bilal Test')),'Pupil names must never appear in email subjects');
 }finally{
  globalThis.fetch=notificationFetch;
  delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
@@ -293,6 +301,33 @@ try{
  assert.ok(sqlite.prepare('SELECT points FROM behaviour WHERE id=?').get(behaviourFail.data.id));
 }finally{
  globalThis.fetch=failingNotificationFetch;
+ delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
+}
+
+// Student-related private portal messages must identify the full pupil name,
+// and a parent can only receive messages about pupils linked to that parent.
+z=await req('/messages',{recipient_id:guardian_id,student_id:student2,subject:'Unrelated pupil',body:'Do not deliver'},'POST');
+assert.equal(z.status,403,'Do not disclose an unrelated pupil to a different parent');
+assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM messages WHERE subject='Unrelated pupil'").get().n,0);
+const messageFetch=globalThis.fetch;
+let linkedMessageEmail;
+env.RESEND_API_KEY='test-message-sending';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async(url,options)=>{
+ assert.equal(String(url),'https://api.resend.com/emails');
+ linkedMessageEmail=JSON.parse(options.body);
+ return new Response(JSON.stringify({id:'test-private-message'}),{status:200,headers:{'content-type':'application/json'}});
+};
+try{
+ const sent=await req('/messages',{recipient_id:guardian_id,student_id,subject:'Private pupil progress',body:'Confidential note'},'POST');
+ assert.equal(sent.status,200,JSON.stringify(sent.data));
+ assert.equal(linkedMessageEmail.to[0],application.guardian_email);
+ assert.ok(linkedMessageEmail.html.includes('Updated Learner'),'Pupil-related message alert must include full name');
+ assert.ok(!linkedMessageEmail.html.includes('Confidential note'),'Private message bodies must remain within the portal');
+ assert.ok(!linkedMessageEmail.subject.includes('Updated Learner'));
+}finally{
+ globalThis.fetch=messageFetch;
  delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
 }
 
@@ -334,6 +369,13 @@ for(const path of ['../public/app.js','../public/index.html','../src/worker.js',
 }
 assert.doesNotThrow(()=>new Function(admissionsUi),'The portal UI script must parse after dialog conversion');
 assert.ok(admissionsUi.includes('function confirmDialog('),'Reusable custom confirm dialog is available');
+assert.ok(admissionsUi.includes('function familyDashboard()'),'Parent family dashboard is present');
+assert.ok(admissionsUi.includes("if(userCan('parent'))return familyDashboard()"),'Parent accounts receive family-specific dashboard');
+assert.ok(admissionsUi.includes('get(\'attendance\')'),'Family dashboard loads attendance records');
+assert.ok(admissionsUi.includes('get(\'behaviour\')'),'Family dashboard loads behaviour points');
+assert.ok(admissionsUi.includes('get(\'fees\')'),'Family dashboard shows fee position');
+assert.ok(admissionsUi.includes('data-action="family-student"'),'Each family card links to child profile');
+
 assert.ok(admissionsUi.includes('role="alertdialog"'),'Custom dialog communicates accessible alert dialog semantics');
 assert.ok(admissionsUi.includes('aria-modal="true"'),'Custom dialog announces modal focus');
 assert.ok(admissionsUi.includes('requiredText:\'DELETE\''),'Permanent student deletion still requires typing DELETE');
@@ -351,6 +393,7 @@ assert.ok(admissionsUi.includes("actionLabel:'Send broadcast to all'"),'Bulk bro
 const portalStyles=fs.readFileSync(new URL('../public/styles.css',import.meta.url),'utf8');
 assert.ok(portalStyles.includes('.guardian-invite-modal'),'Branded invitation styles must be present');
 assert.ok(portalStyles.includes('.action-confirm-overlay'),'Every branded confirmation has dedicated overlay styling');
+assert.ok(portalStyles.includes('.family-child-grid'),'Dedicated responsive family dashboard styles must be present');
 assert.ok(portalStyles.includes('.action-confirm-dialog.tone-danger'),'Irreversible actions have visible danger styling');
 
 const officialEmailConfig=JSON.parse(fs.readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));

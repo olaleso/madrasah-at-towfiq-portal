@@ -125,3 +125,14 @@ Run `git pull origin main`, `npm run test` and `npm run deploy` (no D1 migration
 
 This is a client UI-only change. Pull from main, run the full smoke tests, then redeploy the existing Worker. No D1 migration or database backup beyond your normal deployment safeguards is required. After deployment, hard-refresh your browser and try changing an admission status to `Accepted`: a branded madrasah dialog appears instead of Chrome's default prompt. Test Cancel and ensure status remains unchanged. For any student deletion, **do not** complete deletion on live records; only verify the dialog requires typing `DELETE` and cancel it. Test the invoice and broadcast confirmations without sending a real invoice/broadcast by cancelling.
 
+
+## v1.1.0 Family Learning Hub and personalised correspondence
+
+Code-only deployment; no database schema changes. The parent dashboard now summarises already-scoped records (pupils, attendance, behaviour, homework, fees, announcements), and all pupil-related email HTML identifies the student's full name, not just the first name. New confirmation messages and portal messages retain server-side scope checks. Deploy with:
+```powershell
+git pull origin main
+npm run test
+if ($LASTEXITCODE -ne 0) { throw "Tests failed. Do not deploy." }
+npm run deploy
+```
+Sign in as an existing test parent and confirm only their linked children appear. Validate a test admission invite, assignment, points credit/debit, and linked portal message. Avoid sending real safeguarding details or medical data in test messages.

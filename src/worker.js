@@ -105,7 +105,8 @@ async function inviteGuardianAfterAcceptance(db,env,req,application,actor){
  await run(db,'INSERT INTO auth_tokens(token_hash,user_id,purpose,expires_at) VALUES(?,?,?,?)',await sha(token),uid,'invite',nextIso(7*DAY));
  const link='https://portal.attowfiqmasjid.org/?invite='+encodeURIComponent(token);
  const recipientName=guardianGreetingName(application.preferred_greeting_name,application.guardian_name);
- const html=guardianInvitationHtml(recipientName,link,env.ADMISSIONS_EMAIL);
+ const studentFullName=[application.first_name,application.last_name].map(x=>short(x,80)).filter(Boolean).join(' ');
+ const html=guardianInvitationHtml(recipientName,link,env.ADMISSIONS_EMAIL,studentFullName);
  const sent=await mail(env,guardianEmail,'Welcome to Madrasah At-Towfiq | Parent account invitation',html,{replyTo:env.ADMISSIONS_EMAIL});
  await audit(db,actor,'guardian_invitation','users',uid,sent.sent?'email_sent':'delivery_not_confirmed');
  return {invitation_status:sent.sent?'sent':'delivery_not_configured_or_failed',invitation_url:sent.sent?null:link};
@@ -120,8 +121,9 @@ const guardianGreetingName=(preferred,fullName)=>{
  const parts=short(fullName||'',120).trim().split(/\s+/).filter(Boolean);
  return parts.length?parts[parts.length-1]:'Parent / Guardian';
 };
-function guardianInvitationHtml(name,activationUrl,admissionsEmail){
+function guardianInvitationHtml(name,activationUrl,admissionsEmail,studentFullName){
  const first=escapeHtml(short(name||'Parent / Guardian',60));
+ const pupil=escapeHtml(short(studentFullName||'your child',170));
  const link=escapeHtml(activationUrl);
  const contact=escapeHtml(admissionsEmail||'admissions@attowfiqmasjid.org');
  const logo='https://portal.attowfiqmasjid.org/assets/at-towfiq-madrasah-logo.png';
@@ -141,7 +143,7 @@ function guardianInvitationHtml(name,activationUrl,admissionsEmail){
 <p lang="ar" dir="rtl" style="margin:0 0 4px;text-align:left;color:#183b70;font-size:24px;line-height:1.8">السلام عليكم ورحمة الله وبركاته</p>
 <p style="margin:0 0 24px;color:#75849a;font-size:13px;font-style:italic">Assalāmu ʿalaykum wa raḥmatullāhi wa barakātuh</p>
 <p style="margin:0 0 18px;color:#1d3558;font-size:16px;line-height:1.8"><strong>Dear ${first},</strong></p>
-<p style="margin:0 0 17px;color:#435573;font-size:15px;line-height:1.85">We are pleased to inform you that your child’s application for admission to <strong>Madrasah At-Towfiq</strong> has been accepted.</p>
+<p style="margin:0 0 17px;color:#435573;font-size:15px;line-height:1.85">We are pleased to inform you that the application submitted for <strong>${pupil}</strong> has been accepted by <strong>Madrasah At-Towfiq</strong>.</p>
 <p style="margin:0 0 23px;color:#435573;font-size:15px;line-height:1.85">You are formally invited to activate your secure parent account. Through the portal, you can follow your child’s homework, attendance and learning progress, and receive important madrasah updates.</p>
 <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 25px;background:#f0f5fd;border:1px solid #dce9f9;border-radius:11px"><tr><td style="padding:17px 19px;color:#315b92;font-size:13px;line-height:1.75"><strong>Your next step</strong><br>Activate your account securely and create your personal password.</td></tr></table>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 23px"><tr><td bgcolor="#386bc8" style="border-radius:9px;background:#386bc8"><a class="mail-button" href="${link}" style="display:inline-block;padding:17px 27px;font-weight:bold;font-size:14px;letter-spacing:.1px;text-decoration:none;color:#ffffff">Activate my parent account &nbsp;→</a></td></tr></table>
@@ -221,7 +223,7 @@ async function sendApplicationReceipt(db,env,application){
  const reference=applicationReceiptReference(application.id,receivedAt);
  const receivedDate=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',day:'numeric',month:'long',year:'numeric'}).format(new Date(receivedAt));
  const html=applicationReceiptHtml({
-  guardianName:application.guardian_name,studentName:application.child_name,
+  guardianName:application.guardian_name,studentName:[application.first_name,application.last_name].filter(Boolean).join(' ')||application.child_name,
   reference,submittedAt:receivedDate,admissionsEmail:env.ADMISSIONS_EMAIL
  });
  const outcome=await mail(env,guardianEmail,'Madrasah At-Towfiq | Application received ('+reference+')',html,{replyTo:env.ADMISSIONS_EMAIL});
@@ -252,11 +254,11 @@ async function studentNotificationRecipient(db,studentId){
   to=email(row.guardian_email);guardianName=row.guardian_name;
  }
  if(!/^\S+@\S+\.\S+$/.test(to||''))return null;
- return {to,firstName:short(row.first_name,80),guardianName:short(guardianName||'Parent / Guardian',100)};
+ return {to,firstName:short(row.first_name,80),lastName:short(row.last_name,80),fullName:[row.first_name,row.last_name].map(x=>short(x,80)).filter(Boolean).join(' '),guardianName:short(guardianName||'Parent / Guardian',100)};
 }
 function studentActivityEmail({recipient,kind,subjectTitle,summaryLabel,summaryValue,description,explanation,dueDate,admissionsEmail}){
  const greeting=escapeHtml(guardianGreetingName('',recipient.guardianName));
- const pupil=escapeHtml(recipient.firstName);
+ const pupil=escapeHtml(recipient.fullName);
  const label=escapeHtml(summaryLabel);
  const value=escapeHtml(summaryValue);
  const details=escapeHtml(description);
@@ -658,7 +660,29 @@ async function handle(req,env){
  }
  if(path==='/api/messages'){
   if(method==='GET'){const rows=user.role==='admin'||user.role==='staff'?await all(db,'SELECT m.*,u.name AS recipient_name FROM messages m LEFT JOIN users u ON u.id=m.recipient_id ORDER BY m.created_at DESC LIMIT 200'):await all(db,'SELECT m.*,u.name AS recipient_name FROM messages m LEFT JOIN users u ON u.id=m.recipient_id WHERE m.recipient_id=? ORDER BY m.created_at DESC LIMIT 200',user.id);return json({items:rows});}
-  requireRole(user,'admin','staff','teacher');if(method==='POST'){const b=await input(req);if(!b.subject||!b.body||!b.recipient_id)error('Recipient, subject and message required');const target=await first(db,'SELECT * FROM users WHERE id=?',b.recipient_id);if(!target)error('Recipient not found',404);if(user.role==='teacher'){if(target.role!=='parent')error('Teachers can only message parents');const child=await first(db,'SELECT s.id FROM students s JOIN classes c ON c.id=s.class_id WHERE s.parent_id=? AND c.teacher_id=? LIMIT 1',b.recipient_id,user.id);if(!child)error('Recipient is not a parent of your class',403);}if(b.student_id)await permittedStudent(db,user,b.student_id);const mid=id();await run(db,'INSERT INTO messages(id,recipient_id,subject,body,student_id,created_by) VALUES(?,?,?,?,?,?)',mid,b.recipient_id,short(b.subject,160),short(b.body,3000),b.student_id||null,user.id);await audit(db,user,'send','message',mid);if(env.RESEND_API_KEY&&env.EMAIL_FROM&&!env.EMAIL_FROM.includes('example.org'))await mail(env,target.email,'New message — Madrasah At-Towfiq',`<p>Assalamu alaikum,</p><p>You have a new private message in your Madrasah At-Towfiq parent/staff portal.</p><p>Please sign in securely to read it.</p>`);return json({ok:true});}
+  requireRole(user,'admin','staff','teacher');if(method==='POST'){const b=await input(req);if(!b.subject||!b.body||!b.recipient_id)error('Recipient, subject and message required');const target=await first(db,'SELECT * FROM users WHERE id=?',b.recipient_id);if(!target)error('Recipient not found',404);if(user.role==='teacher'){if(target.role!=='parent')error('Teachers can only message parents');const child=await first(db,'SELECT s.id FROM students s JOIN classes c ON c.id=s.class_id WHERE s.parent_id=? AND c.teacher_id=? LIMIT 1',b.recipient_id,user.id);if(!child)error('Recipient is not a parent of your class',403);}let linkedPupil=null;
+ if(b.student_id){
+  linkedPupil=await permittedStudent(db,user,b.student_id);
+  // When addressing a parent about a pupil, the recipient must be that
+  // pupil's current linked guardian; never send to an unrelated parent.
+  if(target.role==='parent' && linkedPupil.parent_id!==target.id)
+   error('This parent is not linked to the selected pupil',403);
+ }
+ const mid=id();await run(db,'INSERT INTO messages(id,recipient_id,subject,body,student_id,created_by) VALUES(?,?,?,?,?,?)',mid,b.recipient_id,short(b.subject,160),short(b.body,3000),b.student_id||null,user.id);await audit(db,user,'send','message',mid);if(env.RESEND_API_KEY&&env.EMAIL_FROM&&!env.EMAIL_FROM.includes('example.org')){
+   const pupilName=linkedPupil?[linkedPupil.first_name,linkedPupil.last_name].filter(Boolean).join(' '):'';
+   const emailHtml=`<div style="background:#f2f5fb;padding:30px 15px;font-family:Arial,sans-serif;color:#243b61">
+    <div style="max-width:570px;margin:auto;background:#fff;border:1px solid #e2eaf4;border-radius:15px;overflow:hidden">
+    <div style="background:#172e57;color:#fff;padding:25px;text-align:center"><strong>Madrasah At-Towfiq · Bolton</strong></div>
+    <div style="padding:29px;line-height:1.85"><p lang="ar" style="color:#244578;font-size:22px">السلام عليكم ورحمة الله وبركاته</p>
+    <h2 style="color:#1e3965">A private message is waiting</h2>
+    <p>${pupilName?'A new message relating to <strong>'+escapeHtml(pupilName)+'</strong> has been added to your secure portal inbox.':'You have received a new private message in your madrasah portal inbox.'}</p>
+    <p>For your privacy, the message itself is not included in this email.</p>
+    <a href="https://portal.attowfiqmasjid.org/" style="background:#376ac5;color:#fff;padding:14px 21px;border-radius:9px;display:inline-block;text-decoration:none;font-weight:bold">Open secure portal</a>
+    <p style="font-size:12px;color:#71829a;margin-top:27px">Madrasah At-Towfiq · Rooted in faith, guided by knowledge.</p></div></div></div>`;
+   try{await mail(env,target.email,'New private portal message | Madrasah At-Towfiq',emailHtml,{replyTo:env.ADMISSIONS_EMAIL});}
+   catch(err){try{await audit(db,user,'message_email_failed','message',mid,short(err.message,160));}catch{}}
+  }
+  return json({ok:true});}
  }
  if(path==='/api/events'){
   if(method==='GET')return json({items:await all(db,'SELECT * FROM events ORDER BY event_date ASC LIMIT 200')});requireRole(user,'admin','staff');const b=await input(req);

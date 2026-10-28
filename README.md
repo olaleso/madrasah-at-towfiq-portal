@@ -225,3 +225,20 @@ Fixes MATT registration-number year formatting for newly accepted students, and 
 - `npm run test` now scans shipped runtime files to prohibit `confirm()`, `prompt()` and `alert()` from being introduced again, parses the app script and checks key high-impact workflows.
 - Frontend-only release: no SQL migrations, D1 resets, email secrets or admin account changes. Deploy with `git pull origin main && npm run test && npm run deploy` on PowerShell (run one command per line).
 
+
+## v1.1.0 — Family Learning Hub and full pupil-name email personalisation
+
+### Family Learning Hub
+- Parents receive a dedicated, beautifully styled dashboard with a family summary, per-child profile cards, class and registration number, pending homework, attendance percentage, character point balance and next homework due.
+- A recent-learning timeline combines the family's homework, behaviour and attendance; separate notices surface the school's existing announcements. Parent-specific navigation opens the relevant child profile, homework, behaviour and notices.
+- **No new cross-family read permissions:** the dashboard uses the same existing API resources, filtered on the server by `studentScope()`. Parents cannot access admissions or other families' records. Teachers/admin/staff retain their existing dashboard.
+- Works with more than one linked child and responsive layouts for phone/tablet/desktop. No database migration.
+
+### Full student names in student-related emails
+- Every student-related email includes the pupil's **full forename and surname** in its HTML body. This covers application receipts, admission acceptance invitations, new homework, positive and deducted behaviour points and pupil-linked private portal-message alerts.
+- Email subject lines still omit pupil names; private message bodies, medical data, teacher notes and unrelated pupils are excluded. All child names are resolved from the server's admission/student record, escaped for HTML, and never sourced from arbitrary email recipient parameters.
+- Pupil-linked parent-message alerts are restricted to the **current linked guardian**. An attempt to notify another parent about a pupil is rejected before saving. Staff announcements, password resets, general invitations and Jumu'ah broadcasts are not about individual pupils and remain generic.
+- Existing Resend settings and Reply-To are retained. As always, failed email delivery cannot delete a saved admission, assignment or points record.
+
+### Deployment
+Run `git pull origin main`, `npm run test`, and `npm run deploy` from the existing project. No D1 migrations, account recreation or secret changes. Check parent account login at `https://portal.attowfiqmasjid.org/` and test new emails with a fictional pupil and guardian address you control. The automated test checks full names, non-disclosure and cross-family permissions.
