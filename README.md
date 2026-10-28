@@ -291,3 +291,26 @@ Run `git pull origin main`, `npm run test`, and `npm run deploy` from the existi
 **Required deployment order:** back up the production D1 database, `git pull origin main`, `npm run test`, `npm run db:migrate:remote` (only migration 0007 should be pending), and `npm run deploy`. Do not reset the D1 database. Existing student, class, guardian, fee and attendance records are preserved.
 
 After deployment, use fictional pupils and email addresses you control to verify: an unmarked pupil stays unrecorded; marking a present pupil sends no email; an opted-in same-day absence sends one personalised email; re-saving it does not send another; a simulated provider failure leaves attendance saved. Only then consider enabling notifications for real guardians.
+
+## v1.5.0 — Teacher Classroom Hub & monthly learner progress
+
+- **My classroom** provides assigned teachers a class-scoped daily view: active pupils, how many registers are marked today, recorded absences, incomplete/overdue homework, and private report drafts. Teachers can open a pupil's profile, review overdue homework, take attendance, or start a progress report. Staff/admin users can also use this workspace.
+- **Progress reports** are monthly, per-pupil records covering Hifdh, Muraja’a, Qaaidah and Islamic Studies. Each optional subject level is Developing / Progressing / Secure / Excellent. Reports also include a narrative teacher summary and practical at-home next steps. Only one report is allowed per pupil per month.
+- New reports are **Draft by default** and **cannot be seen by parents**. Authorised administrators, office staff and the pupil's assigned teacher may explicitly **Publish to family**, after confirming visibility. Publishing requires at least one subject assessment and a meaningful summary. There is no automatic email broadcast.
+- A **published report** appears only in the **currently linked guardian's** Progress reports page and the pupil's learning profile. If unpublished later, family access ends immediately. Staff acting as parents through **Family view** also receive parent-only read access; staff mode retains assigned-class scoping.
+- Parent dashboard pupil cards now show the latest published report month and link directly to the family report centre. All narrative fields are rendered as escaped text. Family-facing reports must never contain medical, safeguarding, disciplinary or other restricted notes.
+- A published report is a teacher assessment, **not** a medical, safeguarding or statutory grade. Attendance and homework are separate existing records and are not modified by report publication.
+
+**Schema migration:** `migrations/0008_pupil_progress_reports.sql` adds a new private D1 table and index; it does not change existing admission, class, homework, guardian, fee or attendance data. Back up D1, apply the migration **before** deploying the new Worker. Do not reset D1, re-invite parents or regenerate passwords.
+
+**Release procedure (PowerShell in the existing project directory):**
+```powershell
+git pull origin main
+npm run test
+if ($LASTEXITCODE -ne 0) { throw "Tests failed. Do not migrate or deploy." }
+npm run db:migrate:remote
+if ($LASTEXITCODE -ne 0) { throw "Migration failed. Do not deploy." }
+npm run deploy
+```
+
+**Verification:** Use fictional pupils linked to guardian inboxes you control. Confirm that drafts are staff-only, a published report appears for only the correct parent, an assigned teacher cannot see another class's reports, and unpublishing removes a report from the family view. Do not test with safeguarding information.
