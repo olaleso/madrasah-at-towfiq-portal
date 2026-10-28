@@ -355,13 +355,13 @@ function dbsRegisterSection(){
    ${warn.length?`<div class="dbs-warning">${ico('bell',19)} <div><strong>${overdue.length?overdue.length+' overdue DBS recheck'+(overdue.length===1?'':'s')+'. ':''}${warn.length} record${warn.length===1?'':'s'} require${warn.length===1?'s':''} attention.</strong><p>Review the dates and arrange fresh checks according to the madrasah’s safeguarding policy. This does not determine anyone’s suitability to work.</p></div></div>`:''}
    <div class="cards three dbs-stat-cards"><div class="notice">Active staff and teachers: <strong>${records.length}</strong></div><div class="notice">Due within 60 days: <strong>${warn.length}</strong></div><div class="notice">Rechecks overdue: <strong>${overdue.length}</strong></div></div>
    ${records.length?`<div class="table-scroll"><table class="table"><thead><tr><th>Staff / role</th><th>Check level</th><th>Issued</th><th>School recheck due</th><th>Review status</th><th>Document</th><th>Actions</th></tr></thead><tbody>
-    ${records.map(p=>`<tr><td class="cell-name">${h(p.staff_name)}<div class="cell-sub">${h(cap(p.role))}</div></td><td>${h(dbsLevels[p.check_level]||'Not recorded')}</td><td>${fmt(p.issued_on)}</td><td>${fmt(p.review_due)}</td><td>${dbsStatusTag(p)}</td><td>${p.document_uploaded_at?`<span class="tiny">Retained until ${fmt(p.document_purge_after)}</span>`:`<span class="muted tiny">No copy</span>`}</td>
+    ${records.map(p=>`<tr><td class="cell-name">${h(p.staff_name)}<div class="cell-sub">${h(cap(p.role))}</div></td><td>${h(dbsLevels[p.check_level]||'Not recorded')}</td><td>${fmt(p.issued_on)}</td><td>${fmt(p.review_due)}</td><td>${dbsStatusTag(p)}</td><td>${p.document_uploaded_at?`<span class="tiny">Retained until ${fmt(p.document_purge_after)}</span>`:p.document_received_at?`<span class="muted tiny">Copy removed after retention</span>`:`<span class="tiny red">Upload required</span>`}</td>
      <td><div class="dbs-actions"><button class="btn smol white" data-action="modal" data-value="dbs-record" data-id="${h(p.staff_id)}">${p.check_id?'Edit':'Record'}</button>
-     ${p.check_id&&S.dbsStorageReady&&!p.document_uploaded_at?`<button class="btn smol outline" data-action="modal" data-value="dbs-upload" data-id="${h(p.staff_id)}">${ico('upload',13)} Upload</button>`:''}
+     
      ${p.check_id&&p.document_uploaded_at?`<button class="btn smol outline" data-action="dbs-download" data-id="${h(p.staff_id)}">${ico('download',13)} Download</button><button class="btn smol white" data-action="dbs-delete-file" data-id="${h(p.staff_id)}">${ico('trash',13)} Remove</button>`:''}
      </div></td></tr>`).join('')}
     </tbody></table></div>`:blank('No staff members yet','Create staff or teacher accounts to track DBS checking dates.')}
-   <div class="notice" style="margin-top:15px">${ico('info',16)} Certificate uploads use a private R2 bucket, never a public asset URL. ${S.dbsStorageReady?'Private document storage is connected.':'Private document storage is NOT configured: enable it before attempting to upload certificates.'} Copies are removed after 180 days; review dates and minimal metadata are retained. Do not retain copies without a documented lawful need.</div>
+   <div class="notice" style="margin-top:15px">${ico('info',16)} New DBS records must include the certificate in the same form. Documents are stored in private R2 for up to 180 days. If secure storage is unavailable, the record will not save. A received-evidence timestamp remains after a retained copy is removed.</div>
  </section>`;
 }
 
@@ -626,16 +626,30 @@ function openModal(type,selectedId=''){
   if(!userCan('admin'))return;
   const p=get('compliance/dbs').find(x=>x.staff_id===selectedId);
   if(!p)return;
-  title='DBS recheck · '+p.staff_name;form='dbs-record-form';size=true;submit='Save DBS review schedule';
-  body=`<input type="hidden" name="staff_id" value="${h(p.staff_id)}"><div class="notice" style="margin-bottom:16px">DBS certificates do not expire. Enter the original <strong>issue date</strong> and the <strong>school’s planned renewal / recheck due date</strong>. Only authorised administrators can view this register.</div>
-  <div class="form-grid">
-   ${select('Type of DBS check','check_level',htmlOptions(Object.entries(dbsLevels),p.check_level||'enhanced'),'required')}
-   ${field('Certificate issue date','issued_on',p.issued_on||'','date','required')}
-   ${field('School recheck due date','review_due',p.review_due||'','date','required')}
-   ${field('Reference number – last four characters only (optional)','reference_last4',p.reference_last4||'','text','maxlength="4" pattern="[A-Za-z0-9]{0,4}"')}
-   ${field('Original certificate checked on (optional)','checked_on',p.checked_on||'','date')}
-  </div>
-  <div class="notice" style="margin-top:15px">Warnings appear 60 days before the recheck due date, and remain visible while overdue. Uploading the certificate is optional and separate from saving this record.</div>`;
+  const requiresCertificate=!p.document_received_at;
+  title='DBS check · '+p.staff_name;form='dbs-record-form';size=true;submit='Save DBS record';
+  body=`<input type="hidden" name="staff_id" value="${h(p.staff_id)}">
+    <input type="hidden" id="dbs-original-issued" value="${h(p.issued_on||'')}">
+    <input type="hidden" id="dbs-original-received" value="${p.document_received_at?'yes':'no'}">
+    <div class="notice" style="margin-bottom:16px">Enter the certificate issue date and the school’s recheck due date. <strong>Uploading the DBS certificate is mandatory when registering a new check or completing a previously incomplete record.</strong></div>
+    <div class="form-grid">
+      ${select('DBS check level','check_level',htmlOptions(Object.entries(dbsLevels),p.check_level||'enhanced'),'required')}
+      ${field('Certificate issue date','issued_on',p.issued_on||'','date','required')}
+      ${field('School recheck due date','review_due',p.review_due||'','date','required')}
+      ${field('Reference suffix (last four characters, optional)','reference_last4',p.reference_last4||'','text','maxlength="4" pattern="[A-Za-z0-9]{0,4}"')}
+      ${field('Original certificate checked on (optional)','checked_on',p.checked_on||'','date')}
+      <div class="field wide">
+       <label for="dbs-certificate-file">DBS certificate (PDF / PNG / JPEG, up to 3 MB) <strong id="dbs-file-required-label">${requiresCertificate?'— required':'— required when replacing the certificate'}</strong></label>
+       <input id="dbs-certificate-file" type="file" name="certificate" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" ${requiresCertificate?'required':''}>
+       <p class="small muted" style="margin-top:6px">The certificate is uploaded privately and is not shared with parents or teachers.</p>
+      </div>
+      <label class="dbs-consent wide" id="dbs-retention-label" ${requiresCertificate?'':'hidden'}>
+       <input type="checkbox" name="retention_authorized" value="YES" ${requiresCertificate?'required':''}>
+       I confirm that temporary retention is necessary and permitted under the madrasah’s DBS and data protection procedures.
+      </label>
+    </div>
+    ${p.document_uploaded_at?`<div class="notice" style="margin-top:14px">Previously uploaded copy retained until ${fmt(p.document_purge_after)}. It will be preserved unless you select a replacement file.</div>`:''}
+    <div class="notice" style="margin-top:14px">DBS certificates have no official expiry. Recheck reminders are based on the school’s policy date. Retained copies are removed after 180 days.</div>`;
   break;
  }
  case 'dbs-upload':{
