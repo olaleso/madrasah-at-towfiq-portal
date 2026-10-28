@@ -151,3 +151,14 @@ No D1 migration, admin reset, student re-enrolment, new secret or duplicate acco
 ## v1.1.2 — Fix misleading guardian-already-linked warning
 
 Pull `main`, run `npm run test`, and deploy with `npm run deploy`. No database migration or reset is needed. To verify, use a **fictional second application** with an email matching a test parent who already has an active account. Acceptance should enrol/link without creating another user or changing the password; a linked-account confirmation is emailed. If Resend fails, enrolment still succeeds with an email-status warning instead of an enrolment error. Re-accepting an already-enrolled application should not resend an email.
+
+## v1.2.0 — Mandatory class assignment and secure password recovery
+
+Run `git pull origin main`, `npm run test` (must PASS), then `npm run deploy`. No D1 migration or database recreation required.
+
+1. Create the appropriate classes in **School management → Classes & enrolment** before approving pending admissions. Class name, stage, teacher and capacity can be configured there.
+2. In **Admissions**, choosing **Accepted** now opens the branded confirmation with a **required class selector**. Full classes are unavailable. If no classes exist, create one first. This writes the selected class into the pupil's student record atomically with enrolment; existing guardian linking and notification continue as before.
+3. Use **Students → Assign class** or **Classes & enrolment → Manage pupils** to allocate previously accepted pupils currently marked Unassigned. No automatic class inference is performed, and prior student records are preserved.
+4. Test **Forgot password?** on the login page using an active *test account* whose email inbox you control. Confirm the branded email arrives from `notifications@attowfiqmasjid.org`, the one-use 30-minute link opens the official portal, mismatched passwords are rejected and a successful reset signs out other sessions. A pending invitation account should activate its account instead of using recovery.
+
+The backend uses the existing verified Resend `RESEND_API_KEY`, email sender and admissions reply-to. No additional API key or email domain is needed. For live verification, use only accounts and inboxes you control.

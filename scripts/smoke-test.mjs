@@ -87,7 +87,11 @@ z=await req('/admissions',{id:application_id,status:'reviewing'},'PATCH');assert
 z=await req('/admissions');assert.equal(z.data.items[0].status,'reviewing');assert.equal(z.data.items[0].quran_surah,'Al-Fatihah');assert.equal(z.data.items[0].level_qaaidah,0);assert.equal(z.data.items[0].consent_first_aid,0);assert.equal(z.data.items[0].consent_photos,1);assert.equal(z.data.items[0].allergies,'Peanut allergy');
 z=await req('/students',{first_name:'Amina',last_name:'Example',class_id});assert.equal(z.status,403,'Manual student creation is prohibited');
 z=await req('/students/bulk',{items:[{first_name:'Example',last_name:'Learner'}]});assert.equal(z.status,403,'Bulk student import is prohibited');
-z=await req('/admissions',{id:application_id,status:'accepted'},'PATCH');assert.equal(z.status,200,JSON.stringify(z.data));
+z=await req('/admissions',{id:application_id,status:'accepted'},'PATCH');
+assert.equal(z.status,400,'Admission acceptance without a class is forbidden');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM students').get().n,0,'Rejected classless acceptance cannot create a pupil');
+z=await req('/admissions',{id:application_id,status:'accepted',class_id},'PATCH');assert.equal(z.status,200,JSON.stringify(z.data));
+assert.equal(sqlite.prepare('SELECT class_id FROM students WHERE id=?').get(application_id).class_id,class_id,'Accepted student must have selected class');
 assert.equal(z.data.invitation_status,'delivery_not_configured_or_failed','Acceptance attempts the parent invitation automatically');
 assert.ok(z.data.invitation_url,'Without Resend a private guardian activation link must be returned');
 const autoGuardianUrl=z.data.invitation_url;
@@ -131,7 +135,7 @@ try{
 }
 const secondApplicationId=z.data.id;
 assert.ok(sqlite.prepare('SELECT id FROM admissions WHERE id=?').get(secondApplicationId),'Application retained despite provider outage');
-z=await req('/admissions',{id:secondApplicationId,status:'accepted'},'PATCH');assert.equal(z.status,200);const student2=z.data.student_id;
+z=await req('/admissions',{id:secondApplicationId,status:'accepted',class_id},'PATCH');assert.equal(z.status,200);const student2=z.data.student_id;
 assert.equal(sqlite.prepare('SELECT student_no FROM students WHERE id=?').get(student2).student_no,'MATT-'+new Date().getUTCFullYear()+'-0002');
 
  
@@ -171,7 +175,7 @@ try{
 }
 
 z=await req('/admissions',{...application,first_name:'Inactive',last_name:'Test',guardian_email:'inactive@example.test'});assert.equal(z.status,200);const thirdApplicationId=z.data.id;
-z=await req('/admissions',{id:thirdApplicationId,status:'accepted'},'PATCH');assert.equal(z.status,200);
+z=await req('/admissions',{id:thirdApplicationId,status:'accepted',class_id},'PATCH');assert.equal(z.status,200);
 z=await req('/students',{id:z.data.student_id,status:'inactive'},'PATCH');assert.equal(z.status,200);
 z=await req('/fees/bulk',{mode:'selected',student_ids:[student_id,student2],period:'2026-11',amount_pence:3500,due_date:'2026-11-15',confirm:'ISSUE_BULK_INVOICES'});
 assert.equal(z.status,200,JSON.stringify(z.data));assert.equal(z.data.created,2);assert.equal(z.data.skipped,0);
@@ -239,7 +243,7 @@ globalThis.fetch=async(url,options)=>{
  return new Response(JSON.stringify({id:'existing-account-linked'}),{status:200,headers:{'content-type':'application/json'}});
 };
 try{
- z=await req('/admissions',{id:teacherParentApplicationId,status:'accepted'},'PATCH');
+ z=await req('/admissions',{id:teacherParentApplicationId,status:'accepted',class_id},'PATCH');
  assert.equal(z.status,200,JSON.stringify(z.data));
  assert.equal(z.data.invitation_status,'linked_existing','Existing teacher receives linked-account notice instead of conflict error');
  assert.equal(z.data.email_status,'sent');
@@ -399,7 +403,7 @@ globalThis.fetch=async(url,options)=>{
  return new Response(JSON.stringify({id:'existing-parent-sibling-mail'}),{status:200,headers:{'content-type':'application/json'}});
 };
 try{
- z=await req('/admissions',{id:siblingApplicationId,status:'accepted'},'PATCH');
+ z=await req('/admissions',{id:siblingApplicationId,status:'accepted',class_id},'PATCH');
  assert.equal(z.status,200,JSON.stringify(z.data));
  assert.equal(z.data.enrolled,true);
  assert.equal(z.data.linked,true);
@@ -414,7 +418,7 @@ try{
  assert.ok(siblingEmailPayload.html.includes('Maryam Family'),'Existing-parent email includes pupil full name');
  assert.ok(!siblingEmailPayload.subject.includes('Maryam Family'),'Pupil name stays out of subject');
  // A repeated admission acceptance is idempotent and must not generate a second email.
- z=await req('/admissions',{id:siblingApplicationId,status:'accepted'},'PATCH');
+ z=await req('/admissions',{id:siblingApplicationId,status:'accepted',class_id},'PATCH');
  assert.equal(z.status,200,JSON.stringify(z.data));
  assert.equal(z.data.invitation_status,'already_linked');
  assert.equal(z.data.already_enrolled,true);
@@ -434,7 +438,7 @@ env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
 env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
 globalThis.fetch=async()=>new Response('Email temporarily unavailable',{status:503});
 try{
- z=await req('/admissions',{id:mailFailureChildId,status:'accepted'},'PATCH');
+ z=await req('/admissions',{id:mailFailureChildId,status:'accepted',class_id},'PATCH');
  assert.equal(z.status,200,JSON.stringify(z.data));
  assert.equal(z.data.invitation_status,'linked_existing');
  assert.equal(z.data.linked,true);
@@ -442,6 +446,90 @@ try{
  assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(mailFailureChildId).parent_id,guardian_id);
 }finally{
  globalThis.fetch=existingParentFetch;
+ delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
+}
+
+// Class allocation: existing legacy/unassigned pupils can be added through
+// a class roster, with capacity and cross-class constraints enforced.
+const extraClass=await req('/classes',{name:'Hifdh Group',stage:'Hifdh',capacity:1});
+assert.equal(extraClass.status,200,JSON.stringify(extraClass.data));
+const hifdhId=extraClass.data.id;
+z=await req('/students',{id:student2,class_id:hifdhId},'PATCH');
+assert.equal(z.status,200,'A pupil can transfer into a class with space');
+assert.equal(sqlite.prepare('SELECT class_id FROM students WHERE id=?').get(student2).class_id,hifdhId);
+z=await req('/students',{id:student_id,class_id:hifdhId},'PATCH');
+assert.equal(z.status,409,'Cannot overfill a class through student edit');
+z=await req('/classes',{id:hifdhId,name:'Hifdh Group',stage:'Hifdh',capacity:0},'PATCH');
+assert.equal(z.status,400,'Class capacity cannot be zero');
+z=await req('/classes',{id:hifdhId,name:'Hifdh Group',stage:'Hifdh',capacity:1},'PATCH');
+assert.equal(z.status,200);
+z=await req('/students',{id:student2,class_id:null},'PATCH');
+assert.equal(z.status,400,'Active pupils must not be left unassigned');
+const previousClass=sqlite.prepare('SELECT class_id FROM students WHERE id=?').get(student2).class_id;
+assert.equal(previousClass,hifdhId);
+const legacyUnassigned=student2;
+sqlite.prepare('UPDATE students SET class_id=NULL WHERE id=?').run(legacyUnassigned);
+z=await req('/classes/enrolment',{class_id:hifdhId,student_ids:[legacyUnassigned]},'PATCH');
+assert.equal(z.status,200,JSON.stringify(z.data));
+assert.equal(z.data.assigned,1);
+assert.equal(sqlite.prepare('SELECT class_id FROM students WHERE id=?').get(legacyUnassigned).class_id,hifdhId);
+z=await req('/classes/enrolment',{class_id:hifdhId,student_ids:[]},'PATCH');
+assert.equal(z.status,409,'Roster cannot silently remove active pupils from a class');
+z=await req('/classes/enrolment',{class_id:hifdhId,student_ids:[legacyUnassigned,student_id]},'PATCH');
+assert.equal(z.status,409,'Roster cannot exceed capacity');
+z=await req('/classes/enrolment',{class_id:hifdhId,student_ids:[legacyUnassigned,legacyUnassigned]},'PATCH');
+assert.equal(z.status,400,'Roster rejects duplicate pupil IDs');
+
+// Account recovery: generic acknowledgement, branded email, single-use token,
+// confirmation validation, old session invalidation and reuse rejection.
+const recoveryFetch=globalThis.fetch;
+let recoveryPayload=null,recoverySends=0;
+env.RESEND_API_KEY='test-reset-email';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async(url,options)=>{
+ assert.equal(String(url),'https://api.resend.com/emails');
+ recoverySends++;
+ recoveryPayload=JSON.parse(options.body);
+ return new Response(JSON.stringify({id:'mock-reset'}),{status:200,headers:{'content-type':'application/json'}});
+};
+try{
+ const unknown=await req('/auth/forgot',{email:'unknown-person@example.test'},'POST',false);
+ assert.equal(unknown.status,200);
+ const recovery=await req('/auth/forgot',{email:'admin@example.test'},'POST',false);
+ assert.equal(recovery.status,200);
+ assert.equal(unknown.data.message,recovery.data.message,'Do not reveal account existence');
+ assert.equal(recoverySends,1);
+ assert.equal(recoveryPayload.to[0],'admin@example.test');
+ assert.equal(recoveryPayload.reply_to,env.ADMISSIONS_EMAIL);
+ assert.ok(recoveryPayload.html.includes('السلام عليكم ورحمة الله وبركاته'));
+ assert.ok(recoveryPayload.html.includes('Reset my password'));
+ assert.ok(recoveryPayload.html.includes('30 minutes'));
+ assert.ok(recoveryPayload.html.includes('portal.attowfiqmasjid.org'));
+ const match=recoveryPayload.html.match(/\?reset=([a-zA-Z0-9_-]+)/);
+ assert.ok(match,'Secure reset token must appear only in the email URL');
+ const token=match[1];
+ const duplicate=await req('/auth/forgot',{email:'admin@example.test'},'POST',false);
+ assert.equal(duplicate.status,200);
+ assert.equal(recoverySends,1,'Reset requests are throttled for an existing account');
+ let attempt=await req('/auth/reset',{token,password:'short',confirm_password:'short'},'POST',false);
+ assert.equal(attempt.status,400);
+ attempt=await req('/auth/reset',{token,password:'new-super-secure-test-password',confirm_password:'mismatch-password'},'POST',false);
+ assert.equal(attempt.status,400);
+ attempt=await req('/auth/reset',{token,password:'new-super-secure-test-password',confirm_password:'new-super-secure-test-password'},'POST',false);
+ assert.equal(attempt.status,200,JSON.stringify(attempt.data));
+ attempt=await req('/auth/reset',{token,password:'another-secure-test-password',confirm_password:'another-secure-test-password'},'POST',false);
+ assert.notEqual(attempt.status,200,'A used reset token cannot be reused');
+ const signedOut=await req('/auth/me',null,'GET');
+ assert.equal(signedOut.status,401,'Reset revokes existing sessions');
+ const oldPassword=await req('/auth/login',{email:'admin@example.test',password:'this-is-a-secure-test-password'},'POST',false);
+ assert.notEqual(oldPassword.status,200,'Old password cannot be used after recovery');
+ const newLogin=await req('/auth/login',{email:'admin@example.test',password:'new-super-secure-test-password'},'POST',false);
+ assert.equal(newLogin.status,200,JSON.stringify(newLogin.data));
+ cookie=newLogin.response.headers.get('set-cookie').split(';')[0];
+ csrf=newLogin.data.csrf;
+}finally{
+ globalThis.fetch=recoveryFetch;
  delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
 }
 
@@ -483,6 +571,14 @@ for(const path of ['../public/app.js','../public/index.html','../src/worker.js',
 }
 assert.doesNotThrow(()=>new Function(admissionsUi),'The portal UI script must parse after dialog conversion');
 assert.ok(admissionsUi.includes('function confirmDialog('),'Reusable custom confirm dialog is available');
+assert.ok(admissionsUi.includes("classChoices:get('classes')"),'Admission approval requires class selection');
+assert.ok(admissionsUi.includes('class-roster-form'),'Class roster allocation form is accessible');
+assert.ok(admissionsUi.includes('class-assignment-form'),'Student directory class assignment available');
+assert.ok(admissionsUi.includes("class_id:raw.class_id"),'Class assignment writes chosen class to server');
+assert.ok(admissionsUi.includes("'forgot-sent'"),'Forgot-password confirmation page exists');
+assert.ok(admissionsUi.includes("'reset-success'"),'Password reset success page exists');
+assert.ok(admissionsUi.includes("args.password!==args.confirm_password"),'Forgot-password flow confirms new password');
+
 assert.ok(admissionsUi.includes('function familyDashboard()'),'Parent family dashboard is present');
 assert.ok(admissionsUi.includes('family-switch'),'Family view switch appears in the UI');
 assert.ok(admissionsUi.includes('x-portal-view'),'Family view requests carry their restricted role');

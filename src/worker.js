@@ -100,6 +100,32 @@ const CATALOG=[
 ].map(([code,label,points])=>({code,label,points,category:points>0?'positive':'concern'}));
 async function mail(env,to,subject,html,options={}){const e=id();if(!env.RESEND_API_KEY||!env.EMAIL_FROM){await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status,error) VALUES(?,?,?,?,?)',e,to,subject,'not_configured','Resend API key or sender not configured');return {sent:false};}try{const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Authorization':`Bearer ${env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:env.EMAIL_FROM,to:[to],subject,html,...(options.replyTo?{reply_to:options.replyTo}:{})})});if(!r.ok)throw new Error(`Provider returned ${r.status}`);await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status) VALUES(?,?,?,?)',e,to,subject,'sent');return {sent:true};}catch(err){await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status,error) VALUES(?,?,?,?,?)',e,to,subject,'failed',short(err.message));return {sent:false};}}
 
+function passwordResetEmailHtml(accountName,resetUrl,contactAddress){
+ const person=escapeHtml(short(accountName||'Portal user',100));
+ const link=escapeHtml(resetUrl);
+ const support=escapeHtml(contactAddress||'admissions@attowfiqmasjid.org');
+ return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+ <title>Reset your Madrasah At-Towfiq password</title><style>@media(max-width:600px){.reset-wrap{width:100%!important}.reset-pad{padding:25px 21px!important}.reset-btn{display:block!important;text-align:center!important}}</style></head>
+ <body style="margin:0;background:#f2f5fa;color:#233a61;font-family:Arial,Helvetica,sans-serif"><span style="display:none!important;max-height:0;opacity:0;overflow:hidden">Secure account recovery — your one-time link expires in 30 minutes.</span>
+ <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f2f5fa"><tr><td align="center" style="padding:35px 14px">
+ <table role="presentation" width="580" class="reset-wrap" cellspacing="0" cellpadding="0" style="max-width:580px;width:100%;background:#fff;border:1px solid #dce8f5;border-radius:18px;overflow:hidden">
+ <tr><td style="padding:27px 34px;background:#172e57;text-align:center"><img src="https://portal.attowfiqmasjid.org/assets/at-towfiq-madrasah-logo.png" alt="Madrasah At-Towfiq" width="180" style="display:block;width:180px;margin:0 auto 15px;max-width:80%;background:#fff;padding:7px;border-radius:8px"><p style="margin:0;color:#bed7f9;font-size:11px;letter-spacing:2px">MADRASAH AT-TOWFIQ · BOLTON</p></td></tr>
+ <tr><td class="reset-pad" style="padding:38px 41px 31px">
+ <p style="font-size:11px;letter-spacing:1.5px;font-weight:bold;color:#3769b9">ACCOUNT SECURITY</p>
+ <h1 style="margin:0 0 23px;font:normal 30px/1.25 Georgia,'Times New Roman',serif;color:#1c365f">Reset your portal password</h1>
+ <p lang="ar" dir="rtl" style="text-align:left;font-size:23px;color:#1c477d;margin:0 0 4px">السلام عليكم ورحمة الله وبركاته</p>
+ <p style="font-size:13px;font-style:italic;color:#77879d;margin:0 0 21px">Assalāmu ʿalaykum wa raḥmatullāhi wa barakātuh</p>
+ <p style="font-size:15px;color:#435879;line-height:1.85">Dear <strong>${person}</strong>,</p>
+ <p style="font-size:15px;color:#435879;line-height:1.85">We received a request to reset the password for your secure Madrasah At-Towfiq account. Please use the link below if you made this request.</p>
+ <p style="margin:24px 0"><a class="reset-btn" href="${link}" style="display:inline-block;padding:16px 25px;background:#386bc8;color:#fff;text-decoration:none;border-radius:9px;font-size:14px;font-weight:bold">Reset my password &nbsp;→</a></p>
+ <div style="background:#f0f5fe;border:1px solid #dce8f8;border-radius:10px;padding:16px;color:#466082;font-size:13px;line-height:1.75"><strong>Security reminder:</strong> This link expires in 30 minutes and can be used only once. A successful reset signs out other sessions on the account.</div>
+ <p style="font-size:12px;color:#667e9d;line-height:1.85;word-break:break-all">If the button does not open, copy this link into your browser:<br><a href="${link}" style="color:#3364b9">${link}</a></p>
+ <p style="font-size:13px;color:#627a9c;line-height:1.8">If you did not request this change, no action is needed. Your password has not been changed.</p>
+ <p style="font-size:13px;color:#627a9c;line-height:1.8">Questions? Contact <a href="mailto:${support}" style="color:#315eaf">${support}</a>.</p>
+ <p style="font-size:14px;color:#435879;line-height:1.75">Jazākum Allāhu khayran,<br><strong>The Madrasah At-Towfiq Team</strong></p>
+ </td></tr><tr><td style="padding:21px 32px;text-align:center;background:#f7f9fd;font-size:11px;color:#8293ae">Rooted in faith, guided by knowledge.</td></tr>
+ </table></td></tr></table></body></html>`;
+}
 async function inviteGuardianAfterAcceptance(db,env,req,application,actor){
  const guardianEmail=email(application.guardian_email);
  if(!/^\S+@\S+\.\S+$/.test(guardianEmail))return {invitation_status:'invalid_email'};
@@ -450,12 +476,32 @@ async function handle(req,env){
   return signedIn(req,env,user);
  }
  if(path==='/api/auth/forgot'&&method==='POST'){
-  const b=await input(req),user=await first(db,'SELECT id,email FROM users WHERE email=? AND active=1',email(b.email));
-  if(user&&env.RESEND_API_KEY&&env.EMAIL_FROM){const t=random(32);await run(db,'INSERT INTO auth_tokens(token_hash,user_id,purpose,expires_at) VALUES(?,?,?,?)',await sha(t),user.id,'reset',nextIso(1800));const link=new URL('/?reset='+encodeURIComponent(t),req.url).href;await mail(env,user.email,'Reset your Madrasah At-Towfiq password',`<p>Use this link within 30 minutes to reset your password:</p><p><a href="${escapeHtml(link)}">Reset password</a></p>`);}
-  return json({ok:true,message:'If an account exists and email delivery is configured, a reset link will be sent.'});
+  const b=await input(req);
+  const user=await first(db,'SELECT id,email,name,active,password_hash FROM users WHERE email=?',email(b.email));
+  // Generic response regardless of account existence or delivery status:
+  // never reveal whether a child's parent, teacher or admin has an account.
+  const message='If the address belongs to an active account, you will receive a password reset email shortly. Please check your inbox and spam folder.';
+  if(user?.active&&user.password_hash&&env.RESEND_API_KEY&&env.EMAIL_FROM){
+   try{
+    const existingReset=await first(db,"SELECT created_at FROM auth_tokens WHERE user_id=? AND purpose='reset' ORDER BY created_at DESC LIMIT 1",user.id);
+    const lastAttempt=existingReset?Date.parse(existingReset.created_at):0;
+    if(!lastAttempt||Date.now()-lastAttempt>=60000){
+     const token=random(32);
+     await run(db,"DELETE FROM auth_tokens WHERE user_id=? AND purpose='reset'",user.id);
+     await run(db,'INSERT INTO auth_tokens(token_hash,user_id,purpose,expires_at) VALUES(?,?,?,?)',await sha(token),user.id,'reset',nextIso(1800));
+     const resetUrl='https://portal.attowfiqmasjid.org/?reset='+encodeURIComponent(token);
+     const html=passwordResetEmailHtml(user.name,resetUrl,env.ADMISSIONS_EMAIL);
+     const sent=await mail(env,user.email,'Reset your Madrasah At-Towfiq password',html,{replyTo:env.ADMISSIONS_EMAIL});
+     try{await audit(db,user,'password_reset_requested','users',user.id,sent.sent?'email_accepted':'email_failed');}catch{}
+    }
+   }catch(err){
+    try{await audit(db,user,'password_reset_request_error','users',user.id,short(err.message,180));}catch{}
+   }
+  }
+  return json({ok:true,message});
  }
  if(path==='/api/auth/reset'&&method==='POST'){
-  const b=await input(req);if(String(b.password||'').length<12)error('Password must be at least 12 characters');const tok=await sha(String(b.token||''));
+  const b=await input(req);if(String(b.password||'').length<12)error('Password must be at least 12 characters');if(b.password!==b.confirm_password)error('Passwords do not match',400);const tok=await sha(String(b.token||''));
   const row=await first(db,"SELECT user_id,expires_at FROM auth_tokens WHERE token_hash=? AND purpose='reset'",tok);if(!row||row.expires_at<iso())error('Reset link expired or invalid');
   const salt=b64(crypto.getRandomValues(new Uint8Array(16)));await run(db,'UPDATE users SET password_salt=?,password_hash=?,failed_logins=0,locked_until=NULL WHERE id=?',salt,await passwordHash(b.password,salt),row.user_id);await run(db,'DELETE FROM auth_tokens WHERE user_id=?',row.user_id);await run(db,'DELETE FROM sessions WHERE user_id=?',row.user_id);return json({ok:true});
  }
@@ -474,11 +520,51 @@ async function handle(req,env){
   const homework=await all(db,`SELECT h.id,h.student_id,h.type,h.due_date,s.first_name,s.last_name FROM homework h JOIN students s ON s.id=h.student_id WHERE ${scope.where} AND (h.type LIKE ? ESCAPE '\\' OR s.first_name LIKE ? ESCAPE '\\' OR s.last_name LIKE ? ESCAPE '\\') LIMIT 7`,...scope.args,like,like,like);
   const classes=user.role==='parent'?[]:await all(db,'SELECT id,name,stage FROM classes WHERE name LIKE ? LIMIT 5',like);return json({students,homework,classes});
  }
+ if(path==='/api/classes/enrolment'){
+  requireRole(user,'admin','staff');
+  if(method!=='PATCH')error('Method not allowed',405);
+  const b=await input(req);
+  const classId=short(b.class_id,100);
+  const course=await first(db,'SELECT id,name,capacity FROM classes WHERE id=?',classId);
+  if(!course)error('Select a valid class before assigning pupils',404);
+  if(!Array.isArray(b.student_ids)||b.student_ids.length>500)error('Select a valid list of no more than 500 pupils',400);
+  const requested=b.student_ids.map(x=>short(x,100));
+  if(new Set(requested).size!==requested.length||requested.some(x=>!x))error('Duplicate or invalid pupil selection',400);
+  if(requested.length>Number(course.capacity))error('Class capacity exceeded. Select no more than '+course.capacity+' pupils.',409);
+  const current=await all(db,'SELECT id FROM students WHERE class_id=?',classId);
+  const currentIds=new Set(current.map(x=>x.id));
+  if(current.some(x=>!requested.includes(x.id)))error('Do not remove existing pupils from an active class. Move a pupil using Change class in their profile.',409);
+  const pupils=requested.length?await all(db,`SELECT id,class_id,status FROM students WHERE id IN (${requested.map(()=>'?').join(',')})`,...requested):[];
+  if(pupils.length!==requested.length)error('One or more pupils could not be found',404);
+  if(pupils.some(x=>x.class_id && x.class_id!==classId))error('A selected pupil belongs to a different class. Reassign that pupil from their profile first.',409);
+  if(pupils.some(x=>x.status!=='active'&&!currentIds.has(x.id)))error('Only active pupils can be newly enrolled into a class',409);
+  const desired=new Set(requested);
+  const updates=pupils.filter(x=>!currentIds.has(x.id)).map(x=>db.prepare('UPDATE students SET class_id=? WHERE id=? AND class_id IS NULL').bind(classId,x.id));
+  if(updates.length)await db.batch(updates);
+  await audit(db,user,'assign_roster','class',classId,`${requested.length} pupils selected; ${updates.length} class links changed`);
+  return json({ok:true,class_id:classId,assigned:requested.length,changed:updates.length});
+ }
  if(path==='/api/classes'){
   if(method==='GET'){const c=user.role==='teacher'?await all(db,'SELECT c.*,u.name AS teacher_name,(SELECT COUNT(*) FROM students s WHERE s.class_id=c.id) AS enrolled FROM classes c LEFT JOIN users u ON u.id=c.teacher_id WHERE c.teacher_id=? ORDER BY c.name',user.id):await all(db,'SELECT c.*,u.name AS teacher_name,(SELECT COUNT(*) FROM students s WHERE s.class_id=c.id) AS enrolled FROM classes c LEFT JOIN users u ON u.id=c.teacher_id ORDER BY c.name');return json({items:c});}
   requireRole(user,'admin','staff');const b=await input(req);
-  if(method==='POST'){if(!b.name)error('Class name required');const cid=id();await run(db,'INSERT INTO classes(id,name,stage,teacher_id,capacity,schedule) VALUES(?,?,?,?,?,?)',cid,short(b.name,100),short(b.stage,60)||'Foundation',b.teacher_id||null,Number(b.capacity)||25,short(b.schedule,200));await audit(db,user,'create','class',cid);return json({ok:true,id:cid});}
-  if(method==='PATCH'){if(!b.id)error('Class ID required');await run(db,'UPDATE classes SET name=?,stage=?,teacher_id=?,capacity=?,schedule=? WHERE id=?',short(b.name,100),short(b.stage,60),b.teacher_id||null,Number(b.capacity)||25,short(b.schedule,200),b.id);await audit(db,user,'update','class',b.id);return json({ok:true});}
+  if(method==='POST'){
+   if(!short(b.name,100))error('Class name required');
+   const capacity=b.capacity===undefined?25:Number(b.capacity);
+   if(!Number.isInteger(capacity)||capacity<1||capacity>1000)error('Class capacity must be between 1 and 1000',400);
+   const cid=id();await run(db,'INSERT INTO classes(id,name,stage,teacher_id,capacity,schedule) VALUES(?,?,?,?,?,?)',cid,short(b.name,100),short(b.stage,60)||'Foundation',b.teacher_id||null,capacity,short(b.schedule,200));
+   await audit(db,user,'create','class',cid);return json({ok:true,id:cid});
+  }
+  if(method==='PATCH'){
+   if(!b.id)error('Class ID required');
+   const current=await first(db,'SELECT id FROM classes WHERE id=?',b.id);
+   if(!current)error('Class not found',404);
+   const capacity=b.capacity===undefined?25:Number(b.capacity);
+   if(!Number.isInteger(capacity)||capacity<1||capacity>1000)error('Class capacity must be between 1 and 1000',400);
+   const total=await first(db,'SELECT COUNT(*) AS total FROM students WHERE class_id=?',b.id);
+   if(Number(total?.total||0)>capacity)error('Class already has '+total.total+' pupils. Increase capacity or reallocate pupils first.',409);
+   await run(db,'UPDATE classes SET name=?,stage=?,teacher_id=?,capacity=?,schedule=? WHERE id=?',short(b.name,100),short(b.stage,60),b.teacher_id||null,capacity,short(b.schedule,200),b.id);
+   await audit(db,user,'update','class',b.id);return json({ok:true});
+  }
  }
  if(path==='/api/users'){
   requireRole(user,'admin');if(method==='GET')return json({items:await all(db,'SELECT id,name,email,role,active,created_at FROM users ORDER BY created_at DESC')});
@@ -558,7 +644,16 @@ async function handle(req,env){
   if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT s.*,c.name AS class_name,u.name AS parent_name,(SELECT COALESCE(SUM(points),0) FROM behaviour b WHERE b.student_id=s.id) AS behaviour_score FROM students s LEFT JOIN classes c ON c.id=s.class_id LEFT JOIN users u ON u.id=s.parent_id WHERE ${s.where} ORDER BY s.first_name,s.last_name`,...s.args)});}
   requireRole(user,'admin','staff');const b=await input(req);
   if(method==='POST')error('New pupils must be enrolled through an accepted admission application',403);
-  if(method==='PATCH'){if(!b.id)error('Student ID required');const existing=await first(db,'SELECT * FROM students WHERE id=?',b.id);if(!existing)error('Student not found',404);const obj={...existing};for(const k of FIELDS_STUDENT)if(b[k]!==undefined)obj[k]=b[k];await run(db,'UPDATE students SET first_name=?,last_name=?,dob=?,gender=?,class_id=?,parent_id=?,phone=?,address=?,medical_notes=?,status=? WHERE id=?',...FIELDS_STUDENT.map(k=>obj[k]===null?null:short(obj[k],k==='medical_notes'?600:250)),b.id);await audit(db,user,'update','student',b.id);return json({ok:true});}
+  if(method==='PATCH'){if(!b.id)error('Student ID required');const existing=await first(db,'SELECT * FROM students WHERE id=?',b.id);if(!existing)error('Student not found',404);const obj={...existing};for(const k of FIELDS_STUDENT)if(b[k]!==undefined)obj[k]=b[k];
+   if(b.class_id!==undefined && !b.class_id && existing.status==='active')error('Active pupils must have a class. Reassign to another class instead.',400);
+   if(b.class_id!==undefined && b.class_id!==existing.class_id && b.class_id){
+    if(existing.status!=='active')error('Only active pupils can be newly assigned to a class',409);
+    const target=await first(db,'SELECT id,capacity FROM classes WHERE id=?',b.class_id);
+    if(!target)error('Selected class was not found',404);
+    const count=await first(db,'SELECT COUNT(*) AS total FROM students WHERE class_id=? AND id<>?',b.class_id,b.id);
+    if(Number(count.total)>=Number(target.capacity))error('Selected class is full. Choose another class or increase its capacity.',409);
+   }
+   await run(db,'UPDATE students SET first_name=?,last_name=?,dob=?,gender=?,class_id=?,parent_id=?,phone=?,address=?,medical_notes=?,status=? WHERE id=?',...FIELDS_STUDENT.map(k=>obj[k]===null?null:short(obj[k],k==='medical_notes'?600:250)),b.id);await audit(db,user,'update','student',b.id);return json({ok:true});}
   if(method==='DELETE'){if(!b.id)error('Student ID required');await run(db,'DELETE FROM students WHERE id=?',b.id);await audit(db,user,'delete','student',b.id,'Hard deleted student and linked records');return json({ok:true});}
  }
  // Full paper-form-equivalent admissions. Records are restricted to office roles.
@@ -624,6 +719,15 @@ async function handle(req,env){
       error('Complete the pupil name and date of birth before approval');
     const sid=application.id;
     const guardian=await first(db,'SELECT id FROM users WHERE email=? AND (active=1 OR password_hash IS NULL)',email(application.guardian_email));
+    const proposedClass=short(b.class_id,100);
+    if(!proposedClass)error('Assign a learning class before accepting this admission. Create a class under Classes & enrolment if needed.',400);
+    let chosenClass=null;
+    if(proposedClass){
+     chosenClass=await first(db,'SELECT id,capacity,name FROM classes WHERE id=?',proposedClass);
+     if(!chosenClass)error('Selected class does not exist. Refresh the class list.',404);
+     const occupancy=await first(db,'SELECT COUNT(*) AS total FROM students WHERE class_id=?',proposedClass);
+     if(Number(occupancy.total)>=Number(chosenClass.capacity))error('Selected class is full. Choose a different class or accept without one.',409);
+    }
     const year=Number(nowDate().slice(0,4));
     const seq=await first(db,'SELECT last_number FROM student_number_sequences WHERE enrollment_year=?',year);
     if(seq?.last_number>=9999)error('Student number capacity reached for '+year+'. Contact an administrator.',409);
@@ -632,10 +736,10 @@ async function handle(req,env){
     await db.batch([
      db.prepare(`INSERT INTO student_number_sequences(enrollment_year,last_number) VALUES(?,1)
        ON CONFLICT(enrollment_year) DO UPDATE SET last_number=last_number+1 WHERE last_number<9999`).bind(year),
-     db.prepare(`INSERT INTO students(id,student_no,first_name,last_name,dob,gender,parent_id,phone,address,status)
-       SELECT ?, 'MATT-'||printf('%04d',?)||'-'||printf('%04d',last_number),?,?,?,?,?,?,?,'active'
+     db.prepare(`INSERT INTO students(id,student_no,first_name,last_name,dob,gender,class_id,parent_id,phone,address,status)
+       SELECT ?, 'MATT-'||printf('%04d',?)||'-'||printf('%04d',last_number),?,?,?,?,?,?,?,?,'active'
        FROM student_number_sequences WHERE enrollment_year=? AND last_number BETWEEN 1 AND 9999
-       ON CONFLICT(id) DO NOTHING`).bind(sid,year,short(application.first_name,80),short(application.last_name,80),application.dob,short(application.gender,30),guardian?.id||null,short(application.guardian_phone||application.phone,40),address,year),
+       ON CONFLICT(id) DO NOTHING`).bind(sid,year,short(application.first_name,80),short(application.last_name,80),application.dob,short(application.gender,30),chosenClass?.id||null,guardian?.id||null,short(application.guardian_phone||application.phone,40),address,year),
      db.prepare('UPDATE admissions SET status=?,student_id=?,updated_at=? WHERE id=?').bind('accepted',sid,iso(),application.id)
     ]);
     await audit(db,user,'enrol','admission',application.id,`Student ${sid}`);
