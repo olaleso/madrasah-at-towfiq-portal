@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import worker from '../src/worker.js';
 import assert from 'node:assert/strict';
 import {pbkdf2Sync,randomBytes} from 'node:crypto';
-const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
 for(const filename of ['0001_initial.sql','0002_expanded_admissions.sql','0003_safeguarding_declarations.sql']) oldDb.exec(fs.readFileSync(new URL('../migrations/'+filename,import.meta.url),'utf8'));
@@ -620,8 +620,70 @@ try{
  delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
 }
 
+
+// v1.4.0: attendance is all-or-nothing, emails are opt-in and never repeated.
+const schoolDateForTest=()=>{
+ const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+ const val=t=>parts.find(p=>p.type===t).value;
+ return [val('year'),val('month'),val('day')].join('-');
+};
+const markDate=schoolDateForTest(),oldMailFetch=globalThis.fetch,absenceEmails=[];
+env.RESEND_API_KEY='attendance-test-key';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async(url,opts)=>{
+ assert.equal(String(url),'https://api.resend.com/emails');
+ absenceEmails.push(JSON.parse(opts.body));
+ return new Response(JSON.stringify({id:'test-absence-id'}),{status:200});
+};
+try{
+ let r=await req('/attendance',{records:[{student_id,date:markDate,status:'absent'},{student_id:'unknown',date:markDate,status:'present'}],notify_guardians:true});
+ assert.equal(r.status,404,'Invalid pupil blocks entire batch');
+ assert.equal(sqlite.prepare('SELECT id FROM attendance WHERE student_id=? AND date=?').get(student_id,markDate),undefined,'Batch was atomic');
+ r=await req('/attendance',{records:[{student_id,date:markDate,status:'present'},{student_id,date:markDate,status:'absent'}]});
+ assert.equal(r.status,400,'Duplicate entries rejected');
+ r=await req('/attendance',{records:[{student_id,date:markDate,status:'absent',note:'PRIVATE DETAILS'}]});
+ assert.equal(r.status,200);
+ assert.equal(absenceEmails.length,0,'No automatic email without explicit opt-in');
+ r=await req('/attendance',{records:[{student_id,date:markDate,status:'present'}],notify_guardians:true});
+ assert.equal(r.status,200);
+ assert.equal(r.data.alert_results.eligible,0,'Present statuses do not notify');
+ r=await req('/attendance',{records:[{student_id,date:markDate,status:'absent',note:'PRIVATE DETAILS'}],notify_guardians:true});
+ assert.equal(r.status,200,JSON.stringify(r.data));
+ assert.equal(r.data.alert_results.sent,1);
+ assert.equal(absenceEmails.length,1);
+ assert.equal(absenceEmails[0].to[0],application.guardian_email);
+ assert.equal(absenceEmails[0].reply_to,env.ADMISSIONS_EMAIL);
+ assert.ok(absenceEmails[0].html.includes('Updated Learner'));
+ assert.ok(absenceEmails[0].html.includes('Absent'));
+ assert.ok(absenceEmails[0].html.includes('السلام عليكم ورحمة الله وبركاته'));
+ assert.ok(!absenceEmails[0].html.includes('PRIVATE DETAILS'),'Internal notes cannot be sent');
+ assert.ok(!absenceEmails[0].subject.includes('Learner'),'No pupil name in email subject');
+ r=await req('/attendance',{records:[{student_id,date:markDate,status:'absent'}],notify_guardians:true});
+ assert.equal(r.status,200);
+ assert.equal(r.data.alert_results.eligible,0,'Re-saving absent cannot trigger a second email');
+ r=await req('/attendance',{records:[{student_id,date:markDate,status:'present'}]});
+ assert.equal(r.status,200);
+ r=await req('/attendance',{records:[{student_id,date:markDate,status:'absent'}],notify_guardians:true});
+ assert.equal(r.data.alert_results.already_attempted,1,'Corrections cannot resend previously sent notice');
+ assert.equal(absenceEmails.length,1);
+ assert.equal(sqlite.prepare('SELECT state FROM attendance_family_alerts WHERE student_id=? AND attendance_date=?').get(student_id,markDate).state,'sent');
+ r=await req('/attendance',{records:[{student_id,date:'2026-01-15',status:'absent'}],notify_guardians:true});
+ assert.equal(r.status,400,'Only today can trigger a notice');
+ const prevCookie=cookie,prevCsrf=csrf;cookie=parent_cookie;csrf=parent_csrf;
+ r=await req('/attendance',{records:[{student_id,date:markDate,status:'absent'}],notify_guardians:true});
+ assert.equal(r.status,403,'Parent cannot issue absence alerts');
+ cookie=prevCookie;csrf=prevCsrf;
+ globalThis.fetch=async()=>new Response('Unavailable',{status:503});
+ r=await req('/attendance',{records:[{student_id:student2,date:markDate,status:'absent'}],notify_guardians:true});
+ assert.equal(r.status,200,'Email rejection must not roll back attendance');
+ assert.equal(r.data.alert_results.not_sent,1);
+ assert.ok(sqlite.prepare("SELECT id FROM attendance WHERE student_id=? AND date=? AND status='absent'").get(student2,markDate));
+ assert.equal(sqlite.prepare('SELECT state FROM attendance_family_alerts WHERE student_id=? AND attendance_date=?').get(student2,markDate).state,'not_sent');
+}finally{globalThis.fetch=oldMailFetch;delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;}
+
 z=await req('/auth/logout',{});assert.equal(z.status,200);
-console.log('PASS: admissions and MATT registration numbers, login, classes, student profiles, valid/invalid Quran ranges, homework completion, behaviour, attendance, fees, account isolation, reports and settings.');
+console.log('PASS: admissions, class-safe attendance, one-time absence emails, family permissions, fees and portal smoke checks.');
 
 const admissionsUi=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 assert.equal(admissionsUi.includes("field('Daytime mobile number'"),false);
