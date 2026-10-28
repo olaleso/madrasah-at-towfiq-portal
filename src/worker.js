@@ -295,7 +295,7 @@ function safeEmailDate(value){
 }
 async function studentNotificationRecipient(db,studentId){
  const row=await first(db,`SELECT s.id,s.first_name,s.last_name,s.status,s.parent_id,
-  p.email AS linked_email,p.name AS linked_name,p.role AS linked_role,p.active AS linked_active,
+  p.email AS linked_email,p.name AS linked_name,p.role AS linked_role,p.active AS linked_active,p.password_hash AS linked_password_hash,
   a.guardian_email,a.guardian_name
   FROM students s LEFT JOIN users p ON p.id=s.parent_id
   LEFT JOIN admissions a ON a.student_id=s.id AND a.status='accepted'
@@ -304,9 +304,16 @@ async function studentNotificationRecipient(db,studentId){
  let to,guardianName;
  if(row.parent_id){
   // A manually reassigned guardian supersedes the old admission email.
-  // Never leak pupil records to the previous contact when a new parent is linked.
-  if(!['parent','teacher','staff','admin'].includes(row.linked_role)||!row.linked_active)return null;
-  to=email(row.linked_email);guardianName=row.linked_name;
+  // Never leak pupil records to an obsolete guardian.
+  if(!['parent','teacher','staff','admin'].includes(row.linked_role))return null;
+  if(row.linked_active){
+   to=email(row.linked_email);guardianName=row.linked_name;
+  }else if(row.linked_role==='parent'&&!row.linked_password_hash&&row.guardian_email
+   &&email(row.linked_email)===email(row.guardian_email)){
+   // New parent is linked but hasn't activated login yet. The accepted admission
+   // is still the verified contact for homework/behaviour notifications.
+   to=email(row.guardian_email);guardianName=row.guardian_name;
+  }else return null;
  }else{
   to=email(row.guardian_email);guardianName=row.guardian_name;
  }
