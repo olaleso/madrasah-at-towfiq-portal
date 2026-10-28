@@ -1003,11 +1003,11 @@ async function handle(req,env){
     :user.role==='parent'
      ?{where:"(m.recipient_id=? OR m.created_by=?) AND (m.student_id IS NULL OR EXISTS (SELECT 1 FROM students s WHERE s.id=m.student_id AND s.parent_id=?))",args:[user.id,user.id,user.id]}
      :{where:"(m.recipient_id=? OR m.created_by=?) AND (m.student_id IS NULL OR EXISTS (SELECT 1 FROM students s JOIN classes c ON c.id=s.class_id WHERE s.id=m.student_id AND c.teacher_id=?))",args:[user.id,user.id,user.id]};
-   return json({items:await all(db,\`SELECT m.*,COALESCE(m.thread_root_id,m.id) AS conversation_id,
+   return json({items:await all(db,`SELECT m.*,COALESCE(m.thread_root_id,m.id) AS conversation_id,
      receiver.name AS recipient_name,sender.name AS sender_name
      FROM messages m LEFT JOIN users receiver ON receiver.id=m.recipient_id
      LEFT JOIN users sender ON sender.id=m.created_by
-     WHERE \${scope.where} ORDER BY m.created_at DESC,m.id DESC LIMIT 500\`,...scope.args)});
+     WHERE ${scope.where} ORDER BY m.created_at DESC,m.id DESC LIMIT 500`,...scope.args)});
   }
   if(method==='PATCH'){
    const b=await input(req);if(!b.id)error('Message ID required');
@@ -1062,13 +1062,13 @@ async function handle(req,env){
    let notification_status='not_sent';
    if(env.RESEND_API_KEY&&env.EMAIL_FROM&&!env.EMAIL_FROM.includes('example.org')){
     // Email is a generic inbox alert: no message text, learner name or confidential metadata.
-    const emailHtml=\`<div style="background:#f2f5fb;padding:28px 14px;font-family:Arial,sans-serif;color:#243b61">
+    const emailHtml=`<div style="background:#f2f5fb;padding:28px 14px;font-family:Arial,sans-serif;color:#243b61">
       <div style="max-width:560px;margin:auto;background:#fff;padding:28px;border-radius:12px">
       <h2 style="color:#19345e">Madrasah At-Towfiq · Private message</h2>
       <p>Assalamu alaikum. A new private message is waiting in your secure Madrasah At-Towfiq portal inbox.</p>
       <p>For your privacy, the message content is not included in this email.</p>
       <a href="https://portal.attowfiqmasjid.org/" style="background:#376ac5;color:white;padding:12px 16px;border-radius:8px;display:inline-block;text-decoration:none">Open secure portal</a>
-      </div></div>\`;
+      </div></div>`;
     try{const result=await mail(env,target.email,'New private portal message | Madrasah At-Towfiq',emailHtml,{replyTo:env.ADMISSIONS_EMAIL});
      notification_status=result.sent?'sent':'not_sent';}
     catch(err){try{await audit(db,user,'message_email_failed','message',mid,short(err.message,160));}catch{}}
@@ -1094,12 +1094,12 @@ async function handle(req,env){
 
  if(path==='/api/compliance/consents'&&method==='GET'){
   requireRole(user,'admin','staff');
-  const items=await all(db,\`SELECT s.id AS student_id,s.student_no,s.first_name,s.last_name,c.name AS class_name,
+  const items=await all(db,`SELECT s.id AS student_id,s.student_no,s.first_name,s.last_name,c.name AS class_name,
    a.id AS admission_id,a.consent_first_aid,a.consent_photos,a.created_at AS declared_at
    FROM students s LEFT JOIN classes c ON c.id=s.class_id
    LEFT JOIN admissions a ON a.id=(SELECT id FROM admissions WHERE student_id=s.id AND status='accepted'
       ORDER BY created_at DESC LIMIT 1)
-   WHERE s.status='active' ORDER BY s.last_name,s.first_name LIMIT 1500\`);
+   WHERE s.status='active' ORDER BY s.last_name,s.first_name LIMIT 1500`);
   return json({items});
  }
  if(path==='/api/compliance/policies'){
@@ -1131,8 +1131,8 @@ async function handle(req,env){
   requireRole(user,'admin','staff');
   if(method==='GET'){
    const rows=user.role==='admin'
-    ?await all(db,\`SELECT c.*,u.name AS reported_by_name FROM compliance_concerns c LEFT JOIN users u ON u.id=c.reported_by ORDER BY c.created_at DESC LIMIT 300\`)
-    :await all(db,\`SELECT c.*,u.name AS reported_by_name FROM compliance_concerns c LEFT JOIN users u ON u.id=c.reported_by WHERE c.reported_by=? ORDER BY c.created_at DESC LIMIT 100\`,user.id);
+    ?await all(db,`SELECT c.*,u.name AS reported_by_name FROM compliance_concerns c LEFT JOIN users u ON u.id=c.reported_by ORDER BY c.created_at DESC LIMIT 300`)
+    :await all(db,`SELECT c.*,u.name AS reported_by_name FROM compliance_concerns c LEFT JOIN users u ON u.id=c.reported_by WHERE c.reported_by=? ORDER BY c.created_at DESC LIMIT 100`,user.id);
    return json({items:rows});
   }
   if(method!=='POST'&&method!=='PATCH')error('Method not allowed',405);
