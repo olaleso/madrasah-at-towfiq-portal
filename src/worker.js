@@ -1047,6 +1047,68 @@ async function handle(req,env){
   if(ids.length){const clause=ids.map(()=>'?').join(',');const [att,home,beh,fees]=await Promise.all([first(db,`SELECT COUNT(*) AS n FROM attendance WHERE student_id IN (${clause}) AND date=? AND status='present'`,...ids,nowDate()),first(db,`SELECT COUNT(*) AS n FROM homework WHERE student_id IN (${clause}) AND status='incomplete'`,...ids),first(db,`SELECT COALESCE(SUM(points),0) AS n FROM behaviour WHERE student_id IN (${clause})`,...ids),first(db,`SELECT COALESCE(SUM(f.amount_pence),0) AS n FROM fee_invoices f WHERE f.student_id IN (${clause})`,...ids)]);const paid=await first(db,`SELECT COALESCE(SUM(amount_pence),0) AS n FROM payments WHERE student_id IN (${clause})`,...ids);Object.assign(stats,{today_attendance:att.n,homework_pending:home.n,behaviour_points:beh.n,balance_pence:fees.n-paid.n});}
   const a=await all(db,'SELECT id,title,created_at FROM announcements ORDER BY created_at DESC LIMIT 4');const upcoming=await all(db,'SELECT * FROM events WHERE event_date>=? ORDER BY event_date LIMIT 4',nowDate());return json({stats,announcements:a,upcoming});
  }
+ // Draft progress reports are staff-only; parents see published reports for
+ // their currently linked children. A dual-role user in Family view is a parent.
+ if(path==='/api/progress-reports'){
+  if(method==='GET'){
+   const scope=studentScope(user);
+   const visible=user.role==='parent'?" AND r.status='published'":'';
+   const items=await all(db,`SELECT r.id,r.student_id,r.period,r.hifdh,r.murajaa,r.qaaidah,r.islamic_studies,
+    r.summary,r.next_steps,r.status,r.published_at,r.created_at,r.updated_at,
+    s.first_name,s.last_name,s.student_no,c.name AS class_name,u.name AS author_name
+    FROM pupil_progress_reports r JOIN students s ON s.id=r.student_id
+    LEFT JOIN classes c ON c.id=s.class_id
+    LEFT JOIN users u ON u.id=r.author_id
+    WHERE ${scope.where}${visible} ORDER BY r.period DESC,r.updated_at DESC LIMIT 500`,...scope.args);
+   return json({items});
+  }
+  requireRole(user,'admin','staff','teacher');
+  if(method!=='POST'&&method!=='PATCH')error('Method not allowed',405);
+  const b=await input(req);
+  const existing=method==='PATCH'
+   ?await first(db,'SELECT * FROM pupil_progress_reports WHERE id=?',short(b.id,100))
+   :null;
+  if(method==='PATCH'&&!existing)error('Progress report not found',404);
+  if(method==='POST'&&b.id)error('Create a new report without an existing report ID');
+  const studentId=existing?.student_id||short(b.student_id,100);
+  if(existing&&b.student_id&&b.student_id!==studentId)error('Cannot change the pupil on an existing report');
+  const pupil=await permittedStudent(db,user,studentId);
+  if(pupil.status!=='active')error('Progress reports can only be created or edited for active pupils');
+  const period=existing?.period||short(b.period,7);
+  if(!/^(19|20)\\d{2}-(0[1-9]|1[0-2])$/.test(period))error('Choose a valid report month');
+  if(existing&&b.period&&b.period!==period)error('Cannot change a report period after creation');
+  const grades=['','developing','progressing','secure','excellent'];
+  const fields=['hifdh','murajaa','qaaidah','islamic_studies'];
+  const ratings=fields.map(field=>short(b[field],32));
+  if(ratings.some(v=>!grades.includes(v)))error('Choose a valid subject progress level');
+  if(typeof b.summary!=='string'||b.summary.length>1200||typeof b.next_steps!=='string'||b.next_steps.length>800)
+   error('Report comments exceed the permitted length');
+  const summary=short(b.summary,1200),nextSteps=short(b.next_steps,800);
+  if(!['draft','published'].includes(b.status))error('Choose Draft or Publish');
+  if(b.status==='published'&&(summary.length<10||!ratings.some(Boolean)))
+   error('To publish, include a meaningful summary and at least one subject assessment');
+  const publishedAt=b.status==='published'
+   ?existing?.status==='published'&&existing.published_at||iso():null;
+  let reportId=existing?.id;
+  if(!existing){
+   const duplicate=await first(db,'SELECT id FROM pupil_progress_reports WHERE student_id=? AND period=?',studentId,period);
+   if(duplicate)error('A progress report already exists for this pupil and month. Edit the existing report.',409);
+   reportId=id();
+   await run(db,`INSERT INTO pupil_progress_reports
+     (id,student_id,period,hifdh,murajaa,qaaidah,islamic_studies,summary,next_steps,status,author_id,published_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+     reportId,studentId,period,...ratings,summary,nextSteps,b.status,user.id,publishedAt);
+  }else{
+   await run(db,`UPDATE pupil_progress_reports
+    SET hifdh=?,murajaa=?,qaaidah=?,islamic_studies=?,summary=?,next_steps=?,
+     status=?,published_at=?,updated_at=?
+    WHERE id=? AND student_id=?`,
+    ...ratings,summary,nextSteps,b.status,publishedAt,iso(),reportId,studentId);
+  }
+  try{await audit(db,user,existing?'update':'create','progress_report',reportId,
+    period+' '+b.status+(existing?.status!==b.status?' (visibility change)':''));}catch{}
+  return json({ok:true,id:reportId,status:b.status,published:b.status==='published'});
+ }
  if(path==='/api/reports'&&method==='GET'){
   requireRole(user,'admin','staff','teacher');const s=studentScope(user);const summary=await all(db,`SELECT s.id,s.student_no,s.first_name,s.last_name,c.name AS class_name,(SELECT COUNT(*) FROM attendance a WHERE a.student_id=s.id AND a.status='present') AS present,(SELECT COUNT(*) FROM attendance a WHERE a.student_id=s.id) AS attendance_total,(SELECT COUNT(*) FROM homework h WHERE h.student_id=s.id AND h.status='complete') AS homework_complete,(SELECT COUNT(*) FROM homework h WHERE h.student_id=s.id) AS homework_total,(SELECT COALESCE(SUM(b.points),0) FROM behaviour b WHERE b.student_id=s.id) AS behaviour_points FROM students s LEFT JOIN classes c ON c.id=s.class_id WHERE ${s.where} ORDER BY c.name,s.first_name`,...s.args);return json({items:summary});
  }
