@@ -386,3 +386,14 @@ Migration: `0012_in_app_notifications.sql`. It adds a new notification table wit
 
 Migration `0013_academic_calendar_communication_preferences.sql` creates four new tables, preserving legacy students, invoices, DBS certificates, messages and existing `events`. No external API keys are needed. New-term dates must be entered by an authorised administrator after deployment. Consent history retention requires organisational approval; it is not automatically deleted in this version.
 
+
+
+## Masjid website content: YouTube video library
+
+Administrators can open **Community → Website videos** in the Madrasah portal and curate public masjid content. The portal accepts YouTube watch, Shorts, live, embed and youtu.be URLs; extracts and validates the 11-character video ID; and supports titles, categories (Khutbah, Lecture, Qur’an, Community), summaries, draft/published status, a featured item, reordering and deletion. Only admins can make changes, using existing session and CSRF checks.
+
+The public, read-only endpoint is `GET /api/public/masjid-videos`; it returns only **published** video metadata, never portal sessions, pupil records or unapproved drafts. Video metadata lives under `masjid_public_videos_v1` in the existing `school_settings` D1 table. **No database migration is required.**
+
+The separate Masjid website (`olaleso/masjid-at-towfiq-website`) reads this feed through its own `GET /api/public/videos` proxy, displays bespoke video cards and loads the YouTube player on demand. Changes become public automatically (typically within a minute) without rebuilding either website.
+
+**Initial deployment:** the portal deployment GitHub Actions job is gated by the repository variable `CLOUDFLARE_DEPLOY_ENABLED` and may be skipped when no Cloudflare credentials are configured. A one-time deployment of the portal source is required before this feature is available to admins. From a local checked-out portal repository, `git pull origin main` followed by `npx wrangler deploy` deploys without any new D1 migration. For ongoing source deployments, connect this **existing** portal Worker to GitHub Builds or configure the standard GitHub Actions Cloudflare secrets; never create a duplicate Worker.
