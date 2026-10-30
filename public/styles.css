@@ -306,3 +306,21 @@
 .notify-entry-title strong{color:#173354}
 .notify-centre .metric-icon{flex-shrink:0}
 @media(max-width:640px){.notify-entry{padding:14px 3px;gap:9px}.notify-entry-body{font-size:12px}}
+
+/* v1.8.0 academic timetable and parent communication settings */
+.academic-metrics .metric .trend{line-height:1.55}
+.academic-term-card{border:1px solid #e6ebf3;border-radius:12px;padding:17px;margin:0 0 12px;background:#fff}
+.academic-term-top{display:flex;align-items:flex-start;gap:12px;justify-content:space-between}
+.academic-term-top strong{color:#1c3557}
+.academic-term-top p{margin-top:7px;line-height:1.6}
+.academic-note{font-size:13px;color:#5a6980;margin-top:10px;white-space:pre-wrap;line-height:1.55}
+.academic-actions{display:flex;gap:7px;justify-content:flex-end;margin-top:13px}
+.academic-entry{gap:10px}
+.academic-entry .sub{line-height:1.65}
+.academic-consent-options{display:grid;gap:11px}
+.academic-check{display:flex;align-items:flex-start;gap:12px;cursor:pointer;padding:12px;border:1px solid #e3eaf4;border-radius:11px;background:#f9fbff;color:#243854;font-size:13px}
+.academic-check input{margin-top:4px;accent-color:#426bba;flex:none;width:17px;height:17px;cursor:pointer}
+.academic-check span{display:flex;flex-direction:column;gap:4px;line-height:1.55;min-width:0}
+.academic-check small{display:block;color:#72829a;font-size:12px}
+.academic-check:focus-within{outline:2px solid #7ca6ef;outline-offset:2px}
+@media(max-width:640px){.academic-term-top{flex-wrap:wrap}.academic-entry{align-items:flex-start}.academic-entry .event-cal{flex:none}}
