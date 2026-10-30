@@ -119,6 +119,32 @@ async function purgeOldDbsDocuments(env){
  return count;
 }
 
+
+/*
+ * Private, provider-independent notifications. Never put safeguarding, medical,
+ * message text or detailed behaviour notes into the notification body.
+ * A new notification is only delivered to the currently linked user account.
+ * UNIQUE(recipient_id,kind,source_id) makes retries idempotent.
+ */
+async function createInboxNotification(db,recipientId,studentId,kind,sourceId,title,body,targetPage){
+ if(!recipientId)return;
+ try{
+  await run(db,'INSERT OR IGNORE INTO portal_notifications(id,recipient_id,student_id,kind,source_id,title,body,target_page) VALUES(?,?,?,?,?,?,?,?)',
+   id(),recipientId,studentId||null,kind,String(sourceId),short(title,160),short(body,300),targetPage);
+ }catch(err){console.error('Private in-app notification could not be saved',err);}
+}
+async function notifyLinkedGuardianInApp(db,studentId,kind,sourceId,title,body,targetPage){
+ try{
+  const linked=await first(db,`SELECT s.parent_id,s.first_name,s.last_name
+    FROM students s JOIN users u ON u.id=s.parent_id AND u.active=1
+    WHERE s.id=? AND s.status='active'`,studentId);
+  if(!linked?.parent_id)return;
+  const display=[linked.first_name,linked.last_name].filter(Boolean).join(' ');
+  await createInboxNotification(db,linked.parent_id,studentId,kind,sourceId,title,
+   body.replace('{student}',display),targetPage);
+ }catch(err){console.error('Guardian in-app notification unavailable',err);}
+}
+
 const FIELDS_STUDENT=['first_name','last_name','dob','gender','class_id','parent_id','phone','address','medical_notes','status'];
 const CATALOG=[
  ['talking','Talking repeatedly during lessons',-1],['instructions','Not following instructions',-1],['distracting','Distracting other pupils',-1],['unprepared','Being unprepared for lessons repeatedly',-1],['lateness','Repeated lateness without a valid reason',-1],
@@ -639,6 +665,41 @@ async function handle(req,env){
  if(method!=='GET'){const received=req.headers.get('x-csrf-token');if(!received||!(await safeEqual(await sha(received),user.csrf_hash)))error('Security token expired. Reload your page.',403);}
  if(path==='/api/auth/logout'&&method==='POST'){await run(db,'DELETE FROM sessions WHERE token_hash=?',user.token_hash);return json({ok:true},200,{'Set-Cookie':setCookie(req,'',0)});}
  if(path==='/api/auth/password'&&method==='POST'){const b=await input(req),r=await first(db,'SELECT password_hash,password_salt FROM users WHERE id=?',user.id);if(!await verifyPassword(b.current_password||'',r.password_salt,r.password_hash))error('Current password is incorrect');if(String(b.new_password||'').length<12)error('New password must be at least 12 characters');const salt=b64(crypto.getRandomValues(new Uint8Array(16)));await run(db,'UPDATE users SET password_hash=?,password_salt=? WHERE id=?',await passwordHash(b.new_password,salt),salt,user.id);await run(db,'DELETE FROM sessions WHERE user_id=? AND token_hash<>?',user.id,user.token_hash);return json({ok:true});}
+
+ // Account-specific notifications. No API accepts a client-supplied recipient.
+ // Recheck current pupil links on every read or acknowledgement, including Family view.
+ if(path==='/api/notifications'){
+  const scope=user.role==='parent'
+   ?' AND (n.student_id IS NULL OR EXISTS (SELECT 1 FROM students s WHERE s.id=n.student_id AND s.parent_id=? AND s.status=\'active\'))'
+   :user.role==='teacher'
+   ?' AND (n.student_id IS NULL OR EXISTS (SELECT 1 FROM students s JOIN classes c ON c.id=s.class_id WHERE s.id=n.student_id AND c.teacher_id=? AND s.status=\'active\'))'
+   :'';
+  const bindings=[user.id,...(scope?[user.id]:[])];
+  if(method==='GET'){
+   const items=await all(db,`SELECT n.id,n.kind,n.student_id,n.title,n.body,n.target_page,n.read_at,n.created_at
+    FROM portal_notifications n WHERE n.recipient_id=?${scope}
+    ORDER BY n.created_at DESC,n.id DESC LIMIT 150`,...bindings);
+   const total=await first(db,`SELECT COUNT(*) AS n FROM portal_notifications n WHERE n.recipient_id=? AND n.read_at IS NULL${scope}`,...bindings);
+   return json({items,unread:Number(total?.n||0)});
+  }
+  if(method==='PATCH'){
+   const b=await input(req);
+   if(b.mark_all===true){
+    await run(db,`UPDATE portal_notifications AS n SET read_at=COALESCE(read_at,?)
+      WHERE n.recipient_id=? AND n.read_at IS NULL${scope}`,iso(),...bindings);
+    return json({ok:true});
+   }
+   const targetId=short(b.id,100);
+   if(!targetId)error('Choose a notification to mark as read');
+   const notice=await first(db,`SELECT n.id FROM portal_notifications n
+    WHERE n.id=? AND n.recipient_id=?${scope}`,targetId,...bindings);
+   if(!notice)error('Notification not found for this account',404);
+   await run(db,'UPDATE portal_notifications SET read_at=COALESCE(read_at,?) WHERE id=? AND recipient_id=?',iso(),targetId,user.id);
+   return json({ok:true});
+  }
+  error('Method not allowed',405);
+ }
+
  if(path==='/api/search'&&method==='GET'){
   const query=short(u.searchParams.get('q')||'',70);if(query.length<2)return json({students:[],homework:[],classes:[]});const like='%'+query.replace(/[\%_]/g,x=>'\\'+x)+'%';const scope=studentScope(user);
   const students=await all(db,`SELECT s.id,s.student_no,s.first_name,s.last_name,c.name AS class_name FROM students s LEFT JOIN classes c ON c.id=s.class_id WHERE ${scope.where} AND (s.first_name LIKE ? ESCAPE '\\' OR s.last_name LIKE ? ESCAPE '\\' OR s.student_no LIKE ? ESCAPE '\\') LIMIT 10`,...scope.args,like,like,like);
@@ -906,6 +967,10 @@ async function handle(req,env){
      'INSERT INTO attendance(id,student_id,date,status,note,recorded_by) VALUES(?,?,?,?,?,?) ON CONFLICT(student_id,date) DO UPDATE SET status=excluded.status,note=excluded.note,recorded_by=excluded.recorded_by'
     ).bind(id(),a.student_id,a.date,a.status,a.note,user.id)));
     try{await audit(db,user,'record','attendance','',prepared.length+' records');}catch{}
+    for(const a of prepared.filter(x=>x.newAbsence)){
+     await notifyLinkedGuardianInApp(db,a.student_id,'attendance',a.student_id+'|'+a.date,
+      'Attendance update','An absence has been recorded for {student}. Please open the secure attendance record.','attendance');
+    }
     const alert_results={eligible:0,sent:0,not_sent:0,no_guardian_email:0,already_attempted:0};
     for(const a of prepared.filter(x=>x.newAbsence)){
      alert_results.eligible++;
@@ -929,6 +994,8 @@ async function handle(req,env){
    const hid=id();
    await run(db,'INSERT INTO homework(id,student_id,type,surah_from,verse_from,surah_to,verse_to,page_number,comments,due_date,assigned_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)',hid,b.student_id,b.type,short(b.surah_from,100),['hifdh','murajaa'].includes(b.type)?Number(b.verse_from):null,short(b.surah_to,100),['hifdh','murajaa'].includes(b.type)?Number(b.verse_to):null,short(b.page_number,50),short(b.comments,1000),b.due_date,user.id);
    await audit(db,user,'assign','homework',hid);
+   await notifyLinkedGuardianInApp(db,b.student_id,'homework',hid,'New learning assignment',
+    'A new assignment has been added for {student}. Sign in to view the details.','homework');
    let notification={notification_status:'not_sent'};
    try{
     notification=await notifyGuardianAboutRecord(db,env,b.student_id,'homework',{...b,id:hid},user);
@@ -945,6 +1012,8 @@ async function handle(req,env){
   if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT b.*,s.first_name,s.last_name,u.name AS recorded_by_name FROM behaviour b JOIN students s ON s.id=b.student_id LEFT JOIN users u ON u.id=b.recorded_by WHERE ${s.where} ORDER BY b.created_at DESC LIMIT 600`,...s.args)});}
   requireRole(user,'admin','staff','teacher');const b=await input(req);
   if(method==='POST'){await permittedStudent(db,user,b.student_id);const c=CATALOG.find(x=>x.code===b.reason_code);if(!c)error('Behaviour type not recognised');const bid=id();await run(db,'INSERT INTO behaviour(id,student_id,reason_code,description,points,notes,recorded_by) VALUES(?,?,?,?,?,?,?)',bid,b.student_id,c.code,c.label,c.points,short(b.notes,800),user.id);await audit(db,user,'record','behaviour',bid,`${c.label}: ${c.points}`);
+   await notifyLinkedGuardianInApp(db,b.student_id,'behaviour',bid,'Learning and character update',
+    'A new learning and character update is available for {student} in the private portal.','behaviour');
    let notification={notification_status:'not_sent'};
    try{
     notification=await notifyGuardianAboutRecord(db,env,b.student_id,'behaviour',{id:bid,points:c.points,description:c.label},user);
@@ -988,6 +1057,8 @@ async function handle(req,env){
  if(path==='/api/fees'){
   if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT f.*,s.first_name,s.last_name,(SELECT COALESCE(SUM(p.amount_pence),0) FROM payments p WHERE p.invoice_id=f.id) AS paid_pence FROM fee_invoices f JOIN students s ON s.id=f.student_id WHERE ${s.where} ORDER BY f.period DESC,s.first_name`,...s.args)});}
   requireRole(user,'admin','staff');if(method==='POST'){const b=await input(req);await permittedStudent(db,user,b.student_id);if(!/^\d{4}-\d{2}$/.test(b.period||'')||!isMoney(b.amount_pence))error('Period (YYYY-MM) and positive amount required');const fid=id();await run(db,'INSERT INTO fee_invoices(id,student_id,period,amount_pence,due_date) VALUES(?,?,?,?,?)',fid,b.student_id,b.period,Number(b.amount_pence),b.due_date||null);await audit(db,user,'issue','invoice',fid);
+   await notifyLinkedGuardianInApp(db,b.student_id,'invoice',fid,'New fee statement',
+    'A fee statement is available for {student}. Please open your secure fee account.','fees');
    let notification={notification_status:'not_sent'};
    try{notification=await financeEmailForInvoice(db,env,fid,'issued',user);}
    catch(e){try{await audit(db,user,'fee_notification_error','invoice',fid,short(e.message,160));}catch{}}
@@ -1007,6 +1078,8 @@ async function handle(req,env){
  if(path==='/api/payments'){
   if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT p.*,s.first_name,s.last_name,f.period FROM payments p JOIN students s ON s.id=p.student_id JOIN fee_invoices f ON f.id=p.invoice_id WHERE ${s.where} ORDER BY p.created_at DESC`,...s.args)});}
   requireRole(user,'admin','staff');if(method==='POST'){const b=await input(req),f=await first(db,'SELECT * FROM fee_invoices WHERE id=?',b.invoice_id);if(!f)error('Invoice not found',404);if(!isMoney(b.amount_pence)||Number(b.amount_pence)<=0)error('Valid payment amount required');const paid=await first(db,'SELECT COALESCE(SUM(amount_pence),0) AS total FROM payments WHERE invoice_id=?',f.id);if(Number(b.amount_pence)>f.amount_pence-paid.total)error('Payment exceeds outstanding invoice balance');const pid=id();await run(db,'INSERT INTO payments(id,invoice_id,student_id,amount_pence,method,reference,recorded_by) VALUES(?,?,?,?,?,?,?)',pid,f.id,f.student_id,Number(b.amount_pence),short(b.method,30)||'manual',short(b.reference,120),user.id);await audit(db,user,'payment','invoice',f.id,`${b.amount_pence} pence`);
+   await notifyLinkedGuardianInApp(db,f.student_id,'payment',pid,'Payment recorded',
+    'A payment has been recorded for {student}. View the receipt in your secure fee account.','fees');
    let notification={notification_status:'not_sent'};
    try{notification=await financeEmailForInvoice(db,env,f.id,'receipt',user,Number(b.amount_pence));}
    catch(e){try{await audit(db,user,'fee_receipt_error','invoice',f.id,short(e.message,160));}catch{}}
@@ -1094,6 +1167,8 @@ async function handle(req,env){
    await run(db,'INSERT INTO messages(id,recipient_id,subject,body,student_id,created_by,thread_root_id) VALUES(?,?,?,?,?,?,?)',
     mid,target.id,subject,short(b.body,3000),linkedPupil?.id||null,user.id,threadRoot);
    try{await audit(db,user,threadRoot?'reply':'send','message',mid,threadRoot?'thread '+threadRoot:'private conversation');}catch{}
+   await createInboxNotification(db,target.id,linkedPupil?.id||null,'message',mid,
+    'New private message','A private message is waiting for you in the Communications Centre.','communications');
    let notification_status='not_sent';
    if(env.RESEND_API_KEY&&env.EMAIL_FROM&&!env.EMAIL_FROM.includes('example.org')){
     // Email is a generic inbox alert: no message text, learner name or confidential metadata.
@@ -1424,6 +1499,9 @@ async function handle(req,env){
   }
   try{await audit(db,user,existing?'update':'create','progress_report',reportId,
     period+' '+b.status+(existing?.status!==b.status?' (visibility change)':''));}catch{}
+  if(b.status==='published'&&existing?.status!=='published')
+   await notifyLinkedGuardianInApp(db,studentId,'progress',reportId,'New progress report',
+    'A new monthly progress report is available for {student}. Please sign in to read it.','progress');
   return json({ok:true,id:reportId,status:b.status,published:b.status==='published'});
  }
  if(path==='/api/reports'&&method==='GET'){
