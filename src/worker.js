@@ -107,6 +107,11 @@ const dbsNotice=(due,base=schoolLocalDate())=>{
  const days=dbsDayDiff(due,base);
  return {days_remaining:days,alert:days<0?'overdue':days<=60?'due_soon':'current'};
 };
+async function purgeExpiredInAppNotifications(env){
+ if(!env.DB)return;
+ // A short-term operational inbox, not an indefinite archive of children’s records.
+ await run(env.DB,"DELETE FROM portal_notifications WHERE created_at < datetime('now','-365 days')");
+}
 async function purgeOldDbsDocuments(env){
  if(!env.DB||!env.DBS_FILES)return 0;
  const records=await all(env.DB,"SELECT id,document_key FROM staff_dbs_checks WHERE document_key IS NOT NULL AND document_purge_after<=? LIMIT 150",iso());
@@ -1519,6 +1524,7 @@ async function handle(req,env){
 export default {
  async scheduled(event,env,ctx){
   ctx.waitUntil(purgeOldDbsDocuments(env).catch(err=>console.error('DBS retention purge failed',err)));
+  ctx.waitUntil(purgeExpiredInAppNotifications(env).catch(err=>console.error('Notification retention cleanup failed',err)));
   if(event.cron!=='0 8 * * 5')return;
   ctx.waitUntil((async()=>{if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM||env.EMAIL_FROM.includes('example.org'))return;const v=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_enabled'");if(v?.value!=='true')return;const m=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_message'");const people=await all(env.DB,"SELECT email FROM users WHERE active=1 AND role IN ('parent','teacher','staff')");for(const p of people){await mail(env,p.email,'Jumu’ah reminder — Madrasah At-Towfiq',`<div style="font-family:Arial,sans-serif"><h2>Madrasah At-Towfiq</h2><p>${escapeHtml(m?.value||'Assalamu alaikum. Jumu’ah Mubarak.')}</p></div>`);}})());
  },
