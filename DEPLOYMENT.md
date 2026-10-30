@@ -261,3 +261,23 @@ npm run deploy
 Acceptance test with **fictional** data: sign in as a guardian linked to a test pupil, have a teacher create a homework assignment and send a message, and confirm the guardian’s bell badge increases. Open **Community → My notifications**, select an update and confirm it opens the correct page. Sign in as another parent or enter Family view to ensure only authorised notifications are visible. Publish a draft progress report to trigger a new notification; editing a previously published report should not duplicate the alert. Mark all as read and confirm the badge clears.
 
 No existing in-app alerts are backfilled for historical records. Existing emails remain separate, and this release makes no SMS/WhatsApp API calls.
+
+## v1.8.0 — Academic calendar & guardian communication preferences
+
+This release requires **additive D1 migration 0013** before deploying the updated Worker and static UI. Existing email workflows and v1.7 notifications remain enabled, while outbound SMS and WhatsApp are *not* connected.
+
+```powershell
+git pull origin main
+npm run test
+if ($LASTEXITCODE -ne 0) { throw "Tests failed; deployment stopped" }
+# Check D1 Time Travel and keep the bookmark separately before a schema change.
+npx --yes wrangler@latest d1 time-travel info attowfiq_portal
+npm run db:migrate:remote
+if ($LASTEXITCODE -ne 0) { throw "D1 migration failed; deployment stopped" }
+npm run deploy
+if ($LASTEXITCODE -ne 0) { throw "Worker deployment failed" }
+```
+
+Manual verification using no genuine child data: admin → School management → Academic calendar; create fictional Autumn term, verify an overlapping term cannot be added, add a holiday linked to the term, and confirm a linked term cannot be deleted. View the calendar as a parent; no edit controls should appear. Parent → Community → Contact preferences; by default SMS/WhatsApp are unchecked, enter an international mobile number you control, explicitly confirm and save a choice; refresh, verify persistence, then uncheck and save to withdraw. If you have a teacher/guardian account, check both normal Staff view and restricted Family view. Do not attempt to send live SMS/WhatsApp because the service is deliberately not enabled.
+
+Existing community event dates are not moved into the new academic timetable. No historical consent is inferred, and existing parents are not automatically opted in.
