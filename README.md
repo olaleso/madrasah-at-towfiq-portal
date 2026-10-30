@@ -377,3 +377,12 @@ All notifications are stored in Cloudflare D1, linked to a specific user and opt
 
 Migration: `0012_in_app_notifications.sql`. It adds a new notification table without modifying existing admission, family, attendance, fee or DBS data. Notifications are generated for events happening **after v1.7.0 deployment**; old events are not retrospectively delivered.
 
+
+## v1.8.0 — Academic calendar & future communication preferences
+
+**Academic calendar** is accessible to signed-in families and staff from **School management → Academic calendar**. Administrators can add, edit and remove academic terms with a name, school academic year and date range. Terms cannot overlap. Administrators and office staff can add, edit and remove term-linked or standalone school dates (holidays, closures, assessments, parent meetings and other school events). Dates must be valid; linked dates must remain inside their term. A term with linked dates cannot be removed or shortened to exclude those dates. All roles see the same non-confidential school calendar. Existing Events & announcements remain separate; this release does not send notices when dates are added.
+
+**Contact preferences** is available to guardians, including a teacher/guardian using the restricted **Family view**, under **Community → Contact preferences**. Parents may voluntarily register an international-format mobile number and give or withdraw consent for future SMS, WhatsApp and optional community updates. All external messaging preferences default to **off**; enabling future channels requires explicit acknowledgement and an E.164 mobile number. Every actual change is recorded in an account-specific consent audit. Existing account-security, admissions, fee, learning, attendance and private-message emails and the in-app Notification Centre are **unaffected**. Saving consent does **not** verify the number, enable a paid service, create a WhatsApp account or send SMS/WhatsApp. Before enabling delivery, verify provider onboarding, templates, explicit notice text, processing arrangements, consent validity, a withdrawal workflow and sender identity.
+
+Migration `0013_academic_calendar_communication_preferences.sql` creates four new tables, preserving legacy students, invoices, DBS certificates, messages and existing `events`. No external API keys are needed. New-term dates must be entered by an authorised administrator after deployment. Consent history retention requires organisational approval; it is not automatically deleted in this version.
+
