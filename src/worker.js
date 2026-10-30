@@ -1047,9 +1047,15 @@ async function handle(req,env){
   let created=0;
   for(let i=0;i<targets.length;i+=75){
     const group=targets.slice(i,i+75);
-    const ops=group.map(sid=>db.prepare('INSERT OR IGNORE INTO fee_invoices(id,student_id,period,amount_pence,due_date) VALUES(?,?,?,?,?)').bind(id(),sid,b.period,Number(b.amount_pence),b.due_date||null));
+    const prepared=group.map(sid=>({sid,fid:id()}));
+    const ops=prepared.map(x=>db.prepare('INSERT OR IGNORE INTO fee_invoices(id,student_id,period,amount_pence,due_date) VALUES(?,?,?,?,?)').bind(x.fid,x.sid,b.period,Number(b.amount_pence),b.due_date||null));
     const results=await db.batch(ops);
-    created+=results.reduce((n,r)=>n+Number(r.meta?.changes||0),0);
+    for(let j=0;j<results.length;j++){
+     if(Number(results[j].meta?.changes||0)<1)continue;
+     created++;
+     await notifyLinkedGuardianInApp(db,prepared[j].sid,'invoice',prepared[j].fid,
+      'New fee statement','A fee statement is available for {student}. Please open your secure fee account.','fees');
+    }
   }
   await audit(db,user,'bulk-issue','invoice','',`${b.mode}: ${created}/${targets.length} created for ${b.period}`);
   return json({ok:true,selected:targets.length,created,skipped:targets.length-created,period:b.period});
