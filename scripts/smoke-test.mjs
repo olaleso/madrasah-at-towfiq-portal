@@ -1065,6 +1065,13 @@ const unauthNotice=await req('/notifications',null,'GET',false);
 assert.equal(unauthNotice.status,401,'Unauthenticated users cannot read notifications');
 assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM portal_notifications WHERE kind='homework' AND source_id=? AND recipient_id=?").get(homework_id,guardian_id).n,1,
  'Each event is represented once per recipient');
+sqlite.prepare('UPDATE portal_notifications SET created_at=? WHERE id=?').run('2020-01-01 00:00:00',hiddenId);
+const scheduledNotificationJobs=[];
+await worker.scheduled({cron:'0 6 * * *'},env,{waitUntil(p){scheduledNotificationJobs.push(p);}});
+await Promise.all(scheduledNotificationJobs);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM portal_notifications WHERE id=?').get(hiddenId).n,0,
+ 'Daily cleanup removes notices older than 365 days');
+
 
 z=await req('/auth/logout',{});assert.equal(z.status,200);
 console.log('PASS: admissions, learning, reports, messages, in-app notifications, DBS storage, compliance and retention.');
