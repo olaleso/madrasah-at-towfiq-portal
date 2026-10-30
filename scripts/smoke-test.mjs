@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import worker from '../src/worker.js';
 import assert from 'node:assert/strict';
 import {pbkdf2Sync,randomBytes} from 'node:crypto';
-const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0008_pupil_progress_reports.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0009_compliance_communications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0010_staff_dbs_review.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0011_dbs_evidence_received.sql',import.meta.url),'utf8'));
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0008_pupil_progress_reports.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0009_compliance_communications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0010_staff_dbs_review.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0011_dbs_evidence_received.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0012_in_app_notifications.sql',import.meta.url),'utf8'));
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
 for(const filename of ['0001_initial.sql','0002_expanded_admissions.sql','0003_safeguarding_declarations.sql']) oldDb.exec(fs.readFileSync(new URL('../migrations/'+filename,import.meta.url),'utf8'));
@@ -1014,8 +1014,60 @@ assert.equal(adminEvidence.document_key,null);
 assert.ok(adminEvidence.document_received_at);
 delete env.DBS_FILES;
 
+
+// v1.7.0 — provider-independent in-app notifications, role scoping and read receipts.
+cookie=parent_cookie;csrf=parent_csrf;
+let notice=await req('/notifications');
+assert.equal(notice.status,200,JSON.stringify(notice.data));
+const familyKinds=new Set(notice.data.items.map(x=>x.kind));
+for(const kind of ['homework','behaviour','invoice','payment','progress','message']){
+ assert.ok(familyKinds.has(kind),'Parent notification inbox should include '+kind+' events');
+}
+assert.ok(notice.data.unread>0,'New records must appear unread');
+assert.ok(notice.data.items.every(x=>!('recipient_id' in x)),'Do not expose notification recipient identities in response payload');
+assert.ok(notice.data.items.every(x=>!x.body.includes('Peanut allergy')),'No restricted child medical data in summaries');
+assert.ok(notice.data.items.every(x=>!x.body.includes('Kind to a new student')),'No raw behaviour notes in notifications');
+assert.ok(notice.data.items.every(x=>!x.body.includes('Yes, please revise')),'No private message contents in notification summaries');
+const firstNotice=notice.data.items.find(x=>x.kind==='homework');
+assert.ok(firstNotice);
+let mark=await req('/notifications',{id:firstNotice.id},'PATCH');
+assert.equal(mark.status,200,JSON.stringify(mark.data));
+notice=await req('/notifications');
+assert.ok(notice.data.items.find(x=>x.id===firstNotice.id).read_at,'A parent can acknowledge only their own notice');
+const idempotent=await req('/notifications',{id:firstNotice.id},'PATCH');
+assert.equal(idempotent.status,200,'Marking an already-read notification is harmless');
+const originalUnread=notice.data.unread;
+const hiddenId='hidden-unlinked-notice';
+sqlite.prepare(`INSERT INTO portal_notifications(id,recipient_id,student_id,kind,source_id,title,body,target_page)
+ VALUES(?,?,?,?,?,?,?,?)`).run(hiddenId,guardian_id,student2,'homework','other-family','Other family private','Hidden from guardian','homework');
+notice=await req('/notifications');
+assert.ok(!notice.data.items.some(x=>x.id===hiddenId),'Guardians cannot view notifications for unrelated children even if misaddressed');
+assert.equal(notice.data.unread,originalUnread,'Hidden records must not affect unread count');
+mark=await req('/notifications',{id:hiddenId},'PATCH');
+assert.equal(mark.status,404,'Hidden notice cannot be acknowledged by unrelated guardian');
+mark=await req('/notifications',{mark_all:true},'PATCH');
+assert.equal(mark.status,200,'Bulk mark-read should affect visible notices only');
+notice=await req('/notifications');assert.equal(notice.data.unread,0);
+assert.equal(sqlite.prepare('SELECT read_at FROM portal_notifications WHERE id=?').get(hiddenId).read_at,null,
+ 'Bulk acknowledgement must not change a notice for an unrelated pupil');
+let forbidden=await req('/notifications',{recipient_id:guardian_id,kind:'homework',source_id:'forged',title:'Forged'},'POST');
+assert.equal(forbidden.status,405,'Nobody may forge a new notification through the API');
+cookie=teacherCookie;csrf=teacherSession.data.csrf;
+notice=await req('/notifications');assert.equal(notice.status,200);
+assert.ok(notice.data.items.some(x=>x.kind==='message'),'Assigned teacher sees their own private message notification');
+assert.ok(!notice.data.items.some(x=>x.id===firstNotice.id),'Teacher cannot read guardian notifications');
+mark=await req('/notifications',{id:firstNotice.id},'PATCH');
+assert.equal(mark.status,404,'Teachers cannot acknowledge a parent’s notice');
+cookie=savedAdminCookie;csrf=savedAdminCsrf;
+notice=await req('/notifications');assert.equal(notice.status,200);
+assert.ok(!notice.data.items.some(x=>x.id===firstNotice.id),'Admin may not enumerate another account’s notices');
+const unauthNotice=await req('/notifications',null,'GET',false);
+assert.equal(unauthNotice.status,401,'Unauthenticated users cannot read notifications');
+assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM portal_notifications WHERE kind='homework' AND source_id=? AND recipient_id=?").get(homework_id,guardian_id).n,1,
+ 'Each event is represented once per recipient');
+
 z=await req('/auth/logout',{});assert.equal(z.status,200);
-console.log('PASS: admissions, reports, communications, compliance, DBS recheck alerts, restricted R2 documents and retention.');
+console.log('PASS: admissions, learning, reports, messages, in-app notifications, DBS storage, compliance and retention.');
 
 const admissionsUi=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 assert.equal(admissionsUi.includes("field('Daytime mobile number'"),false);
@@ -1041,6 +1093,12 @@ assert.ok(admissionsUi.includes("data-value=\"progress\""),'Guardian dashboard l
 
 // v1.6.0 UX: real threaded inbox, compliance centre, and styled forms.
 assert.ok(admissionsUi.includes("function compliancePage()"),'Compliance dashboard exists');
+assert.ok(admissionsUi.includes("function notificationPage()"),'Notification page must be rendered');
+assert.ok(admissionsUi.includes("case'notifications':content=notificationPage();"),'Notification page must be in navigation');
+assert.ok(admissionsUi.includes("notification-read-all"),'Notification read-all control is included');
+assert.ok(admissionsUi.includes("notify-bell-count"),'Unread count shown in the top navigation bell');
+assert.ok(!admissionsUi.includes("const _load=load;load="),'Avoid overriding the combined loader and losing DB storage metadata');
+
 assert.ok(admissionsUi.includes("function dbsRegisterSection()"),'Compliance page must render DBS recheck register');
 assert.ok(admissionsUi.includes("function dbsWarningCount()")||admissionsUi.includes("const dbsWarningCount=()"),'In-app recheck notification count must exist');
 assert.ok(admissionsUi.includes("name=\"certificate\""),'The DBS edit/record dialog must include the certificate control');
