@@ -324,3 +324,28 @@
 .academic-check small{display:block;color:#72829a;font-size:12px}
 .academic-check:focus-within{outline:2px solid #7ca6ef;outline-offset:2px}
 @media(max-width:640px){.academic-term-top{flex-wrap:wrap}.academic-entry{align-items:flex-start}.academic-entry .event-cal{flex:none}}
+
+
+/* Masjid website video CMS */
+.website-stats{margin-bottom:18px}
+.website-editor{padding:28px;margin-bottom:18px}
+.website-editor .surface-head{margin-bottom:20px}
+.website-editor .field label{font-weight:800;color:#224169}
+.website-editor textarea{min-height:98px;resize:vertical}
+.website-checkboxes{display:flex;flex-wrap:wrap;gap:18px;padding:14px 17px;background:#f3f7fd;border:1px solid #e0e9f6;border-radius:10px}
+.website-checkboxes label{display:flex;align-items:center;gap:9px;font-size:12px;font-weight:700;color:#284769}
+.website-checkboxes input{width:17px;height:17px;accent-color:#215fb9}
+.website-form-footer{display:flex;align-items:center;justify-content:space-between;gap:22px;margin-top:22px;padding-top:18px;border-top:1px solid var(--border)}
+.website-form-footer p{max-width:550px;line-height:1.6}
+.website-video-items{display:grid;gap:12px;margin-top:17px}
+.website-video-item{display:grid;grid-template-columns:176px minmax(0,1fr) auto;align-items:center;gap:18px;padding:15px;background:#f8faff;border:1px solid #e1e9f5;border-radius:12px}
+.website-video-item img{display:block;width:176px;height:99px;object-fit:cover;border-radius:8px;background:#102749}
+.website-video-copy{min-width:0}
+.website-video-copy strong{font-size:15px;line-height:1.5;display:block;color:#183357}
+.website-video-copy p{margin-top:7px;color:#647690;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.website-video-copy a{display:inline-flex;margin-top:8px;color:#2459a9;font-size:12px;font-weight:800;text-decoration:underline}
+.website-video-controls{display:flex;flex-direction:column;align-items:stretch;gap:7px;min-width:112px}
+.website-video-controls .row{display:flex;justify-content:center;gap:6px}
+.website-video-controls .btn{justify-content:center}
+@media(max-width:1100px){.website-video-item{grid-template-columns:145px minmax(0,1fr)}.website-video-item img{width:145px;height:82px}.website-video-controls{grid-column:1/-1;flex-direction:row;flex-wrap:wrap}.website-video-controls .btn{min-width:78px}}
+@media(max-width:650px){.website-stats{grid-template-columns:1fr!important}.website-editor{padding:20px 16px}.website-form-footer{flex-direction:column;align-items:stretch}.website-video-item{display:flex;flex-direction:column;align-items:stretch}.website-video-item img{width:100%;height:auto;aspect-ratio:16/9}.website-video-controls{display:flex;flex-direction:row;flex-wrap:wrap}.website-checkboxes{flex-direction:column;gap:12px}}
