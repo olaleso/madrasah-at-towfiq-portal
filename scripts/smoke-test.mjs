@@ -1021,7 +1021,7 @@ let notice=await req('/notifications');
 assert.equal(notice.status,200,JSON.stringify(notice.data));
 const familyKinds=new Set(notice.data.items.map(x=>x.kind));
 for(const kind of ['homework','behaviour','invoice','payment','progress','message']){
- assert.ok(familyKinds.has(kind),'Parent notification inbox should include '+kind+' events');
+ assert.ok(familyKinds.has(kind),'Parent notification inbox should include '+kind+' events. Visible: '+Array.from(familyKinds).join(', ')+'; stored: '+sqlite.prepare('SELECT kind,recipient_id,student_id,source_id FROM portal_notifications').all().map(x=>x.kind+'('+x.recipient_id+')').join(', '));
 }
 assert.ok(notice.data.unread>0,'New records must appear unread');
 assert.ok(notice.data.items.every(x=>!('recipient_id' in x)),'Do not expose notification recipient identities in response payload');
