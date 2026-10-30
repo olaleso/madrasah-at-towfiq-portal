@@ -291,3 +291,18 @@
 .dbs-consent{display:flex;align-items:flex-start;gap:10px;padding:15px;margin-top:16px;border-radius:10px;background:#f0f5fc;font-size:13px;line-height:1.7;cursor:pointer}
 .dbs-consent input{margin-top:5px;flex-shrink:0}
 @media(max-width:700px){.dbs-register .surface-head{align-items:flex-start;flex-direction:column}.dbs-global-alert{align-items:flex-start}.dbs-register .table{min-width:850px}}
+
+/* v1.7.0 — secure in-app notification feed */
+.notify-bell-count{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;border-radius:30px;background:#d95a54;color:white;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;padding:0 4px;border:2px solid #fff}
+.topbar .top-right .iconbtn:has(.notify-bell-count){position:relative}
+.notify-centre .surface-head{margin-bottom:3px}
+.notify-entry{width:100%;display:flex;gap:15px;align-items:center;background:#fff;text-align:left;border:0;border-bottom:1px solid #e8edf4;padding:17px 12px;cursor:pointer;font:inherit;color:inherit;transition:background .18s ease}
+.notify-entry:last-child{border-bottom:0}
+.notify-entry:hover,.notify-entry:focus-visible{background:#f2f6fd;outline-offset:-2px}
+.notify-entry.unread{background:#f2f7ff}
+.notify-entry-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;font-size:13px;line-height:1.5}
+.notify-entry-body small{font-size:11px;color:#677891}
+.notify-entry-title{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:14px}
+.notify-entry-title strong{color:#173354}
+.notify-centre .metric-icon{flex-shrink:0}
+@media(max-width:640px){.notify-entry{padding:14px 3px;gap:9px}.notify-entry-body{font-size:12px}}
