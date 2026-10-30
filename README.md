@@ -362,3 +362,18 @@ Existing date-only DBS records created in v1.6.1 (including any already entered 
 Migration `0011_dbs_evidence_received.sql` adds the timestamp and backfills it from prior uploads. Existing DBS dates and prior files are preserved. The register, due-soon/overdue alert windows and other school records are unchanged. The browser no longer hides certificate controls based on an unreliable storage-status indicator; an actual missing R2 binding produces a clear error and the registration remains unsaved.
 
 **Production rollout:** pull `main`, ensure the existing private `DBS_FILES` R2 binding and retention lifecycle are correct, back up D1 using a working recovery method, run `npm run test`, apply remote D1 migrations and then deploy. Test with a dummy certificate, never a real staff member's criminal-offence information during acceptance testing.
+
+## v1.7.0 — Private in-app Notification Centre (no external SMS/WhatsApp provider required)
+
+A **My notifications** page is available to administrators, staff, teachers and parents under **Community**, with an unread badge on the top-bar bell. Opening a notification acknowledges it and navigates to the relevant secure section. A **Mark all as read** action only affects records the current user is authorised to see.
+
+New in-app notifications are created after successful business operations:
+- Parent notifications for homework, behaviour/character updates (generic wording, no raw notes), selected absence alerts, new individual or bulk invoices, payment receipts and newly published progress reports;
+- Recipient notifications for secure parent/teacher/office private messages.
+
+All notifications are stored in Cloudflare D1, linked to a specific user and optionally to a student. The API re-checks active current guardian or teacher/class links **on every read and acknowledgement**, including dual-role Family view. Messages and behaviour details are not copied into the notification summary. Each event and recipient is de-duplicated, and deleting a pupil removes linked notification records. A scheduled retention cleanup discards records older than 365 days; review this period under your organisational retention policy.
+
+**There is no automatic SMS or WhatsApp sending in v1.7.0.** The in-app workflow works now while the madrasah waits for FireText SMS business verification and decides on a compliant WhatsApp production provider. SMS/WhatsApp consent, sender details, templates, billing, delivery retries, callback signatures and opt-out processing must be separately approved and implemented before live external messages are enabled.
+
+Migration: `0012_in_app_notifications.sql`. It adds a new notification table without modifying existing admission, family, attendance, fee or DBS data. Notifications are generated for events happening **after v1.7.0 deployment**; old events are not retrospectively delivered.
+
