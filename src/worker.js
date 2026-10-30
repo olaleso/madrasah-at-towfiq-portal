@@ -705,6 +705,102 @@ async function handle(req,env){
   error('Method not allowed',405);
  }
 
+
+ // Academic calendar: all authenticated families and staff may read dates.
+ // Only administrators change terms; administrators and office staff manage entries.
+ if(path==='/api/academic/terms'){
+  if(method==='GET')return json({items:await all(db,'SELECT * FROM academic_terms ORDER BY starts_on ASC,name ASC LIMIT 150')});
+  requireRole(user,'admin');const b=await input(req);
+  if(method==='DELETE'){
+   const termId=short(b.id,100);
+   if(!await first(db,'SELECT id FROM academic_terms WHERE id=?',termId))error('Term not found',404);
+   const linked=await first(db,'SELECT COUNT(*) AS n FROM academic_calendar_entries WHERE term_id=?',termId);
+   if(Number(linked.n))error('Remove or reassign the term’s calendar dates before deleting it',409);
+   await run(db,'DELETE FROM academic_terms WHERE id=?',termId);
+   await audit(db,user,'delete','academic_term',termId);
+   return json({ok:true});
+  }
+  if(method!=='POST'&&method!=='PATCH')error('Method not allowed',405);
+  const name=short(b.name,100),year=short(b.academic_year,7),notes=short(b.notes,700);
+  if(!name||typeof b.name!=='string'||b.name.length>100)error('Term name required (up to 100 characters)');
+  if(!/^20\d{2}\/\d{2}$/.test(year)||Number(year.slice(5))!==((Number(year.slice(0,4))+1)%100))error('Academic year should look like 2026/27');
+  if(!isDbsDate(b.starts_on)||!isDbsDate(b.ends_on)||b.starts_on>b.ends_on)error('Choose valid term dates in order');
+  const termId=method==='PATCH'?short(b.id,100):id();
+  if(method==='PATCH'&&!await first(db,'SELECT id FROM academic_terms WHERE id=?',termId))error('Term not found',404);
+  const overlap=await first(db,'SELECT id FROM academic_terms WHERE id<>? AND starts_on<=? AND ends_on>=? LIMIT 1',termId,b.ends_on,b.starts_on);
+  if(overlap)error('Term dates cannot overlap another term',409);
+  const outOfTerm=await first(db,'SELECT id FROM academic_calendar_entries WHERE term_id=? AND (starts_on<? OR ends_on>?) LIMIT 1',termId,b.starts_on,b.ends_on);
+  if(outOfTerm)error('An existing calendar entry falls outside the new term dates',409);
+  if(method==='POST')await run(db,'INSERT INTO academic_terms(id,name,academic_year,starts_on,ends_on,notes,created_by) VALUES(?,?,?,?,?,?,?)',termId,name,year,b.starts_on,b.ends_on,notes,user.id);
+  else await run(db,'UPDATE academic_terms SET name=?,academic_year=?,starts_on=?,ends_on=?,notes=?,updated_at=? WHERE id=?',name,year,b.starts_on,b.ends_on,notes,iso(),termId);
+  await audit(db,user,method==='POST'?'create':'update','academic_term',termId);
+  return json({ok:true,id:termId});
+ }
+ if(path==='/api/academic/calendar'){
+  if(method==='GET')return json({items:await all(db,`SELECT a.*,t.name AS term_name FROM academic_calendar_entries a
+   LEFT JOIN academic_terms t ON t.id=a.term_id ORDER BY a.starts_on ASC,a.created_at ASC LIMIT 500`)});
+  requireRole(user,'admin','staff');const b=await input(req);
+  if(method==='DELETE'){
+   const entryId=short(b.id,100);
+   if(!await first(db,'SELECT id FROM academic_calendar_entries WHERE id=?',entryId))error('Calendar entry not found',404);
+   await run(db,'DELETE FROM academic_calendar_entries WHERE id=?',entryId);
+   await audit(db,user,'delete','academic_calendar',entryId);
+   return json({ok:true});
+  }
+  if(method!=='POST'&&method!=='PATCH')error('Method not allowed',405);
+  const title=short(b.title,140),kind=short(b.kind,30),notes=short(b.notes,700);
+  if(!title||typeof b.title!=='string'||b.title.length>140)error('Enter a calendar title of up to 140 characters');
+  if(!['holiday','closure','assessment','parent_meeting','school_event','other'].includes(kind))error('Choose a recognised calendar event type');
+  if(!isDbsDate(b.starts_on)||!isDbsDate(b.ends_on)||b.starts_on>b.ends_on)error('Choose valid start and end dates');
+  const termId=short(b.term_id,100)||null;
+  if(termId){
+   const term=await first(db,'SELECT starts_on,ends_on FROM academic_terms WHERE id=?',termId);
+   if(!term)error('Selected academic term does not exist',404);
+   if(b.starts_on<term.starts_on||b.ends_on>term.ends_on)error('Calendar dates must fall within their selected term');
+  }
+  const entryId=method==='PATCH'?short(b.id,100):id();
+  if(method==='PATCH'&&!await first(db,'SELECT id FROM academic_calendar_entries WHERE id=?',entryId))error('Calendar entry not found',404);
+  if(method==='POST')await run(db,'INSERT INTO academic_calendar_entries(id,term_id,title,kind,starts_on,ends_on,notes,created_by) VALUES(?,?,?,?,?,?,?,?)',entryId,termId,title,kind,b.starts_on,b.ends_on,notes,user.id);
+  else await run(db,'UPDATE academic_calendar_entries SET term_id=?,title=?,kind=?,starts_on=?,ends_on=?,notes=?,updated_at=? WHERE id=?',termId,title,kind,b.starts_on,b.ends_on,notes,iso(),entryId);
+  await audit(db,user,method==='POST'?'create':'update','academic_calendar',entryId);
+  return json({ok:true,id:entryId});
+ }
+ // Guardian-controlled future-channel consent. No outbound SMS/WhatsApp is enabled by this API.
+ // In-app transactional notices and essential operational email are unaffected.
+ if(path==='/api/communication-preferences'){
+  requireRole(user,'parent');
+  const linked=await first(db,"SELECT id FROM students WHERE parent_id=? AND status='active' LIMIT 1",user.id);
+  if(!linked)error('No currently linked pupil account',403);
+  if(method==='GET'){
+   const current=await first(db,'SELECT mobile_e164,sms_opt_in,whatsapp_opt_in,community_updates_opt_in,consent_updated_at,updated_at FROM guardian_communication_preferences WHERE user_id=?',user.id);
+   return json({preferences:current||{mobile_e164:'',sms_opt_in:0,whatsapp_opt_in:0,community_updates_opt_in:0,consent_updated_at:null}});
+  }
+  if(method!=='POST')error('Method not allowed',405);
+  const b=await input(req);
+  for(const key of ['sms_opt_in','whatsapp_opt_in','community_updates_opt_in'])
+   if(typeof b[key]!=='boolean')error('All communication choices must be explicitly selected');
+  if(typeof b.mobile_e164!=='string'||b.mobile_e164.length>20)error('Enter a valid international mobile number');
+  const mobile=short(b.mobile_e164,20);
+  if(mobile&&!/^\+[1-9]\d{7,14}$/.test(mobile))error('Enter mobile number in international format, e.g. +447700900123');
+  if((b.sms_opt_in||b.whatsapp_opt_in)&&!mobile)error('A mobile number is required before opting in to SMS or WhatsApp');
+  if((b.sms_opt_in||b.whatsapp_opt_in||b.community_updates_opt_in)&&b.confirm_consent!==true)
+   error('Please confirm the communication consent statement');
+  const n=iso(),sms=Number(b.sms_opt_in),wa=Number(b.whatsapp_opt_in),community=Number(b.community_updates_opt_in);
+  const previous=await first(db,'SELECT mobile_e164,sms_opt_in,whatsapp_opt_in,community_updates_opt_in FROM guardian_communication_preferences WHERE user_id=?',user.id);
+  const changed=!previous||previous.mobile_e164!==mobile||Number(previous.sms_opt_in)!==sms||Number(previous.whatsapp_opt_in)!==wa||Number(previous.community_updates_opt_in)!==community;
+  if(changed){
+   await db.batch([
+    db.prepare(`INSERT INTO guardian_communication_preferences(user_id,mobile_e164,sms_opt_in,whatsapp_opt_in,community_updates_opt_in,consent_updated_at,updated_at)
+      VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET mobile_e164=excluded.mobile_e164,sms_opt_in=excluded.sms_opt_in,whatsapp_opt_in=excluded.whatsapp_opt_in,community_updates_opt_in=excluded.community_updates_opt_in,consent_updated_at=excluded.consent_updated_at,updated_at=excluded.updated_at`)
+     .bind(user.id,mobile,sms,wa,community,n,n),
+    db.prepare('INSERT INTO guardian_communication_preference_audit(id,user_id,changed_by,sms_opt_in,whatsapp_opt_in,community_updates_opt_in,mobile_e164,changed_at) VALUES(?,?,?,?,?,?,?,?)')
+     .bind(id(),user.id,user.id,sms,wa,community,mobile,n)
+   ]);
+   await audit(db,user,'update','communication_preferences',user.id,'Parent-controlled messaging choices changed');
+  }
+  return json({ok:true,changed,external_delivery_enabled:false});
+ }
+
  if(path==='/api/search'&&method==='GET'){
   const query=short(u.searchParams.get('q')||'',70);if(query.length<2)return json({students:[],homework:[],classes:[]});const like='%'+query.replace(/[\%_]/g,x=>'\\'+x)+'%';const scope=studentScope(user);
   const students=await all(db,`SELECT s.id,s.student_no,s.first_name,s.last_name,c.name AS class_name FROM students s LEFT JOIN classes c ON c.id=s.class_id WHERE ${scope.where} AND (s.first_name LIKE ? ESCAPE '\\' OR s.last_name LIKE ? ESCAPE '\\' OR s.student_no LIKE ? ESCAPE '\\') LIMIT 10`,...scope.args,like,like,like);

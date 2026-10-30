@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import worker from '../src/worker.js';
 import assert from 'node:assert/strict';
 import {pbkdf2Sync,randomBytes} from 'node:crypto';
-const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0008_pupil_progress_reports.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0009_compliance_communications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0010_staff_dbs_review.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0011_dbs_evidence_received.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0012_in_app_notifications.sql',import.meta.url),'utf8'));
+const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0008_pupil_progress_reports.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0009_compliance_communications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0010_staff_dbs_review.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0011_dbs_evidence_received.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0012_in_app_notifications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0013_academic_calendar_communication_preferences.sql',import.meta.url),'utf8'));
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
 for(const filename of ['0001_initial.sql','0002_expanded_admissions.sql','0003_safeguarding_declarations.sql']) oldDb.exec(fs.readFileSync(new URL('../migrations/'+filename,import.meta.url),'utf8'));
@@ -1077,8 +1077,57 @@ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM portal_notifications WHER
  'Daily cleanup removes notices older than 365 days');
 
 
+// v1.8.0 — academic term and calendar validation, family channel consent and withdrawal.
+const termData=(name,starts_on,ends_on)=>({name,academic_year:'2026/27',starts_on,ends_on,notes:'Test term'});
+let acad=await req('/academic/terms',termData('Autumn','2026-09-05','2026-12-18'));assert.equal(acad.status,200,JSON.stringify(acad.data));
+const autumn=acad.data.id;
+acad=await req('/academic/terms',termData('Impossible','2026-02-30','2026-03-02'));assert.equal(acad.status,400);
+acad=await req('/academic/terms',termData('Overlap','2026-11-01','2027-01-31'));assert.equal(acad.status,409);
+acad=await req('/academic/terms',termData('Spring','2027-01-06','2027-03-31'));assert.equal(acad.status,200);
+let dateEvent=await req('/academic/calendar',{term_id:autumn,title:'October closure',kind:'holiday',starts_on:'2026-10-26',ends_on:'2026-10-30',notes:'No lessons'});
+assert.equal(dateEvent.status,200,JSON.stringify(dateEvent.data));const eventId=dateEvent.data.id;
+acad=await req('/academic/calendar',{term_id:autumn,title:'Out of term',kind:'holiday',starts_on:'2027-01-07',ends_on:'2027-01-08'});assert.equal(acad.status,400);
+acad=await req('/academic/calendar',{title:'Invalid classification',kind:'private_note',starts_on:'2026-11-01',ends_on:'2026-11-01'});assert.equal(acad.status,400);
+acad=await req('/academic/terms',{id:autumn,...termData('Autumn shortened','2026-11-01','2026-12-18')},'PATCH');assert.equal(acad.status,409);
+acad=await req('/academic/terms',{id:autumn},'DELETE');assert.equal(acad.status,409);
+acad=await req('/academic/calendar');assert.equal(acad.status,200);
+assert.ok(acad.data.items.some(x=>x.id===eventId&&x.term_name==='Autumn'));
+
+cookie=parent_cookie;csrf=parent_csrf;
+acad=await req('/academic/terms');assert.equal(acad.status,200,'Parents may view school terms');
+acad=await req('/academic/calendar');assert.equal(acad.status,200,'Parents may view school dates');
+acad=await req('/academic/terms',termData('No permission','2027-05-01','2027-06-01'));assert.equal(acad.status,403);
+acad=await req('/academic/calendar',{title:'False event',kind:'other',starts_on:'2027-01-01',ends_on:'2027-01-01'});assert.equal(acad.status,403);
+let pref=await req('/communication-preferences');assert.equal(pref.status,200);assert.equal(pref.data.preferences.sms_opt_in,0);
+const chosen={mobile_e164:'+447700900123',sms_opt_in:true,whatsapp_opt_in:true,community_updates_opt_in:true,confirm_consent:true};
+pref=await req('/communication-preferences',{...chosen,confirm_consent:false});assert.equal(pref.status,400,'Explicit opt-in confirmation required');
+pref=await req('/communication-preferences',{...chosen,mobile_e164:'07700900123'});assert.equal(pref.status,400);
+pref=await req('/communication-preferences',{...chosen,mobile_e164:''});assert.equal(pref.status,400);
+pref=await req('/communication-preferences',{...chosen,user_id:'fake-other-user'});assert.equal(pref.status,200,JSON.stringify(pref.data));
+assert.equal(pref.data.external_delivery_enabled,false,'No external sending enabled by an opt-in');
+pref=await req('/communication-preferences');assert.equal(pref.data.preferences.sms_opt_in,1);assert.equal(pref.data.preferences.whatsapp_opt_in,1);
+assert.equal(pref.data.preferences.mobile_e164,chosen.mobile_e164);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM guardian_communication_preference_audit WHERE user_id=?').get(guardian_id).n,1);
+pref=await req('/communication-preferences',chosen);assert.equal(pref.data.changed,false);
+pref=await req('/communication-preferences',{mobile_e164:'',sms_opt_in:false,whatsapp_opt_in:false,community_updates_opt_in:false,confirm_consent:false});assert.equal(pref.status,200);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM guardian_communication_preference_audit WHERE user_id=?').get(guardian_id).n,2,'Withdrawal audited');
+pref=await req('/communication-preferences');assert.equal(pref.data.preferences.sms_opt_in,0);
+
+cookie=teacherCookie;csrf=teacherSession.data.csrf;
+pref=await req('/communication-preferences');assert.equal(pref.status,403,'Staff role cannot view family preferences');
+pref=await req('/communication-preferences',null,'GET',true,'family');assert.equal(pref.status,200,'Dual-role user can view Family preferences');
+pref=await req('/communication-preferences',{...chosen,whatsapp_opt_in:false},'POST',true,'family');assert.equal(pref.status,200,'Dual-role user can opt-in in Family view');
+pref=await req('/communication-preferences');assert.equal(pref.status,403);
+cookie=savedAdminCookie;csrf=savedAdminCsrf;
+acad=await req('/academic/calendar',{id:eventId},'DELETE');assert.equal(acad.status,200);
+acad=await req('/academic/terms',{id:autumn},'DELETE');assert.equal(acad.status,200);
+const checkCookie=cookie,checkCsrf=csrf;cookie='';csrf='';
+acad=await req('/academic/terms');assert.equal(acad.status,401);
+pref=await req('/communication-preferences');assert.equal(pref.status,401);
+cookie=checkCookie;csrf=checkCsrf;
+
 z=await req('/auth/logout',{});assert.equal(z.status,200);
-console.log('PASS: admissions, learning, reports, messages, in-app notifications, DBS storage, compliance and retention.');
+console.log('PASS: admissions, learning, academic calendar, parent communication consent, notifications, DBS and compliance.');
 
 const admissionsUi=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
 assert.equal(admissionsUi.includes("field('Daytime mobile number'"),false);
@@ -1125,6 +1174,10 @@ assert.ok(admissionsUi.includes("case 'compliance-concern'"),'Office can submit 
 assert.ok(admissionsUi.includes("case'compliance':content=compliancePage();"),'Compliance navigation has a rendered page');
 assert.ok(admissionsUi.includes("h(m.body)"),'Private messages are HTML escaped');
 
+assert.ok(admissionsUi.includes('function academicCalendarPage()'),'Calendar page exists');
+assert.ok(admissionsUi.includes('function communicationPreferencesPage()'),'Guardian preferences page exists');
+assert.ok(admissionsUi.includes("case 'academic-term'"),'Academic term form exists');
+assert.ok(admissionsUi.includes("formId==='communication-preferences-form'"),'Consent form submits');
 const notificationsWorker=fs.readFileSync(new URL('../src/worker.js',import.meta.url),'utf8');
 assert.ok(notificationsWorker.includes('studentNotificationRecipient'),'Guardian-only notification routing exists');
 assert.ok(notificationsWorker.includes('notifyGuardianAboutRecord'),'Homework and behaviour notices share secure email routing');
