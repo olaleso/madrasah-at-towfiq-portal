@@ -242,3 +242,22 @@ Once deployed, admins open **Compliance Centre → Staff DBS checking register**
 ### v1.6.2 — Certificate required when recording a DBS check
 
 Use **Compliance → Staff DBS checking register → Record/Edit**. The certificate upload is now inside the same form. The server requires a real PDF, PNG or JPEG upload when creating a new record, repairing a previous metadata-only entry, or changing the certificate issue date. All date fields and file are saved together, and a storage failure does not save the new check. The pre-existing private R2 bucket and 180-day lifecycle rule remain required. `0011_dbs_evidence_received.sql` preserves a simple date indicating evidence was received after the copy has been purged. See README and `docs/PRIVATE_DBS_STORAGE.md` for the privacy rules.
+
+## v1.7.0 — In-app notifications (no external provider needed)
+
+Apply additive D1 migration `0012_in_app_notifications.sql` **before** deploying the Worker. Existing Cloudflare R2 and mail credentials remain unchanged. No SMS provider account, token or API key is needed for this release.
+
+```powershell
+git pull origin main
+npm run test
+if ($LASTEXITCODE -ne 0) { throw "Tests failed; do not deploy" }
+# First confirm a working Cloudflare D1 recovery path; prior export and Time Travel
+# authentication-error 10000 should be resolved before another production schema change.
+npm run db:migrate:remote
+if ($LASTEXITCODE -ne 0) { throw "D1 migration failed; do not deploy" }
+npm run deploy
+```
+
+Acceptance test with **fictional** data: sign in as a guardian linked to a test pupil, have a teacher create a homework assignment and send a message, and confirm the guardian’s bell badge increases. Open **Community → My notifications**, select an update and confirm it opens the correct page. Sign in as another parent or enter Family view to ensure only authorised notifications are visible. Publish a draft progress report to trigger a new notification; editing a previously published report should not duplicate the alert. Mark all as read and confirm the badge clears.
+
+No existing in-app alerts are backfilled for historical records. Existing emails remain separate, and this release makes no SMS/WhatsApp API calls.
