@@ -1016,12 +1016,16 @@ delete env.DBS_FILES;
 
 
 // v1.7.0 — provider-independent in-app notifications, role scoping and read receipts.
+// Early behaviour exercises occurred before the guardian accepted their invitation.
+// Active guardians receive new events after account activation, not a historical backfill.
+const newCharacterUpdate=await req('/behaviour',{student_id,reason_code:'kindness',notes:'Private notes for attendance and pastoral review'});
+assert.equal(newCharacterUpdate.status,200,JSON.stringify(newCharacterUpdate.data));
 cookie=parent_cookie;csrf=parent_csrf;
 let notice=await req('/notifications');
 assert.equal(notice.status,200,JSON.stringify(notice.data));
 const familyKinds=new Set(notice.data.items.map(x=>x.kind));
 for(const kind of ['homework','behaviour','invoice','payment','progress','message']){
- assert.ok(familyKinds.has(kind),'Parent notification inbox should include '+kind+' events. Visible: '+Array.from(familyKinds).join(', ')+'; stored: '+sqlite.prepare('SELECT kind,recipient_id,student_id,source_id FROM portal_notifications').all().map(x=>x.kind+'('+x.recipient_id+')').join(', '));
+ assert.ok(familyKinds.has(kind),'Parent notification inbox should include '+kind+' events created after activation');
 }
 assert.ok(notice.data.unread>0,'New records must appear unread');
 assert.ok(notice.data.items.every(x=>!('recipient_id' in x)),'Do not expose notification recipient identities in response payload');
