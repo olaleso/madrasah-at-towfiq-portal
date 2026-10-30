@@ -581,12 +581,52 @@ async function financeEmailForInvoice(db,env,invoiceId,kind,actor,paymentPence=0
  return {notification_status:result};
 }
 
+
+// Masjid website video curation. Uses an existing settings row: no schema changes,
+// no cross-domain access to private pupil/guardian records.
+const MASJID_VIDEO_KEY='masjid_public_videos_v1';
+const MASJID_VIDEO_CATEGORIES=['Khutbah','Lecture','Qur’an','Community'];
+function masjidYoutubeId(value){
+ try{
+  const u=new URL(String(value||'').trim());
+  if(u.protocol!=='https:')return null;
+  const host=u.hostname.toLowerCase(),parts=u.pathname.split('/').filter(Boolean);
+  let candidate='';
+  if(host==='youtu.be'||host==='www.youtu.be')candidate=parts[0]||'';
+  else if(['youtube.com','www.youtube.com','m.youtube.com','www.youtube-nocookie.com','youtube-nocookie.com'].includes(host)){
+   candidate=parts[0]==='watch'?u.searchParams.get('v')||'':['shorts','live','embed'].includes(parts[0])?parts[1]||'':'';
+  }
+  return /^[A-Za-z0-9_-]{11}$/.test(candidate)?candidate:null;
+ }catch{return null;}
+}
+async function masjidVideos(db){
+ const row=await first(db,'SELECT value FROM school_settings WHERE key=?',MASJID_VIDEO_KEY);
+ if(!row?.value)return [];
+ const list=JSON.parse(row.value);
+ if(!Array.isArray(list))throw Error('Invalid website video content');
+ return list.slice(0,30);
+}
+function publicMasjidVideo(v){
+ return {id:v.id,youtube_id:v.youtube_id,title:v.title,description:v.description,category:v.category,
+         published_at:v.published_at||null,featured:!!v.featured};
+}
+async function saveMasjidVideos(db,items){
+ await run(db,'INSERT INTO school_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',MASJID_VIDEO_KEY,JSON.stringify(items));
+}
+
 const escapeHtml=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function handle(req,env){
  const u=new URL(req.url), path=u.pathname,method=req.method,db=env.DB;
  if(!db)error('Cloudflare D1 binding missing. Configure wrangler.jsonc and run migrations.',503);
  if(method!=='GET') consented(req);
  if(path==='/api/health')return json({ok:true,service:'Madrasah At-Towfiq portal'});
+
+ if(path==='/api/public/masjid-videos'){
+  if(method!=='GET')error('Method not allowed',405);
+  const entries=await masjidVideos(db);
+  return json({items:entries.filter(v=>v.published).map(publicMasjidVideo)},200,{'Cache-Control':'public, max-age=30, s-maxage=60'});
+ }
+
  if(path==='/api/auth/setup-status' && method==='GET'){const a=await first(db,"SELECT COUNT(*) AS n FROM users WHERE role='admin'");return json({needs_setup:!a?.n});}
  if(path==='/api/auth/setup' && method==='POST'){
   const b=await input(req),n=await first(db,"SELECT COUNT(*) AS n FROM users WHERE role='admin'");if(n?.n)error('Initial setup already completed',409);
@@ -668,6 +708,52 @@ async function handle(req,env){
    return json({user:{id:user.id,name:user.name,email:user.email,role:user.primary_role||user.role,has_family:!!family},csrf});
  }
  if(method!=='GET'){const received=req.headers.get('x-csrf-token');if(!received||!(await safeEqual(await sha(received),user.csrf_hash)))error('Security token expired. Reload your page.',403);}
+
+ if(path==='/api/website/videos'){
+  requireRole(user,'admin');
+  if(method==='GET')return json({items:await masjidVideos(db)});
+  if(method!=='POST')error('Method not allowed',405);
+  const body=await input(req);
+  const action=String(body.action||'');
+  const items=await masjidVideos(db);
+  if(!['create','update','toggle','delete','move'].includes(action))error('Invalid video action');
+  let target=items.find(v=>v.id===body.id);
+  if(action!=='create'&&!target)error('Video not found',404);
+  if(action==='create'||action==='update'){
+   const url=String(body.url||'').trim(),youtubeId=masjidYoutubeId(url);
+   const title=String(body.title||'').trim(),description=String(body.description||'').trim();
+   const category=String(body.category||'Lecture');
+   if(!youtubeId)error('Enter a valid public YouTube watch, live, Shorts or youtu.be link');
+   if(title.length<4||title.length>140)error('Video title must be between 4 and 140 characters');
+   if(description.length>450)error('Video description must not exceed 450 characters');
+   if(!MASJID_VIDEO_CATEGORIES.includes(category))error('Choose a valid video category');
+   if(items.some(v=>v.youtube_id===youtubeId&&v.id!==body.id))error('That YouTube video is already on the list',409);
+   if(action==='create'&&items.length>=30)error('You can manage up to 30 videos. Remove an old entry first');
+   const record={id:target?.id||id(),url:'https://www.youtube.com/watch?v='+youtubeId,youtube_id:youtubeId,
+     title,description,category,published:body.published===true,featured:body.featured===true,
+     published_at:target?.published_at||null,created_at:target?.created_at||iso(),updated_at:iso()};
+   if(record.published && !record.published_at)record.published_at=iso();
+   if(!record.published)record.featured=false;
+   if(record.featured)for(const item of items)item.featured=false;
+   if(target)items[items.indexOf(target)]=record;else items.unshift(record);
+   target=record;
+  }else if(action==='toggle'){
+   target.published=!target.published;
+   if(!target.published)target.featured=false;
+   if(target.published&&!target.published_at)target.published_at=iso();
+   target.updated_at=iso();
+  }else if(action==='delete'){
+   items.splice(items.indexOf(target),1);
+  }else if(action==='move'){
+   const from=items.indexOf(target),to=from+(body.direction==='up'?-1:body.direction==='down'?1:0);
+   if(to<0||to>=items.length||to===from)error('Cannot move that video in this direction');
+   items.splice(from,1);items.splice(to,0,target);
+  }
+  await saveMasjidVideos(db,items);
+  await audit(db,user,action,'masjid_website_video',target?.id||'',target?.youtube_id||'');
+  return json({ok:true,items});
+ }
+
  if(path==='/api/auth/logout'&&method==='POST'){await run(db,'DELETE FROM sessions WHERE token_hash=?',user.token_hash);return json({ok:true},200,{'Set-Cookie':setCookie(req,'',0)});}
  if(path==='/api/auth/password'&&method==='POST'){const b=await input(req),r=await first(db,'SELECT password_hash,password_salt FROM users WHERE id=?',user.id);if(!await verifyPassword(b.current_password||'',r.password_salt,r.password_hash))error('Current password is incorrect');if(String(b.new_password||'').length<12)error('New password must be at least 12 characters');const salt=b64(crypto.getRandomValues(new Uint8Array(16)));await run(db,'UPDATE users SET password_hash=?,password_salt=? WHERE id=?',await passwordHash(b.new_password,salt),salt,user.id);await run(db,'DELETE FROM sessions WHERE user_id=? AND token_hash<>?',user.id,user.token_hash);return json({ok:true});}
 
