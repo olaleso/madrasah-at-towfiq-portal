@@ -1067,8 +1067,8 @@ notice=await req('/notifications');assert.equal(notice.status,200);
 assert.ok(!notice.data.items.some(x=>x.id===firstNotice.id),'Admin may not enumerate another account’s notices');
 const unauthNotice=await req('/notifications',null,'GET',false);
 assert.equal(unauthNotice.status,401,'Unauthenticated users cannot read notifications');
-assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM portal_notifications WHERE kind='homework' AND source_id=? AND recipient_id=?").get(homework_id,guardian_id).n,1,
- 'Each event is represented once per recipient');
+assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM portal_notifications WHERE kind='behaviour' AND source_id=? AND recipient_id=?").get(newCharacterUpdate.data.id,guardian_id).n,1,
+ 'Each event created after guardian activation is represented once per recipient');
 sqlite.prepare('UPDATE portal_notifications SET created_at=? WHERE id=?').run('2020-01-01 00:00:00',hiddenId);
 const scheduledNotificationJobs=[];
 await worker.scheduled({cron:'0 6 * * *'},env,{waitUntil(p){scheduledNotificationJobs.push(p);}});
