@@ -911,6 +911,20 @@ function invitationNotice(result,guardianName='parent / guardian'){
 }
 function csvParse(input){const rows=[];let row=[],cell='',q=false;for(let i=0;i<input.length;i++){const c=input[i];if(c==='"'){if(q&&input[i+1]==='"'){cell+='"';i++;}else q=!q;}else if(c===','&&!q){row.push(cell);cell='';}else if((c==='\n'||c==='\r')&&!q){if(c==='\r'&&input[i+1]==='\n')i++;row.push(cell);cell='';if(row.some(v=>v.trim()))rows.push(row);row=[];}else cell+=c;}row.push(cell);if(row.some(v=>v.trim()))rows.push(row);const hdr=rows.shift()?.map(x=>x.trim().toLowerCase())||[];return rows.map(r=>Object.fromEntries(hdr.map((key,i)=>[key,(r[i]||'').trim()])));}
 async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
+
+ if(a==='website-edit'){S.websiteEditId=selectedId||'';renderPage();document.querySelector('.website-editor')?.scrollIntoView({behavior:'smooth'});return;}
+ if(a==='website-cancel'){S.websiteEditId='';renderPage();return;}
+ if(a==='website-toggle'||a==='website-delete'||a==='website-move'){
+  if(!userCan('admin'))throw Error('Administrator access required');
+  const video=get('website/videos').find(v=>v.id===selectedId);if(!video)return;
+  if(a==='website-delete'&&!await confirmDialog({title:'Remove this YouTube video?',message:'Delete "'+video.title+'" from the masjid website library?',details:'The original video remains on YouTube. Visitors will no longer see this listing.',actionLabel:'Delete video',tone:'danger'}))return;
+  const actionName=a==='website-delete'?'delete':a==='website-toggle'?'toggle':'move';
+  await post('/website/videos',{action:actionName,id:selectedId,...(a==='website-move'?{direction:el.dataset.direction}:{})});
+  S.websiteEditId='';
+  toast(actionName==='delete'?'Video removed':actionName==='toggle'?(video.published?'Video unpublished':'Video published'):'Display order updated');
+  await navigate('website');return;
+ }
+
  if(a==='nav-group'){
   const groupId=el.dataset.group;
   if(!NAV_GROUPS.some(g=>g.id===groupId))return;
@@ -1074,6 +1088,16 @@ function notificationResultMessage(result,recordType){
  return label+' saved · parent notification not sent; check the email log in Settings';
 }
 async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.fromEntries(new FormData(form).entries());const close=()=>document.querySelector('.modal-overlay')?.remove();let refresh=S.page;
+
+ if(formId==='website-video-form'){
+  if(!userCan('admin'))throw Error('Administrator access required');
+  const fd=new FormData(form);
+  await post('/website/videos',{action:raw.id?'update':'create',id:raw.id||undefined,url:raw.url,title:raw.title,
+    category:raw.category,description:raw.description||'',published:fd.has('published'),featured:fd.has('featured')});
+  S.websiteEditId='';toast(raw.id?'Video details saved':'YouTube video added');
+  await navigate('website');return;
+ }
+
  if(formId==='auth-form'){
   const mode=S.authMode;let endpoint=mode==='login'?'/auth/login':mode==='setup'?'/auth/setup':mode==='forgot'?'/auth/forgot':mode==='invite'?'/auth/accept-invite':'/auth/reset';const args={...raw};if(mode==='invite')args.token=new URLSearchParams(location.search).get('invite');if(mode==='reset')args.token=new URLSearchParams(location.search).get('reset');if(mode==='reset'&&args.password!==args.confirm_password)throw Error('The two passwords must match.');
   const r=await post(endpoint,args);
@@ -1217,7 +1241,7 @@ else if(formId==='attendance-form'){
  close();if(S.studentId && ['student-form','homework-form','grade-homework-form','behaviour-form','payment-form','invoice-form','progress-report-form'].includes(formId)){await navigate('students',{keepStudent:true});}else await navigate(refresh);
 }
 document.addEventListener('click',async e=>{const el=e.target.closest('[data-action]');if(!el)return;const a=el.dataset.action;try{if(a==='copy-invite'){const v=$('#invitation-url');await navigator.clipboard.writeText(v.value);toast('Invitation link copied');return;}await action(a,el);}catch(err){toast(err.message,true);console.error(err);}});
-document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','class-assignment-form','class-roster-form','admission-form','invoice-form','payment-form','announcement-form','message-form','reply-message-form','dbs-record-form','dbs-upload-form','policy-record-form','compliance-concern-form','event-form','quiz-form','invite-form','guardian-invite-form','edit-user-form','password-form','attendance-form','progress-report-form','settings-form','automation-form','academic-term-form','academic-entry-form','communication-preferences-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
+document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','class-assignment-form','class-roster-form','admission-form','invoice-form','payment-form','announcement-form','message-form','reply-message-form','dbs-record-form','dbs-upload-form','policy-record-form','compliance-concern-form','event-form','quiz-form','invite-form','guardian-invite-form','edit-user-form','password-form','attendance-form','progress-report-form','settings-form','automation-form','academic-term-form','academic-entry-form','communication-preferences-form','website-video-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
 document.addEventListener('input',e=>{if(e.target.closest('#homework-form')&&['verse_from','verse_to'].includes(e.target.name))updateSurahVerseLimits();if(e.target.name==='greeting_name'&&e.target.closest('#guardian-invite-form')){const preview=$('#guardian-invite-preview');if(preview)preview.textContent='Dear '+(e.target.value.trim()||'Parent')+',';}});
 function updateDbsCertificateRequirement(){
  const form=document.querySelector('#dbs-record-form');
