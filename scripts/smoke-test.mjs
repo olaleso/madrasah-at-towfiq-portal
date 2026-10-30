@@ -34,6 +34,33 @@ assert.match(storedPassword,/^pbkdf2-sha256:100000:[A-Za-z0-9+/]+={0,2}$/);
 let loginTest=await req('/auth/login',{email:'admin@example.test',password:'this-is-a-secure-test-password'},'POST',false);
 assert.equal(loginTest.status,200,JSON.stringify(loginTest.data));
 z=await req('/auth/me');assert.equal(z.status,200);csrf=z.data.csrf;
+
+// Regression: admin-curated masjid website video publishing and public-only feed.
+let videoCheck=await req('/public/masjid-videos',undefined,'GET',false);
+assert.equal(videoCheck.status,200,'Public masjid video endpoint requires no portal login');
+assert.deepEqual(videoCheck.data.items,[]);
+videoCheck=await req('/website/videos',{action:'create',url:'https://youtu.be/AbCdEfG1234',title:'Friday Khutbah — Community',category:'Khutbah',description:'A public sermon',published:false,featured:false});
+assert.equal(videoCheck.status,200,JSON.stringify(videoCheck.data));
+const savedVideo=videoCheck.data.items[0];
+assert.equal(savedVideo.youtube_id,'AbCdEfG1234');
+videoCheck=await req('/public/masjid-videos',undefined,'GET',false);
+assert.deepEqual(videoCheck.data.items,[],'Drafts must never appear on the public feed');
+videoCheck=await req('/website/videos',{action:'toggle',id:savedVideo.id});
+assert.equal(videoCheck.status,200);
+videoCheck=await req('/public/masjid-videos',undefined,'GET',false);
+assert.equal(videoCheck.data.items.length,1,'A published video must appear in the public feed');
+assert.equal(videoCheck.data.items[0].title,'Friday Khutbah — Community');
+assert.equal(videoCheck.data.items[0].published,undefined,'Public feed must not expose private editor state');
+assert.equal(videoCheck.data.items[0].url,undefined,'Public feed only includes curated public fields');
+let invalidVideo=await req('/website/videos',{action:'create',url:'https://notyoutube.example/watch?v=AbCdEfG1234',title:'Malicious URL',published:true});
+assert.equal(invalidVideo.status,400,'Unapproved video URLs are rejected');
+invalidVideo=await req('/website/videos',{action:'create',url:'https://youtu.be/AbCdEfG1234',title:'Duplicate video',published:true});
+assert.equal(invalidVideo.status,409,'Duplicate YouTube IDs are not allowed');
+videoCheck=await req('/website/videos',{action:'delete',id:savedVideo.id});
+assert.equal(videoCheck.status,200);
+videoCheck=await req('/public/masjid-videos',undefined,'GET',false);
+assert.deepEqual(videoCheck.data.items,[],'Deletion removes video from public feed');
+
 // Old local preview accounts must remain readable after this fix.
 const legacySalt=randomBytes(16).toString('base64');
 const legacyDigest=pbkdf2Sync('legacy-password-123',Buffer.from(legacySalt,'base64'),210000,32,'sha256').toString('base64');
