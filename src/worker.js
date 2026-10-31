@@ -623,12 +623,13 @@ function publicAdmissionOrigin(req){
    (new URL(req.url).hostname==='localhost' && origin===new URL(req.url).origin)?origin:'';
 }
 function publicAdmissionCors(origin){
- return {'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'POST, OPTIONS',
+ return {'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'GET, POST, OPTIONS',
  'Access-Control-Allow-Headers':'Content-Type','Access-Control-Max-Age':'600','Vary':'Origin','Cache-Control':'no-store'};
 }
 async function publicAdmissionSubmit(req,env){
- if(req.method!=='POST')error('Method not allowed',405);
  if(!publicAdmissionOrigin(req))error('The application must be submitted from the official Madrasah website',403);
+ if(req.method==='GET')return json({accepting:true},200,{'Cache-Control':'no-store'});
+ if(req.method!=='POST')error('Method not allowed',405);
  if(!/^application\/json(?:\s*;|$)/i.test(req.headers.get('content-type')||''))error('JSON application required',415);
  const b=await input(req);
  if(b.website)return json({ok:true,reference:null,acknowledgement_status:'not_sent'});
