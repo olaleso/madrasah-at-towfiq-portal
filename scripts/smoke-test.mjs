@@ -1338,3 +1338,6 @@ assert.ok(admissionDashboardSource.includes("if(a==='admission-open')"),'Review 
 assert.ok(admissionDashboardSource.includes("label:'Admissions to review'"),'Dashboard KPI must show pending applications');
 assert.ok(!admissionDashboardSource.includes("Upcoming moments"),'Redundant upcoming moments panel should be replaced');
 assert.ok(admissionDashboardSource.includes("classChoices:get('classes')"),'Admissions approval must continue requiring class allocation');
+
+assert.ok(admissionDashboardSource.includes('id="admission-detail-status"'),'Application review dialog must expose status actions');
+assert.ok(admissionDashboardSource.includes('document.querySelector(\'.modal-overlay\')?.remove();'),'Successful admission decisions should close stale dialogs');

@@ -387,3 +387,10 @@
  .admissions-attention-panel .surface-head{gap:7px}
 }
 @media(prefers-reduced-motion:reduce){.metric-action{transition:none}.metric-action:hover{transform:none}}
+
+
+/* Quick decisions from the application detail dialog reuse the class-required approval flow. */
+.admission-decision-label{display:flex;align-items:center;gap:10px;font-weight:800;font-size:12px;color:#304a69;margin-left:auto}
+.admission-decision-label .select-small{min-width:138px}
+.admission-decision-hint{flex-basis:100%;color:#6d7f8f;font-size:11px;line-height:1.6;margin:0}
+@media(max-width:560px){.admission-decision-label{margin-left:0;width:100%;justify-content:space-between}}

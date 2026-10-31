@@ -296,7 +296,14 @@ function admissionDetails(a){if(!a)return;const line=(label,value)=>`<div class=
  ${block('Current learning level', [['Learning level',admissionLevel(a)],['Qaaidah page',a.qaaidah_page],['Qur’an surah / passage',a.quran_surah],['Reads and writes Arabic',yesNo(a.arabic_read_write)]])}
  ${block('Health & learning support', [['Medical information',a.medical_information],['Allergies',a.allergies],['Additional learning needs',a.additional_learning_needs]])}
  ${block('Parent / guardian declarations', [['Emergency first aid consent',a.consent_first_aid?'Agreed':'Not recorded'],['Internal learning photographs consent',a.consent_photos?'Agreed':'Not recorded'],['Additional notes',a.message]])}
- <div class="admission-end-actions"><button class="btn primary" data-action="modal" data-value="edit-admission" data-id="${h(a.id)}">${ico('edit',16)} Edit application</button></div>`,false,true);
+ <div class="admission-end-actions"><button class="btn primary" data-action="modal" data-value="edit-admission" data-id="${h(a.id)}">${ico('edit',16)} Edit application</button>
+  <label class="admission-decision-label" for="admission-detail-status">Status / decision
+   <select class="select-small" id="admission-detail-status" data-admission="${h(a.id)}" ${a.student_id?'disabled title="Enrolled pupil — manage from student profile"':''}>
+     ${htmlOptions([['new','New'],['reviewing','Reviewing'],['accepted','Accepted'],['declined','Declined']],a.status)}
+   </select>
+  </label>
+  <p class="admission-decision-hint">Accepting an application requires assigning a class. Guardian linking and notifications follow the existing admissions workflow.</p>
+ </div>`,false,true);
 }
 
 function updateInvoiceTargets(){
@@ -1322,6 +1329,7 @@ document.addEventListener('change',async e=>{const el=e.target;if(el.closest('#d
   // The admission was committed by the server. Do not report a subsequent
   // email/status popup or page refresh issue as a failed enrolment.
   toast(result.enrolled?'Application accepted — pupil enrolled successfully':'Admission status updated');
+  document.querySelector('.modal-overlay')?.remove();
   try{await navigate('admissions');}
   catch(refreshErr){console.warn('Admission saved; directory refresh failed',refreshErr);toast('Admission saved successfully. Refresh the directory to see the latest status.',false);}
   if(result.enrolled){
