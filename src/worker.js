@@ -1778,16 +1778,18 @@ export default {
   const isPublicAdmission=url.pathname==='/api/public/admissions';
   const origin=isPublicAdmission?publicAdmissionOrigin(req):'';
   if(isPublicAdmission&&req.method==='OPTIONS')
-   return origin?new Response(null,{status:204,headers:publicAdmissionCors(origin)}):new Response(null,{status:403});
+   return origin?new Response(null,{status:204,headers:{...publicAdmissionCors(origin),'X-Robots-Tag':'noindex'}}):new Response(null,{status:403,headers:{'X-Robots-Tag':'noindex'}});
   try{
    const result=await handle(req,env);
    if(origin)for(const [k,v] of Object.entries(publicAdmissionCors(origin)))result.headers.set(k,v);
+   result.headers.set('X-Robots-Tag','noindex, nofollow');
    return result;
   }catch(err){
    const code=err.status||(/UNIQUE constraint failed/i.test(err.message)?409:500);
    if(code>=500)console.error(err);
    const result=json({error:code>=500?'Unexpected server error':err.message},code);
    if(origin)for(const [k,v] of Object.entries(publicAdmissionCors(origin)))result.headers.set(k,v);
+   result.headers.set('X-Robots-Tag','noindex, nofollow');
    return result;
   }
 

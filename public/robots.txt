@@ -1,0 +1,5 @@
+# Madrasah At-Towfiq — public portal sign-in only
+User-agent: *
+Allow: /
+Disallow: /api/
+Sitemap: https://portal.attowfiqmasjid.org/sitemap.xml

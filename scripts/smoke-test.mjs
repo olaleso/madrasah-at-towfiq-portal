@@ -1341,3 +1341,16 @@ assert.ok(admissionDashboardSource.includes("classChoices:get('classes')"),'Admi
 
 assert.ok(admissionDashboardSource.includes('id="admission-detail-status"'),'Application review dialog must expose status actions');
 assert.ok(admissionDashboardSource.includes('document.querySelector(\'.modal-overlay\')?.remove();'),'Successful admission decisions should close stale dialogs');
+
+
+// The public portal login can be crawled; confidential API responses must not be indexed.
+const portalHomeHtml=fs.readFileSync(new URL('../public/index.html',import.meta.url),'utf8');
+const portalRobots=fs.readFileSync(new URL('../public/robots.txt',import.meta.url),'utf8');
+const portalSitemap=fs.readFileSync(new URL('../public/sitemap.xml',import.meta.url),'utf8');
+assert.ok(portalHomeHtml.includes('href="https://portal.attowfiqmasjid.org/"'),'Portal public login has canonical URL');
+assert.ok(portalHomeHtml.includes('name="robots" content="index,follow"'),'Public sign-in landing is indexable');
+assert.ok(portalSitemap.includes('<loc>https://portal.attowfiqmasjid.org/</loc>'),'Sitemap lists public portal landing only');
+assert.ok(!portalSitemap.includes('/api/')&&!portalSitemap.includes('/students'),'Private API and student routes excluded from portal sitemap');
+assert.ok(portalRobots.includes('Disallow: /api/'),'Portal API blocked from crawler requests');
+const portalHealth=await worker.fetch(new Request('https://portal.attowfiqmasjid.org/api/health'),env);
+assert.equal(portalHealth.headers.get('X-Robots-Tag'),'noindex, nofollow','Portal API responses explicitly opt out of indexing');
