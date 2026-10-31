@@ -9,7 +9,7 @@ const cap = s=>String(s||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase(
 const userCan=(...roles)=>roles.includes(S.user?.role);
 const icons={home:'<path d="m3 10 9-7 9 7v10H3z"/><path d="M9 20v-7h6v7"/>',students:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',book:'<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>',clipboard:'<rect x="6" y="4" width="12" height="18" rx="2"/><path d="M9 4.5V3h6v1.5M9 11h6M9 15h6"/>',heart:'<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8z"/>',calendar:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/>',cash:'<rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M6 12h.01M18 12h.01"/>',message:'<path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8A8.5 8.5 0 0 1 12.5 20a8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8z"/>',users:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',graduation:'<path d="m2 10 10-5 10 5-10 5zM6 12v5c3 3 9 3 12 0v-5M22 10v7"/>',chart:'<path d="M3 3v18h18M7 16V9M12 16V5M17 16v-6"/>',settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1-2.8 2.8-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5v.2h-4v-.2a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1-2.8-2.8.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3v-4h.2a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1 2.8-2.8.1.1a1.6 1.6 0 0 0 1.8.3 1.6 1.6 0 0 0 1-1.5V3h4v.2a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1 2.8 2.8-.1.1a1.6 1.6 0 0 0-.3 1.8 1.6 1.6 0 0 0 1.5 1h.2v4h-.2a1.6 1.6 0 0 0-1.5 1z"/>',bell:'<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/>',sparkle:'<path d="m12 3 1.9 6.1L20 11l-6.1 1.9L12 19l-1.9-6.1L4 11l6.1-1.9zM19 18l.8 2.2L22 21l-2.2.8L19 24l-.8-2.2L16 21l2.2-.8z"/>',arrow:'<path d="M5 12h14m-6-6 6 6-6 6"/>',plus:'<path d="M12 5v14M5 12h14"/>',menu:'<path d="M4 6h16M4 12h16M4 18h16"/>',close:'<path d="M18 6 6 18M6 6l12 12"/>',search:'<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',logout:'<path d="M10 17l5-5-5-5M15 12H3M12 3h7a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-7"/>',check:'<path d="m4 12 5 5L20 6"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',chevron:'<path d="m9 18 6-6-6-6"/>',download:'<path d="M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4"/>',shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/>',star:'<path d="m12 2 3 7 7 .7-5.3 4.7 1.6 7L12 18l-6.3 3.4 1.6-7L2 9.7 9 9z"/>',filter:'<path d="M4 7h16M7 12h10M10 17h4"/>',mail:'<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 6 10 8 10-8"/>',folder:'<path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3z"/>',file:'<path d="M14 2H6a2 2 0 0 0-2 2v16h16V8zM14 2v6h6M8 13h8M8 17h6"/>',award:'<circle cx="12" cy="8" r="5"/><path d="m8 12-1 10 5-3 5 3-1-10"/>',repeat:'<path d="M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3"/>',info:'<circle cx="12" cy="12" r="10"/><path d="M12 11v6M12 7h.01"/>',trash:'<path d="M3 6h18M8 6V4h8v2M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',edit:'<path d="M12 20H4v-8L16 0l8 8-12 12z"/>',eye:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',upload:'<path d="M12 17V3m-5 5 5-5 5 5M4 17v4h16v-4"/>',refresh:'<path d="M20 11a8 8 0 0 0-14-5l-3 3M3 3v6h6M4 13a8 8 0 0 0 14 5l3-3m0 6v-6h-6"/>',video:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/>'};
 const ico=(name,size=18)=>`<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icons[name]||icons.star}</svg>`;
-const S={user:null,staffRole:null,familyMode:false,csrf:'',page:'dashboard',data:{},studentId:null,studentTab:'overview',filter:'',modal:null,pending:false,attendanceDate:schoolToday(),attendanceClass:'',classroomClass:'',messageThread:'',dbsStorageReady:false,authMode:'login',search:'',navOpen:{},calendarMonth:'',websiteEditId:''};
+const S={user:null,staffRole:null,familyMode:false,csrf:'',page:'dashboard',data:{},studentId:null,studentTab:'overview',filter:'',modal:null,pending:false,attendanceDate:schoolToday(),attendanceClass:'',classroomClass:'',messageThread:'',dbsStorageReady:false,authMode:'login',search:'',navOpen:{},calendarMonth:'',websiteEditId:'',communityEditId:'',communityEnabled:false};
 // Keep daily work one click away. Everything else is grouped by task.
 const PRIMARY_NAV=[
  ['dashboard','Dashboard','home'],
@@ -36,7 +36,7 @@ const subtitles={academic:'School terms and important dates.',preferences:'Contr
 function toast(msg,bad=false){let el=document.createElement('div');el.className=bad?'error':'';el.textContent=msg;$('#toast').append(el);setTimeout(()=>el.remove(),4500);}
 async function api(path,opts={}){const config={credentials:'same-origin',headers:{...(opts.body?{'Content-Type':'application/json','x-csrf-token':S.csrf}:{}),...(S.familyMode?{'x-portal-view':'family'}:{}),...(opts.headers||{})},...opts};const res=await fetch('/api'+path,config);let payload={};try{payload=await res.json();}catch{}if(!res.ok){if(res.status===401&&S.user){S.user=null;S.authMode='login';renderAuth();}throw new Error(payload.error||'Request failed');}return payload;}
 const post=(path,body,method='POST')=>api(path,{method,body:JSON.stringify(body)});
-async function load(keys){await Promise.all(keys.map(async k=>{if(k==='compliance/dbs'&&!userCan('admin'))return;try{const result=await api('/'+k);S.data[k]=k==='communication-preferences'?(result.preferences?[result.preferences]:[]):(result.items||[]);if(k==='compliance/dbs')S.dbsStorageReady=!!result.storage_ready;if(k==='quizzes')S.data.quizzes_attempts=result.attempts||[];}catch(e){console.warn(k,e);S.data[k]=[];}}));}
+async function load(keys){await Promise.all(keys.map(async k=>{if(k==='compliance/dbs'&&!userCan('admin'))return;try{const result=await api('/'+k);S.data[k]=k==='communication-preferences'?(result.preferences?[result.preferences]:[]):(result.items||[]);if(k==='compliance/dbs')S.dbsStorageReady=!!result.storage_ready;if(k==='website/community')S.communityEnabled=result.enabled===true;if(k==='quizzes')S.data.quizzes_attempts=result.attempts||[];}catch(e){console.warn(k,e);S.data[k]=[];}}));}
 function get(k){return S.data[k]||[];}
 const sidName=s=>s?`${s.first_name} ${s.last_name}`:'Unknown pupil';
 const student=id=>get('students').find(x=>x.id===id);
@@ -67,7 +67,7 @@ const navLinks=()=>`<div class="nav-section-title">WORKSPACE</div>`+PRIMARY_NAV.
   return `<div class="nav-group"><button class="nav-group-btn ${expanded?'expanded':''} ${items.some(([key])=>key===S.page)?'has-active':''}" data-action="nav-group" data-group="${g.id}" aria-expanded="${expanded}" aria-controls="nav-items-${g.id}">${ico(g.icon,17)}<span>${g.title}</span><svg class="nav-caret" aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button><div id="nav-items-${g.id}" class="nav-submenu" ${expanded?'':'hidden'}>${items.map(item=>navItem(item,true)).join('')}</div></div>`;
  }).join('');
 function shell(content){$('#app').innerHTML=`<div class="shell" id="shell"><aside class="sidebar"><div class="side-head"><div class="logo-panel"><img alt="Madrasah At-Towfiq" src="/assets/at-towfiq-madrasah-logo.png"></div><p>Learning & character portal</p></div><nav class="nav-scroll">${navLinks()}</nav><div class="side-foot"><div><div class="avatar">${h(initials(S.user.name))}</div><div><strong>${h(S.user.name)}</strong><p>${cap(S.user.role)} account</p></div></div></div></aside><div class="overlay" data-action="menu"></div><div class="workspace"><header class="topbar"><div class="top-left"><button class="iconbtn mobilemenu" aria-label="Open navigation" data-action="menu">${ico('menu',19)}</button><div><div class="top-title">${h(titles[S.page]||'Madrasah At-Towfiq')}</div><div class="top-caption">Assalamu alaikum, ${h(S.user.name.split(' ')[0])}!</div></div></div><div class="top-right"><button class="iconbtn" aria-label="Global search" title="Search across the madrasah" data-action="global-search">${ico('search',18)}</button><span class="top-pill">${ico('shield',12)} &nbsp; ${S.familyMode?'Family':cap(S.user.role)} portal</span>${S.user.has_family && S.staffRole!=='parent'?`<button class="btn smol family-switch" data-action="family-switch" type="button">${ico('users',15)} ${S.familyMode?'Staff view':'Family view'}</button>`:''}<button class="iconbtn" title="Open my notifications" aria-label="Notifications" data-action="nav" data-value="notifications">${ico('bell',18)}${notificationUnreadCount()?`<span class="notify-bell-count">${notificationUnreadCount()>99?'99+':notificationUnreadCount()}</span>`:''}</button><button class="iconbtn" title="Sign out" data-action="logout">${ico('logout',17)}</button><div class="top-user"><div class="avatar">${h(initials(S.user.name))}</div><div><strong>${h(S.user.name)}</strong><span>${cap(S.user.role)}</span></div></div></div></header><main class="main" id="content">${userCan('admin')&&dbsWarningCount()&&S.page!=='compliance'?`<button type="button" class="dbs-global-alert" data-action="nav" data-value="compliance">${ico('bell',17)} ${dbsWarningCount()} DBS recheck${dbsWarningCount()===1?'':'s'} due within 60 days or overdue. View Compliance Centre ${ico('arrow',15)}</button>`:''}${content}<div class="footer-note">© ${new Date().getFullYear()} Madrasah At-Towfiq · Rooted in faith, guided by knowledge · Student information is private.</div></main></div></div>`;}
-const pageKeys={timetable:['timetable', 'classes'],academic:['academic/terms','academic/calendar'],preferences:['communication-preferences'],notifications:['notifications'],dashboard:['students','classes','homework','attendance','behaviour','events','announcements','fees','progress-reports','compliance/dbs'],classroom:['students','classes','homework','attendance','progress-reports'],progress:['progress-reports','students'],students:['students','classes','users','contacts','homework','behaviour','behaviour-catalog','attendance','fees','progress-reports'],homework:['students','classes','homework'],behaviour:['students','classes','behaviour','behaviour-catalog'],attendance:['students','classes','attendance'],classes:['classes','students','users','contacts'],admissions:['admissions','classes'],fees:['students','fees','payments'],communications:['messages','contacts','students','announcements'],compliance:['compliance/consents','compliance/policies','compliance/concerns','compliance/dbs'],events:['events','announcements'],reports:['reports','students','classes'],games:['quizzes','leaderboard'],automation:['email-log'],staff:['users'],guardians:['guardians'],settings:['settings','email-log','audit'],website:['website/videos','website/photos']};
+const pageKeys={timetable:['timetable', 'classes'],academic:['academic/terms','academic/calendar'],preferences:['communication-preferences'],notifications:['notifications'],dashboard:['students','classes','homework','attendance','behaviour','events','announcements','fees','progress-reports','compliance/dbs'],classroom:['students','classes','homework','attendance','progress-reports'],progress:['progress-reports','students'],students:['students','classes','users','contacts','homework','behaviour','behaviour-catalog','attendance','fees','progress-reports'],homework:['students','classes','homework'],behaviour:['students','classes','behaviour','behaviour-catalog'],attendance:['students','classes','attendance'],classes:['classes','students','users','contacts'],admissions:['admissions','classes'],fees:['students','fees','payments'],communications:['messages','contacts','students','announcements'],compliance:['compliance/consents','compliance/policies','compliance/concerns','compliance/dbs'],events:['events','announcements'],reports:['reports','students','classes'],games:['quizzes','leaderboard'],automation:['email-log'],staff:['users'],guardians:['guardians'],settings:['settings','email-log','audit'],website:['website/videos','website/photos','website/community']};
 async function navigate(page,options={}){if(!allowedPage(page))page='dashboard';S.page=page;S.filter='';S.search='';if(!options.keepStudent)S.studentId=null;$('#shell')?.classList.remove('menu-open');shell(`<div class="surface" style="min-height:230px">${blank('Loading your workspace','Connecting securely to the madrasah database…')}</div>`);try{await load([...new Set([...(pageKeys[page]||[]),...(page==='dashboard'&&userCan('admin','staff')?['admissions']:[]),'notifications'])]);renderPage();}catch(err){toast(err.message,true);}}
 function renderPage(){let content;switch(S.page){case'dashboard':content=dashboard();break;case'classroom':content=classroomPage();break;case'progress':content=progressPage();break;case'students':content=studentsPage();break;case'homework':content=homeworkPage();break;case'behaviour':content=behaviourPage();break;case'attendance':content=attendancePage();break;case'classes':content=classesPage();break;case'timetable':content=timetablePage();break;case'admissions':content=admissionsPage();break;case'fees':content=feesPage();break;case'academic':content=academicCalendarPage();break;case'preferences':content=communicationPreferencesPage();break;case'notifications':content=notificationPage();break;case'communications':content=communicationPage();break;case'compliance':content=compliancePage();break;case'events':content=eventsPage();break;case'reports':content=reportsPage();break;case'games':content=gamesPage();break;case'automation':content=automationPage();break;case'staff':content=staffPage();break;case'guardians':content=guardiansPage();break;case'settings':content=settingsPage();break;case'website':content=websitePage();break;default:content=dashboard();}shell(content);}
 function metrics(){
@@ -580,7 +580,7 @@ function communicationPreferencesPage(){
 function websiteVideosPage(){
  const items=get('website/videos'),chosen=items.find(v=>v.id===S.websiteEditId);
  const published=items.filter(v=>v.published).length;
- return `${pagehead('Website content · YouTube videos','Curate the masjid website’s videos and photograph gallery in one place.',`<a class="btn white" href="https://attowfiqmasjid.org/#videos" target="_blank" rel="noopener noreferrer">${ico('arrow',15)} View public website</a>`)}
+ return `<div class="surface-head" style="margin:26px 0 14px"><div><h3>YouTube videos</h3><p class="small muted">Publish lectures, Friday khutbahs and Qur’an recordings.</p></div></div>
  <div class="cards three website-stats">
   <div class="metric"><div class="metric-label">Videos saved</div><div class="metric-value">${items.length}</div><div class="trend">Up to 30 videos</div></div>
   <div class="metric"><div class="metric-label">Published online</div><div class="metric-value">${published}</div><div class="trend">Visible to website visitors</div></div>
@@ -618,7 +618,57 @@ function websiteVideosPage(){
  </section>`;
 }
 
-function websitePage(){return websiteVideosPage()+websitePhotosPage();}
+function websitePage(){return pagehead('Website content','Manage masjid events, community announcements, YouTube videos and approved photographs.',`<a class="btn white" href="https://attowfiqmasjid.org/" target="_blank" rel="noopener noreferrer">${ico('arrow',15)} View masjid website</a>`)+websiteCommunityPage()+websiteVideosPage()+websitePhotosPage();}
+
+function websiteCommunityPage(){
+ const items=get('website/community'),current=items.find(x=>x.id===S.communityEditId);
+ const active=S.communityEnabled;
+ const published=items.filter(x=>x.published).length;
+ return `<section class="surface masjid-community-admin" id="website-community-admin">
+   <div class="surface-head">
+    <div><h3>Masjid events & public announcements</h3>
+     <p class="small muted">Phase 1 · Manage real masjid activities independently from the Madrasah calendar.</p></div>
+    <a class="btn white" href="https://attowfiqmasjid.org/#whatson" target="_blank" rel="noopener noreferrer">View public section ↗</a>
+   </div>
+   <div class="masjid-community-banner">
+    <div><strong>${active?'Phase 1 is LIVE':'Phase 1 is OFF — current website preserved'}</strong>
+     <p>${active?'Approved community posts and mobile visitor shortcuts are visible. Turn off to restore the previous site without deleting anything.':'Create and publish content privately, then switch on when satisfied. The existing website design stays unchanged until then.'}</p>
+    </div>
+    <button type="button" class="btn ${active?'outline':'primary'}" data-action="community-enable" data-enabled="${active?'false':'true'}">${active?'Restore original site':'Enable Phase 1'}</button>
+   </div>
+   <div class="website-gallery-metrics"><span>${items.length} saved</span><span>${published} published</span><span>${items.length-published} drafts</span></div>
+   <div class="masjid-community-editor">
+    <div class="surface-head"><div><h3>${current?'Edit entry':'Add an event or announcement'}</h3><p class="small muted">Dates and details appear on the public site only after publication and Phase 1 activation.</p></div>${current?'<button class="btn white" type="button" data-action="community-cancel">Cancel edit</button>':''}</div>
+    <form id="website-community-form">
+     <input type="hidden" name="id" value="${h(current?.id||'')}">
+     <div class="form-grid">
+      ${select('Content type','kind',htmlOptions([['event','Masjid event'],['announcement','Masjid announcement']],current?.kind||'event'),'required')}
+      ${field('Public title','title',current?.title||'','text','required minlength="5" maxlength="120"','wide')}
+      ${field('Description / details','body',current?.body||'','textarea','required minlength="10" maxlength="1200"','wide')}
+      ${field('Event date (events only)','event_date',current?.event_date||'','date')}
+      ${field('Event start time (24-hour clock)','event_time',current?.event_time||'','time')}
+      ${field('Event venue','location',current?.location||'','text','maxlength="160" placeholder="Confirmed location"','wide')}
+      ${field('Announcement expiry (optional)','expires_on',current?.expires_on||'','date')}
+      <div class="wide website-checkboxes">
+       <label><input type="checkbox" name="published" ${current?.published?'checked':''}> Publish this item (requires Phase 1 to be enabled for public display)</label>
+       <label><input type="checkbox" name="pinned" ${current?.pinned?'checked':''}> Pin announcement to top</label>
+      </div>
+     </div>
+     <div class="website-form-footer"><p class="small muted">Use confirmed dates and details only. No fictional events or unverified Jumu'ah times.</p><button type="submit" class="btn primary">${ico('check',16)} ${current?'Save changes':'Save new item'}</button></div>
+    </form>
+   </div>
+   <div class="surface-head"><div><h3>Community content library</h3><p class="small muted">Manage drafts and approved public posts; past events are automatically excluded from the public feed.</p></div></div>
+   ${items.length?`<div class="masjid-community-items">${items.map(x=>`<article class="masjid-community-entry">
+    <div class="masjid-community-entry-copy"><div class="row" style="gap:7px;flex-wrap:wrap">${tag(x.kind==='event'?'Event':'Announcement','blue')}${tag(x.published?'Published':'Draft',x.published?'green':'amber')}</div><h4>${h(x.title)}</h4><p>${h(x.body)}</p><small>${x.kind==='event'?h(x.event_date+' · '+(x.event_time||'Time to be confirmed')+' · '+(x.location||'Venue to be confirmed')):'Community notice'+(x.expires_on?' · Expires '+h(x.expires_on):'')}</small></div>
+    <div class="masjid-community-entry-actions">
+     <button type="button" class="btn smol white" data-action="community-edit" data-id="${h(x.id)}">Edit</button>
+     <button type="button" class="btn smol outline" data-action="community-toggle" data-id="${h(x.id)}">${x.published?'Unpublish':'Publish'}</button>
+     <button type="button" class="btn smol outline" data-action="community-delete" data-id="${h(x.id)}">${ico('trash',14)} Delete</button>
+    </div>
+   </article>`).join('')}</div>`:blank('No public masjid events or announcements','Add a real event or announcement and save it as a draft first.')}
+  </section>`;
+}
+
 function websitePhotosPage(){
  const items=get('website/photos'),pub=items.filter(x=>x.published).length;
  return `<section class="surface website-gallery-admin" id="website-gallery-admin">
@@ -1044,6 +1094,30 @@ function csvParse(input){const rows=[];let row=[],cell='',q=false;for(let i=0;i<
 async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
 
 
+
+ if(a==='community-enable'){
+  if(!userCan('admin'))throw Error('Administrator access required');
+  const enabled=el.dataset.enabled==='true';
+  if(!await confirmDialog({
+   title:enabled?'Enable the new masjid community section?':'Restore the original masjid homepage?',
+   message:enabled?'Show approved masjid events, notices and mobile quick actions on the public website?':'Hide Phase 1 enhancements while keeping every saved event and notice?',
+   details:enabled?'This does not change the prayer timetable, gallery, videos or school records.':'You can enable Phase 1 again whenever you wish.',
+   actionLabel:enabled?'Enable Phase 1':'Restore original homepage',tone:enabled?'info':'warning'
+  }))return;
+  await post('/website/community',{action:'enable',enabled});
+  toast(enabled?'Phase 1 enabled. The public website will update shortly.':'Original homepage restored. Drafts and posts retained.');
+  S.communityEditId='';await navigate('website');return;
+ }
+ if(a==='community-edit'){S.communityEditId=selectedId;renderPage();document.getElementById('website-community-admin')?.scrollIntoView({behavior:'smooth'});return;}
+ if(a==='community-cancel'){S.communityEditId='';renderPage();return;}
+ if(a==='community-toggle'||a==='community-delete'){
+  if(!userCan('admin'))throw Error('Administrator access required');
+  const entry=get('website/community').find(x=>x.id===selectedId);if(!entry)return;
+  if(a==='community-delete'&&!await confirmDialog({title:'Delete this community post?',message:'Permanently delete "'+entry.title+'"?',details:'The post cannot be recovered. To hide it temporarily, use Unpublish or Restore original site instead.',actionLabel:'Delete post',tone:'danger'}))return;
+  await post('/website/community',{action:a==='community-delete'?'delete':'toggle',id:selectedId});
+  toast(a==='community-delete'?'Community post deleted':'Publication updated');
+  S.communityEditId='';await navigate('website');return;
+ }
  if(a==='photo-toggle'||a==='photo-feature'||a==='photo-delete'||a==='photo-move'){
   if(!userCan('admin'))throw Error('Administrator access required');
   const photo=get('website/photos').find(x=>x.id===selectedId);
@@ -1266,6 +1340,16 @@ async function optimiseMasjidPhoto(file){
 async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.fromEntries(new FormData(form).entries());const close=()=>document.querySelector('.modal-overlay')?.remove();let refresh=S.page;
 
 
+
+ if(formId==='website-community-form'){
+  if(!userCan('admin'))throw Error('Administrator access required');
+  const data=new FormData(form);
+  await post('/website/community',{action:'save',id:raw.id||undefined,kind:raw.kind,title:raw.title,
+   body:raw.body,event_date:raw.event_date,event_time:raw.event_time,location:raw.location,
+   expires_on:raw.expires_on,published:data.has('published'),pinned:data.has('pinned')});
+  S.communityEditId='';toast(raw.id?'Community post updated':'Community post saved');
+  await navigate('website');return;
+ }
  if(formId==='website-photo-form'){
   if(!userCan('admin'))throw Error('Administrator access required');
   if(!form.elements.permission.checked)throw Error('Confirm permission to publish this photograph');
@@ -1442,7 +1526,7 @@ else if(formId==='attendance-form'){
  close();if(S.studentId && ['student-form','homework-form','grade-homework-form','behaviour-form','payment-form','invoice-form','progress-report-form'].includes(formId)){await navigate('students',{keepStudent:true});}else await navigate(refresh);
 }
 document.addEventListener('click',async e=>{const el=e.target.closest('[data-action]');if(!el)return;const a=el.dataset.action;try{if(a==='copy-invite'){const v=$('#invitation-url');await navigator.clipboard.writeText(v.value);toast('Invitation link copied');return;}await action(a,el);}catch(err){toast(err.message,true);console.error(err);}});
-document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','class-assignment-form','class-roster-form','admission-form','invoice-form','payment-form','announcement-form','message-form','reply-message-form','dbs-record-form','dbs-upload-form','policy-record-form','compliance-concern-form','event-form','quiz-form','invite-form','guardian-invite-form','edit-user-form','password-form','attendance-form','progress-report-form','settings-form','automation-form','academic-term-form','academic-entry-form','timetable-form','communication-preferences-form','website-video-form','website-photo-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
+document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','class-assignment-form','class-roster-form','admission-form','invoice-form','payment-form','announcement-form','message-form','reply-message-form','dbs-record-form','dbs-upload-form','policy-record-form','compliance-concern-form','event-form','quiz-form','invite-form','guardian-invite-form','edit-user-form','password-form','attendance-form','progress-report-form','settings-form','automation-form','academic-term-form','academic-entry-form','timetable-form','communication-preferences-form','website-video-form','website-photo-form','website-community-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
 document.addEventListener('input',e=>{if(e.target.closest('#homework-form')&&['verse_from','verse_to'].includes(e.target.name))updateSurahVerseLimits();if(e.target.name==='greeting_name'&&e.target.closest('#guardian-invite-form')){const preview=$('#guardian-invite-preview');if(preview)preview.textContent='Dear '+(e.target.value.trim()||'Parent')+',';}});
 function updateDbsCertificateRequirement(){
  const form=document.querySelector('#dbs-record-form');

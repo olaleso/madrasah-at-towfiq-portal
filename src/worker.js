@@ -1,3 +1,4 @@
+import {loadCommunity,saveCommunity,validateCommunityEntry,publicCommunity,COMMUNITY_LIMIT} from './masjid-community.mjs';
 const ROLES = ['admin','staff','teacher','parent'];
 
 const QURAN_SURAHS='Al-Fatihah|Al-Baqarah|Aal-Imran|An-Nisa|Al-Maidah|Al-Anam|Al-Araf|Al-Anfal|At-Tawbah|Yunus|Hud|Yusuf|Ar-Rad|Ibrahim|Al-Hijr|An-Nahl|Al-Isra|Al-Kahf|Maryam|Ta-Ha|Al-Anbiya|Al-Hajj|Al-Muminun|An-Nur|Al-Furqan|Ash-Shuara|An-Naml|Al-Qasas|Al-Ankabut|Ar-Rum|Luqman|As-Sajdah|Al-Ahzab|Saba|Fatir|Ya-Sin|As-Saffat|Sad|Az-Zumar|Ghafir|Fussilat|Ash-Shura|Az-Zukhruf|Ad-Dukhan|Al-Jathiyah|Al-Ahqaf|Muhammad|Al-Fath|Al-Hujurat|Qaf|Adh-Dhariyat|At-Tur|An-Najm|Al-Qamar|Ar-Rahman|Al-Waqiah|Al-Hadid|Al-Mujadilah|Al-Hashr|Al-Mumtahanah|As-Saff|Al-Jumuah|Al-Munafiqun|At-Taghabun|At-Talaq|At-Tahrim|Al-Mulk|Al-Qalam|Al-Haqqah|Al-Maarij|Nuh|Al-Jinn|Al-Muzzammil|Al-Muddaththir|Al-Qiyamah|Al-Insan|Al-Mursalat|An-Naba|An-Naziat|Abasa|At-Takwir|Al-Infitar|Al-Mutaffifin|Al-Inshiqaq|Al-Buruj|At-Tariq|Al-Ala|Al-Ghashiyah|Al-Fajr|Al-Balad|Ash-Shams|Al-Layl|Ad-Duha|Ash-Sharh|At-Tin|Al-Alaq|Al-Qadr|Al-Bayyinah|Az-Zalzalah|Al-Adiyat|Al-Qariah|At-Takathur|Al-Asr|Al-Humazah|Al-Fil|Quraysh|Al-Maun|Al-Kawthar|Al-Kafirun|An-Nasr|Al-Masad|Al-Ikhlas|Al-Falaq|An-Nas'.split('|');
@@ -702,6 +703,15 @@ async function handle(req,env){
  if(path==='/api/health')return json({ok:true,service:'Madrasah At-Towfiq portal'});
  if(path==='/api/public/admissions')return publicAdmissionSubmit(req,env);
 
+
+ // Entire Phase 1 feed is hidden until an administrator enables it.
+ // When disabled the existing static website experience remains unchanged.
+ if(path==='/api/public/masjid-community'){
+  if(method!=='GET')error('Method not allowed',405);
+  return json(publicCommunity(await loadCommunity(db)),200,
+    {'Cache-Control':'public, max-age=15, s-maxage=30'});
+ }
+
  if(path==='/api/public/masjid-videos'){
   if(method!=='GET')error('Method not allowed',405);
   const entries=await masjidVideos(db);
@@ -813,6 +823,41 @@ async function handle(req,env){
   if(!image?.value)error('Photo unavailable',404);
   return galleryImageResponse(image.value,false);
  }
+
+ if(path==='/api/website/community'){
+  requireRole(user,'admin');
+  const community=await loadCommunity(db);
+  if(method==='GET')return json(community);
+  if(method!=='POST')error('Method not allowed',405);
+  const b=await input(req);
+  const action=String(b.action||'');
+  let target=community.items.find(x=>x.id===b.id);
+  if(action==='enable'){
+   if(b.enabled!==true&&b.enabled!==false)error('Invalid community switch state');
+   if(b.enabled===true&&!community.items.some(x=>x.published))error('Publish at least one event or announcement before enabling',409);
+   community.enabled=b.enabled;
+  }else if(action==='save'){
+   if(b.id&&!target)error('Community record not found',404);
+   if(!b.id&&community.items.length>=COMMUNITY_LIMIT)error('Public community content is limited to 40 entries',409);
+   let entry;
+   try{entry=validateCommunityEntry(b,target);}catch(err){error(err.message,400);}
+   if(target)community.items[community.items.indexOf(target)]=entry;
+   else community.items.unshift(entry);
+   target=entry;
+  }else if(action==='toggle'){
+   if(!target)error('Community record not found',404);
+   target.published=!target.published;target.updated_at=iso();
+   if(!community.items.some(x=>x.published))community.enabled=false;
+  }else if(action==='delete'){
+   if(!target)error('Community record not found',404);
+   community.items.splice(community.items.indexOf(target),1);
+   if(!community.items.some(x=>x.published))community.enabled=false;
+  }else error('Invalid community action');
+  await saveCommunity(db,community);
+  await audit(db,user,action,'masjid_community',target?.id||'',String(target?.title||community.enabled).slice(0,120));
+  return json({ok:true,...community});
+ }
+
  if(path==='/api/website/photos'){
   requireRole(user,'admin');
   const photos=await galleryList(db);
