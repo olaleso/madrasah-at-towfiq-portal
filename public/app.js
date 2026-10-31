@@ -22,7 +22,7 @@ const PRIMARY_NAV=[
 const NAV_GROUPS=[
  {id:'learning',title:'Learning & character',icon:'award',items:[['behaviour','Behaviour & rewards','award'],['games','Quiz & leaderboard','sparkle']]},
  {id:'school',title:'School management',icon:'graduation',items:[['classes','Classes & enrolment','graduation'],['timetable','Weekly timetable','clock'],['academic','Academic calendar','calendar'],['admissions','Admissions','folder'],['guardians','Parents & guardians','users'],['fees','Fees & payments','cash']]},
- {id:'community',title:'Community',icon:'message',items:[['notifications','My notifications','bell'],['preferences','Contact preferences','settings'],['communications','Communications','message'],['events','Events & announcements','calendar'],['website','Website videos','video']]},
+ {id:'community',title:'Community',icon:'message',items:[['notifications','My notifications','bell'],['preferences','Contact preferences','settings'],['communications','Communications','message'],['events','Events & announcements','calendar'],['website','Website content','video']]},
  {id:'tools',title:'Reports & administration',icon:'chart',items:[['reports','Reports & analytics','chart'],['compliance','Compliance centre','shield'],['automation','Automation centre','clock'],['staff','Staff & administration','users'],['settings','Settings & access','settings']]}
 ];
 const allowedPage=p=>{
@@ -67,7 +67,7 @@ const navLinks=()=>`<div class="nav-section-title">WORKSPACE</div>`+PRIMARY_NAV.
   return `<div class="nav-group"><button class="nav-group-btn ${expanded?'expanded':''} ${items.some(([key])=>key===S.page)?'has-active':''}" data-action="nav-group" data-group="${g.id}" aria-expanded="${expanded}" aria-controls="nav-items-${g.id}">${ico(g.icon,17)}<span>${g.title}</span><svg class="nav-caret" aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button><div id="nav-items-${g.id}" class="nav-submenu" ${expanded?'':'hidden'}>${items.map(item=>navItem(item,true)).join('')}</div></div>`;
  }).join('');
 function shell(content){$('#app').innerHTML=`<div class="shell" id="shell"><aside class="sidebar"><div class="side-head"><div class="logo-panel"><img alt="Madrasah At-Towfiq" src="/assets/at-towfiq-madrasah-logo.png"></div><p>Learning & character portal</p></div><nav class="nav-scroll">${navLinks()}</nav><div class="side-foot"><div><div class="avatar">${h(initials(S.user.name))}</div><div><strong>${h(S.user.name)}</strong><p>${cap(S.user.role)} account</p></div></div></div></aside><div class="overlay" data-action="menu"></div><div class="workspace"><header class="topbar"><div class="top-left"><button class="iconbtn mobilemenu" aria-label="Open navigation" data-action="menu">${ico('menu',19)}</button><div><div class="top-title">${h(titles[S.page]||'Madrasah At-Towfiq')}</div><div class="top-caption">Assalamu alaikum, ${h(S.user.name.split(' ')[0])}!</div></div></div><div class="top-right"><button class="iconbtn" aria-label="Global search" title="Search across the madrasah" data-action="global-search">${ico('search',18)}</button><span class="top-pill">${ico('shield',12)} &nbsp; ${S.familyMode?'Family':cap(S.user.role)} portal</span>${S.user.has_family && S.staffRole!=='parent'?`<button class="btn smol family-switch" data-action="family-switch" type="button">${ico('users',15)} ${S.familyMode?'Staff view':'Family view'}</button>`:''}<button class="iconbtn" title="Open my notifications" aria-label="Notifications" data-action="nav" data-value="notifications">${ico('bell',18)}${notificationUnreadCount()?`<span class="notify-bell-count">${notificationUnreadCount()>99?'99+':notificationUnreadCount()}</span>`:''}</button><button class="iconbtn" title="Sign out" data-action="logout">${ico('logout',17)}</button><div class="top-user"><div class="avatar">${h(initials(S.user.name))}</div><div><strong>${h(S.user.name)}</strong><span>${cap(S.user.role)}</span></div></div></div></header><main class="main" id="content">${userCan('admin')&&dbsWarningCount()&&S.page!=='compliance'?`<button type="button" class="dbs-global-alert" data-action="nav" data-value="compliance">${ico('bell',17)} ${dbsWarningCount()} DBS recheck${dbsWarningCount()===1?'':'s'} due within 60 days or overdue. View Compliance Centre ${ico('arrow',15)}</button>`:''}${content}<div class="footer-note">© ${new Date().getFullYear()} Madrasah At-Towfiq · Rooted in faith, guided by knowledge · Student information is private.</div></main></div></div>`;}
-const pageKeys={timetable:['timetable', 'classes'],academic:['academic/terms','academic/calendar'],preferences:['communication-preferences'],notifications:['notifications'],dashboard:['students','classes','homework','attendance','behaviour','events','announcements','fees','progress-reports','compliance/dbs'],classroom:['students','classes','homework','attendance','progress-reports'],progress:['progress-reports','students'],students:['students','classes','users','contacts','homework','behaviour','behaviour-catalog','attendance','fees','progress-reports'],homework:['students','classes','homework'],behaviour:['students','classes','behaviour','behaviour-catalog'],attendance:['students','classes','attendance'],classes:['classes','students','users','contacts'],admissions:['admissions','classes'],fees:['students','fees','payments'],communications:['messages','contacts','students','announcements'],compliance:['compliance/consents','compliance/policies','compliance/concerns','compliance/dbs'],events:['events','announcements'],reports:['reports','students','classes'],games:['quizzes','leaderboard'],automation:['email-log'],staff:['users'],guardians:['guardians'],settings:['settings','email-log','audit'],website:['website/videos']};
+const pageKeys={timetable:['timetable', 'classes'],academic:['academic/terms','academic/calendar'],preferences:['communication-preferences'],notifications:['notifications'],dashboard:['students','classes','homework','attendance','behaviour','events','announcements','fees','progress-reports','compliance/dbs'],classroom:['students','classes','homework','attendance','progress-reports'],progress:['progress-reports','students'],students:['students','classes','users','contacts','homework','behaviour','behaviour-catalog','attendance','fees','progress-reports'],homework:['students','classes','homework'],behaviour:['students','classes','behaviour','behaviour-catalog'],attendance:['students','classes','attendance'],classes:['classes','students','users','contacts'],admissions:['admissions','classes'],fees:['students','fees','payments'],communications:['messages','contacts','students','announcements'],compliance:['compliance/consents','compliance/policies','compliance/concerns','compliance/dbs'],events:['events','announcements'],reports:['reports','students','classes'],games:['quizzes','leaderboard'],automation:['email-log'],staff:['users'],guardians:['guardians'],settings:['settings','email-log','audit'],website:['website/videos','website/photos']};
 async function navigate(page,options={}){if(!allowedPage(page))page='dashboard';S.page=page;S.filter='';S.search='';if(!options.keepStudent)S.studentId=null;$('#shell')?.classList.remove('menu-open');shell(`<div class="surface" style="min-height:230px">${blank('Loading your workspace','Connecting securely to the madrasah database…')}</div>`);try{await load([...new Set([...(pageKeys[page]||[]),...(page==='dashboard'&&userCan('admin','staff')?['admissions']:[]),'notifications'])]);renderPage();}catch(err){toast(err.message,true);}}
 function renderPage(){let content;switch(S.page){case'dashboard':content=dashboard();break;case'classroom':content=classroomPage();break;case'progress':content=progressPage();break;case'students':content=studentsPage();break;case'homework':content=homeworkPage();break;case'behaviour':content=behaviourPage();break;case'attendance':content=attendancePage();break;case'classes':content=classesPage();break;case'timetable':content=timetablePage();break;case'admissions':content=admissionsPage();break;case'fees':content=feesPage();break;case'academic':content=academicCalendarPage();break;case'preferences':content=communicationPreferencesPage();break;case'notifications':content=notificationPage();break;case'communications':content=communicationPage();break;case'compliance':content=compliancePage();break;case'events':content=eventsPage();break;case'reports':content=reportsPage();break;case'games':content=gamesPage();break;case'automation':content=automationPage();break;case'staff':content=staffPage();break;case'guardians':content=guardiansPage();break;case'settings':content=settingsPage();break;case'website':content=websitePage();break;default:content=dashboard();}shell(content);}
 function metrics(){
@@ -577,7 +577,7 @@ function communicationPreferencesPage(){
 }
 
 
-function websitePage(){
+function websiteVideosPage(){
  const items=get('website/videos'),chosen=items.find(v=>v.id===S.websiteEditId);
  const published=items.filter(v=>v.published).length;
  return `${pagehead('Website content · YouTube videos','Manage the masjid public website’s lectures, Friday khutbahs and Qur’an videos.',`<a class="btn white" href="https://attowfiqmasjid.org/#videos" target="_blank" rel="noopener noreferrer">${ico('arrow',15)} View public website</a>`)}
@@ -618,6 +618,37 @@ function websitePage(){
  </section>`;
 }
 
+function websitePage(){return websiteVideosPage()+websitePhotosPage();}
+function websitePhotosPage(){
+ const items=get('website/photos'),pub=items.filter(x=>x.published).length;
+ return `<section class="surface website-gallery-admin" id="website-gallery-admin">
+  <div class="surface-head"><div><h3>Life at Masjid At-Towfiq · Gallery</h3><p class="small muted">Add authentic photographs, review drafts and choose the image featured on the public homepage.</p></div><a class="btn white" href="https://attowfiqmasjid.org/#gallery" target="_blank" rel="noopener noreferrer">View public gallery ↗</a></div>
+  <div class="website-gallery-metrics"><span>${items.length} photos</span><span>${pub} published</span><span>${items.some(x=>x.featured)?'Homepage feature selected':'No homepage feature yet'}</span></div>
+  <form id="website-photo-form" class="website-photo-form">
+   <div class="form-grid">
+    <div class="field wide"><label for="gallery-photo-file">Photograph</label><input id="gallery-photo-file" type="file" name="photo" accept="image/jpeg,image/png,image/webp" required><small>Choose a JPEG, PNG or WebP. It will be compressed to a lightweight JPEG automatically.</small></div>
+    ${field('Image title','title','','text','required minlength="4" maxlength="120" placeholder="Inside our prayer hall"','wide')}
+    ${field('Description for accessibility','alt','','text','required minlength="8" maxlength="160" placeholder="The mihrab and geometric wall inside Masjid At-Towfiq"','wide')}
+    <div class="wide website-checkboxes">
+     <label><input type="checkbox" name="permission" required> I confirm this image is authentic and that I have permission to publish any identifiable people.</label>
+     <label><input type="checkbox" name="published"> Publish the photograph immediately</label>
+     <label><input type="checkbox" name="featured"> Use this as the homepage photo when published</label>
+    </div>
+   </div>
+   <div class="website-form-footer"><p class="small muted">You can save a photo as a draft. Published images automatically appear on the public website.</p><button class="btn primary" type="submit">${ico('upload',16)} Upload photograph</button></div>
+  </form>
+  ${items.length?`<div class="website-gallery-items">${items.map((x,i)=>`<article class="website-gallery-entry">
+    <img src="/api/website/photos/preview/${h(x.id)}" loading="lazy" alt="${h(x.alt)}">
+    <div class="website-gallery-details"><strong>${h(x.title)}</strong><small>${x.published?'Published':'Draft'}${x.featured?' · Homepage feature':''}</small><p>${h(x.alt)}</p></div>
+    <div class="website-gallery-actions">
+      <button class="btn smol outline" type="button" data-action="photo-toggle" data-id="${h(x.id)}">${x.published?'Unpublish':'Publish'}</button>
+      ${x.published&&!x.featured?`<button class="btn smol white" type="button" data-action="photo-feature" data-id="${h(x.id)}">Feature</button>`:''}
+      <div class="row"><button class="btn smol outline" type="button" data-action="photo-move" data-id="${h(x.id)}" data-direction="up" ${i===0?'disabled':''}>↑</button><button class="btn smol outline" type="button" data-action="photo-move" data-id="${h(x.id)}" data-direction="down" ${i===items.length-1?'disabled':''}>↓</button></div>
+      <button class="btn smol outline" type="button" data-action="photo-delete" data-id="${h(x.id)}">${ico('trash',14)} Delete</button>
+    </div>
+   </article>`).join('')}</div>`:`<p class="small muted">No gallery photographs yet. Upload the edited prayer-hall photograph to start.</p>`}
+ </section>`;
+}
 function eventsPage(){const e=get('events'),a=get('announcements');return `${pagehead('Events & announcements','Important dates, school notices and celebrations.',userCan('admin','staff')?`<button class="btn white" data-action="modal" data-value="announcement">${ico('bell',16)} Post announcement</button><button class="btn primary" data-action="modal" data-value="event">${ico('plus',16)} Add event</button>`:'')}<div class="cards two"><section class="surface"><div class="surface-head"><h3>Community calendar</h3>${tag(`${e.length} events`,'blue')}</div>${e.length?e.map(x=>`<div class="list-row"><div class="event-cal"><small>${fmt(x.event_date).split(' ')[1]}</small><strong>${x.event_date.slice(-2)}</strong></div><div class="grow"><strong>${h(x.title)}</strong><div class="sub">${h(x.description||cap(x.category))} · ${fmt(x.event_date)}</div></div>${userCan('admin','staff')?`<button class="iconbtn" title="Delete event" data-action="delete-event" data-id="${h(x.id)}">${ico('trash',15)}</button>`:''}</div>`).join(''):blank('No events') }</section><section class="surface"><div class="surface-head"><h3>Announcements</h3>${tag(`${a.length} updates`,'blue')}</div>${a.length?a.map(x=>`<div class="list-row"><span class="metric-icon">${ico('bell',17)}</span><div class="grow"><strong>${h(x.title)}</strong><div class="sub">${h(x.body.slice(0,230))} · ${cap(x.audience)}</div></div>${userCan('admin','staff')?`<button class="iconbtn" title="Delete announcement" data-action="delete-announcement" data-id="${h(x.id)}">${ico('trash',15)}</button>`:''}</div>`).join(''):blank('No announcements')}</section></div>`;}
 function reportsPage(){const arr=get('reports'),att=arr.reduce((s,x)=>s+x.attendance_total,0),present=arr.reduce((s,x)=>s+x.present,0),hw=arr.reduce((s,x)=>s+x.homework_total,0),complete=arr.reduce((s,x)=>s+x.homework_complete,0);return `${pagehead('Reports & insights','Actionable insights across learning and community engagement.',`<button class="btn primary" data-action="export-report">${ico('download',16)} Export CSV</button>`)}${metricCards([{label:'Students analysed',value:arr.length,icon:'students'},{label:'Attendance rate',value:att?Math.round(present/att*100)+'%':'—',icon:'chart',color:'green'},{label:'Homework completion',value:hw?Math.round(complete/hw*100)+'%':'—',icon:'book',color:'amber'},{label:'Behaviour score',value:arr.reduce((s,x)=>s+x.behaviour_points,0),icon:'award'}])}<div class="grid-main"><section class="surface"><div class="surface-head"><h3>Class & student performance</h3><span class="tiny muted">Past and present records</span></div>${arr.length?`<div class="table-scroll"><table class="table"><thead><tr><th>Student</th><th>Class</th><th>Attendance</th><th>Homework</th><th>Points</th></tr></thead><tbody>${arr.map(x=>`<tr><td class="cell-name">${h(x.first_name)} ${h(x.last_name)}</td><td>${h(x.class_name||'—')}</td><td>${x.attendance_total?Math.round(x.present/x.attendance_total*100)+'%':'—'}</td><td>${x.homework_complete}/${x.homework_total}</td><td><strong class="${x.behaviour_points<0?'red':'green'}">${x.behaviour_points>0?'+':''}${x.behaviour_points}</strong></td></tr>`).join('')}</tbody></table></div>`:blank('No report data')}</section><section class="surface"><div class="surface-head"><h3>Attendance at a glance</h3></div><div class="chartbars">${arr.slice(0,7).map(x=>{const p=x.attendance_total?Math.round(x.present/x.attendance_total*100):0;return `<div class="chart-column"><b>${p}%</b><div class="bar" style="height:${Math.max(p,6)}px"></div><small title="${h(x.first_name)}">${h(x.first_name.slice(0,5))}</small></div>`;}).join('')||'<p class="muted small">Awaiting register data</p>'}</div><div class="divider"></div><p class="muted small">Attendance percentages are calculated only from recorded sessions, not assumed school days. Exports contain personal student data—share securely.</p></section></div>`;}
 function gamesPage(){let qs=get('quizzes'),attempts=S.data['quizzes_attempts']||[],board=get('leaderboard');return `${pagehead('Daily ilm & quiz studio','Make Islamic knowledge memorable with joyful questions.',userCan('admin','staff','teacher')?`<button class="btn primary" data-action="modal" data-value="quiz">${ico('plus',16)} Create question</button>`:'')}<div class="grid-main"><div class="cards"><div class="welcome-banner" style="min-height:150px;margin:0"><div><div class="intro">LEARN • REFLECT • GROW</div><h2>Knowledge is a beautiful journey.</h2><p>Choose the correct answer. Earn 10 points for each new successful question.</p></div><div class="welcome-symbol">✦</div></div><section class="surface"><div class="surface-head"><h3>Today’s learning challenges</h3>${tag(`${qs.length} questions`,'blue')}</div>${qs.length?qs.map((q,i)=>{const attempt=attempts.find(x=>x.quiz_id===q.id);return `<div class="list-row"><span class="metric-icon">${ico('sparkle',18)}</span><div class="grow"><strong>${h(q.question)}</strong><div class="sub">${h(q.category)} · Question ${i+1}</div></div>${attempt?tag(attempt.is_correct?'10 points':'Attempted',attempt.is_correct?'green':'amber'):`<button class="btn smol outline" data-action="play-quiz" data-id="${h(q.id)}">Play ${ico('arrow',14)}</button>`}</div>`;}).join(''):blank('No quizzes yet','Teachers can add an Islamic knowledge question.')}</section></div><div class="surface"><div class="surface-head"><h3>Knowledge leaderboard</h3>${ico('award',21)}</div>${board.length?board.map((p,i)=>`<div class="list-row"><span class="event-cal" style="width:35px;padding:8px">${i+1}</span><div class="grow"><strong>${h(p.name)}</strong><div class="sub">${p.played} challenges completed</div></div>${tag(p.points+' pts','blue')}</div>`).join(''):blank('Leaderboard awaits','Complete a quiz to appear here.')}<div class="notice" style="margin-top:15px">The quiz leaderboard is based on participating accounts, not behavioural or disciplinary scores.</div></div></div>`;}
@@ -1012,6 +1043,17 @@ function invitationNotice(result,guardianName='parent / guardian'){
 function csvParse(input){const rows=[];let row=[],cell='',q=false;for(let i=0;i<input.length;i++){const c=input[i];if(c==='"'){if(q&&input[i+1]==='"'){cell+='"';i++;}else q=!q;}else if(c===','&&!q){row.push(cell);cell='';}else if((c==='\n'||c==='\r')&&!q){if(c==='\r'&&input[i+1]==='\n')i++;row.push(cell);cell='';if(row.some(v=>v.trim()))rows.push(row);row=[];}else cell+=c;}row.push(cell);if(row.some(v=>v.trim()))rows.push(row);const hdr=rows.shift()?.map(x=>x.trim().toLowerCase())||[];return rows.map(r=>Object.fromEntries(hdr.map((key,i)=>[key,(r[i]||'').trim()])));}
 async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
 
+
+ if(a==='photo-toggle'||a==='photo-feature'||a==='photo-delete'||a==='photo-move'){
+  if(!userCan('admin'))throw Error('Administrator access required');
+  const photo=get('website/photos').find(x=>x.id===selectedId);
+  if(!photo)return;
+  if(a==='photo-delete'&&!await confirmDialog({title:'Delete this photograph?',message:'Remove this photo permanently from the masjid gallery?',details:'The stored image will be deleted and cannot be recovered from the portal.',actionLabel:'Delete photograph',tone:'danger'}))return;
+  const operation=a.slice('photo-'.length);
+  await post('/website/photos',{action:operation,id:selectedId,...(operation==='move'?{direction:el.dataset.direction}:{})});
+  toast(operation==='delete'?'Photo deleted':'Gallery updated');
+  await navigate('website');return;
+ }
  if(a==='website-edit'){S.websiteEditId=selectedId||'';renderPage();document.querySelector('.website-editor')?.scrollIntoView({behavior:'smooth'});return;}
  if(a==='website-cancel'){S.websiteEditId='';renderPage();return;}
  if(a==='website-toggle'||a==='website-delete'||a==='website-move'){
@@ -1206,8 +1248,39 @@ function notificationResultMessage(result,recordType){
  if(result.notification_status==='no_guardian_email')return label+' saved · no eligible guardian email found; check the student/guardian record';
  return label+' saved · parent notification not sent; check the email log in Settings';
 }
+async function optimiseMasjidPhoto(file){
+ if(!file||!/^image\/(jpeg|png|webp)$/.test(file.type))throw Error('Please choose a JPEG, PNG or WebP photograph');
+ if(file.size>12*1024*1024)throw Error('Please select a photograph smaller than 12 MB');
+ const image=await createImageBitmap(file),scale=Math.min(1,1500/Math.max(image.width,image.height));
+ const canvas=document.createElement('canvas');
+ canvas.width=Math.round(image.width*scale);canvas.height=Math.round(image.height*scale);
+ const ctx=canvas.getContext('2d');if(!ctx){image.close();throw Error('Browser cannot process this image');}
+ ctx.fillStyle='#fff';ctx.fillRect(0,0,canvas.width,canvas.height);
+ ctx.drawImage(image,0,0,canvas.width,canvas.height);image.close();
+ for(const quality of [.80,.7,.60,.50,.40]){
+  const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
+  if(blob&&blob.size<=240000)return blob;
+ }
+ throw Error('Could not compress the photo below 240 KB. Crop it and retry.');
+}
 async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.fromEntries(new FormData(form).entries());const close=()=>document.querySelector('.modal-overlay')?.remove();let refresh=S.page;
 
+
+ if(formId==='website-photo-form'){
+  if(!userCan('admin'))throw Error('Administrator access required');
+  if(!form.elements.permission.checked)throw Error('Confirm permission to publish this photograph');
+  const file=form.elements.photo.files?.[0],blob=await optimiseMasjidPhoto(file);
+  const payload=new FormData();
+  payload.append('photo',blob,'masjid-at-towfiq.jpg');
+  payload.append('title',raw.title.trim());payload.append('alt',raw.alt.trim());payload.append('permission','yes');
+  if(form.elements.published.checked)payload.append('published','yes');
+  if(form.elements.featured.checked)payload.append('featured','yes');
+  const response=await fetch('/api/website/photos',{method:'POST',credentials:'same-origin',headers:{'x-csrf-token':S.csrf},body:payload});
+  let result={};try{result=await response.json();}catch{}
+  if(!response.ok)throw Error(result.error||'Gallery upload failed');
+  toast(form.elements.published.checked?'Photo saved and published':'Photo saved as a private draft');
+  await navigate('website');return;
+ }
  if(formId==='website-video-form'){
   if(!userCan('admin'))throw Error('Administrator access required');
   const fd=new FormData(form);
