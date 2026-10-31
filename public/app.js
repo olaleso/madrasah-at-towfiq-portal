@@ -580,7 +580,7 @@ function communicationPreferencesPage(){
 function websiteVideosPage(){
  const items=get('website/videos'),chosen=items.find(v=>v.id===S.websiteEditId);
  const published=items.filter(v=>v.published).length;
- return `${pagehead('Website content · YouTube videos','Curate the masjid website’s videos and photograph gallery in one place.',`<a class="btn white" href="https://attowfiqmasjid.org/#videos" target="_blank" rel="noopener noreferrer">${ico('arrow',15)} View public website</a>`)}
+ return `<div class="surface-head" style="margin:26px 0 14px"><div><h3>YouTube videos</h3><p class="small muted">Publish lectures, Friday khutbahs and Qur’an recordings.</p></div></div>
  <div class="cards three website-stats">
   <div class="metric"><div class="metric-label">Videos saved</div><div class="metric-value">${items.length}</div><div class="trend">Up to 30 videos</div></div>
   <div class="metric"><div class="metric-label">Published online</div><div class="metric-value">${published}</div><div class="trend">Visible to website visitors</div></div>
@@ -618,7 +618,7 @@ function websiteVideosPage(){
  </section>`;
 }
 
-function websitePage(){return websiteVideosPage()+websiteCommunityPage()+websitePhotosPage();}
+function websitePage(){return pagehead('Website content','Manage masjid events, community announcements, YouTube videos and approved photographs.',`<a class="btn white" href="https://attowfiqmasjid.org/" target="_blank" rel="noopener noreferrer">${ico('arrow',15)} View masjid website</a>`)+websiteCommunityPage()+websiteVideosPage()+websitePhotosPage();}
 
 function websiteCommunityPage(){
  const items=get('website/community'),current=items.find(x=>x.id===S.communityEditId);
