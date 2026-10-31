@@ -615,6 +615,25 @@ async function saveMasjidVideos(db,items){
 }
 
 
+
+const GALLERY_KEY='masjid_public_photos_v1';
+async function galleryList(db){
+ const row=await first(db,'SELECT value FROM school_settings WHERE key=?',GALLERY_KEY);
+ if(!row?.value)return [];
+ const x=JSON.parse(row.value);if(!Array.isArray(x))throw Error('Gallery settings damaged');
+ return x.slice(0,12);
+}
+async function gallerySave(db,items){
+ await run(db,'INSERT INTO school_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',GALLERY_KEY,JSON.stringify(items));
+}
+function galleryPublic(x){return {id:x.id,title:x.title,alt:x.alt,featured:!!x.featured,updated_at:x.updated_at};}
+function galleryImageResponse(encoded,publicImage){
+ return new Response(from64(encoded),{headers:{'Content-Type':'image/jpeg','X-Content-Type-Options':'nosniff','Cache-Control':publicImage?'public, max-age=60, s-maxage=120':'private, no-store'}});
+}
+function galleryToBase64(bytes){
+ let result='';for(let i=0;i<bytes.length;i+=16000)result+=String.fromCharCode(...bytes.subarray(i,i+16000));
+ return btoa(result);
+}
 // Public website admission intake: submissions only; acceptance stays staff-only.
 const PUBLIC_MADRASAH_ORIGINS=['https://madrasah.attowfiqmasjid.org','https://attowfiqmasjid.org','https://www.attowfiqmasjid.org'];
 function publicAdmissionOrigin(req){
@@ -689,6 +708,19 @@ async function handle(req,env){
   return json({items:entries.filter(v=>v.published).map(publicMasjidVideo)},200,{'Cache-Control':'public, max-age=30, s-maxage=60'});
  }
 
+
+ if(path==='/api/public/masjid-photos'){
+  if(method!=='GET')error('Method not allowed',405);
+  return json({items:(await galleryList(db)).filter(p=>p.published).map(galleryPublic)},200,{'Cache-Control':'public, max-age=30, s-maxage=60'});
+ }
+ if(path.startsWith('/api/public/masjid-photo/')){
+  if(method!=='GET')error('Method not allowed',405);
+  const pid=path.slice('/api/public/masjid-photo/'.length);
+  if(!/^[a-f0-9-]{36}$/.test(pid)||(await galleryList(db)).every(p=>p.id!==pid||!p.published))error('Photo not found',404);
+  const image=await first(db,'SELECT value FROM school_settings WHERE key=?','masjid_photo_'+pid);
+  if(!image?.value)error('Photo unavailable',404);
+  return galleryImageResponse(image.value,true);
+ }
  if(path==='/api/auth/setup-status' && method==='GET'){const a=await first(db,"SELECT COUNT(*) AS n FROM users WHERE role='admin'");return json({needs_setup:!a?.n});}
  if(path==='/api/auth/setup' && method==='POST'){
   const b=await input(req),n=await first(db,"SELECT COUNT(*) AS n FROM users WHERE role='admin'");if(n?.n)error('Initial setup already completed',409);
@@ -771,6 +803,59 @@ async function handle(req,env){
  }
  if(method!=='GET'){const received=req.headers.get('x-csrf-token');if(!received||!(await safeEqual(await sha(received),user.csrf_hash)))error('Security token expired. Reload your page.',403);}
 
+
+ if(path.startsWith('/api/website/photos/preview/')){
+  requireRole(user,'admin');
+  if(method!=='GET')error('Method not allowed',405);
+  const pid=path.slice('/api/website/photos/preview/'.length);
+  if(!/^[a-f0-9-]{36}$/.test(pid)||(await galleryList(db)).every(p=>p.id!==pid))error('Photo not found',404);
+  const image=await first(db,'SELECT value FROM school_settings WHERE key=?','masjid_photo_'+pid);
+  if(!image?.value)error('Photo unavailable',404);
+  return galleryImageResponse(image.value,false);
+ }
+ if(path==='/api/website/photos'){
+  requireRole(user,'admin');
+  const photos=await galleryList(db);
+  if(method==='GET')return json({items:photos});
+  if(method!=='POST')error('Method not allowed',405);
+  if((req.headers.get('content-type')||'').toLowerCase().startsWith('multipart/form-data')){
+   if(Number(req.headers.get('content-length')||0)>375000)error('Photo upload too large',413);
+   if(photos.length>=12)error('Gallery limit is 12 photographs',409);
+   const f=await req.formData(),photo=f.get('photo');
+   if(!photo||typeof photo.arrayBuffer!=='function'||photo.type!=='image/jpeg')error('Upload a JPEG photograph',415);
+   const title=String(f.get('title')||'').trim(),alt=String(f.get('alt')||'').trim();
+   if(title.length<4||title.length>120||alt.length<8||alt.length>160)error('Title or description is missing or too long');
+   if(f.get('permission')!=='yes')error('Confirm permission to publish before uploading',403);
+   const bytes=new Uint8Array(await photo.arrayBuffer());
+   if(bytes.length<500||bytes.length>250000)error('Optimised image must be at most 250 KB',413);
+   if(bytes[0]!==255||bytes[1]!==216||bytes[2]!==255||bytes[bytes.length-2]!==255||bytes[bytes.length-1]!==217)error('Not a valid JPEG image',415);
+   const published=f.get('published')==='yes',featured=published&&f.get('featured')==='yes';
+   if(featured)for(const item of photos)item.featured=false;
+   const entry={id:id(),title,alt,published,featured,created_at:iso(),updated_at:iso()};
+   await run(db,'INSERT INTO school_settings(key,value) VALUES(?,?)','masjid_photo_'+entry.id,galleryToBase64(bytes));
+   photos.unshift(entry);
+   try{await gallerySave(db,photos);}catch(err){await run(db,'DELETE FROM school_settings WHERE key=?','masjid_photo_'+entry.id);throw err;}
+   await audit(db,user,'create','masjid_photo',entry.id,title);
+   return json({ok:true,items:photos},201);
+  }
+  const b=await input(req),action=String(b.action||'');
+  if(!['toggle','feature','move','delete'].includes(action))error('Invalid photo action');
+  const target=photos.find(p=>p.id===b.id);
+  if(!target)error('Photograph not found',404);
+  if(action==='toggle'){target.published=!target.published;if(!target.published)target.featured=false;}
+  if(action==='feature'){if(!target.published)error('Publish this image first');for(const p of photos)p.featured=p.id===target.id;}
+  if(action==='move'){
+   const from=photos.indexOf(target),to=from+(b.direction==='up'?-1:b.direction==='down'?1:0);
+   if(from===to||to<0||to>=photos.length)error('Photo cannot move in that direction');
+   photos.splice(from,1);photos.splice(to,0,target);
+  }
+  if(action==='delete')photos.splice(photos.indexOf(target),1);
+  target.updated_at=iso();
+  await gallerySave(db,photos);
+  if(action==='delete')await run(db,'DELETE FROM school_settings WHERE key=?','masjid_photo_'+target.id);
+  await audit(db,user,action,'masjid_photo',target.id,target.title);
+  return json({ok:true,items:photos});
+ }
  if(path==='/api/website/videos'){
   requireRole(user,'admin');
   if(method==='GET')return json({items:await masjidVideos(db)});
