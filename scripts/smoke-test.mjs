@@ -1426,3 +1426,15 @@ assert.ok(!portalSitemap.includes('/api/')&&!portalSitemap.includes('/students')
 assert.ok(portalRobots.includes('Disallow: /api/'),'Portal API blocked from crawler requests');
 const portalHealth=await worker.fetch(new Request('https://portal.attowfiqmasjid.org/api/health'),env);
 assert.equal(portalHealth.headers.get('X-Robots-Tag'),'noindex, nofollow','Portal API responses explicitly opt out of indexing');
+
+
+// Regression: the website photo form must be intercepted by the central submit
+// listener; otherwise the browser reloads and no D1 gallery row is written.
+const galleryUi=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+const delegatedPhotoSubmit=galleryUi.match(/document\.addEventListener\('submit',[\s\S]*?\}\);/);
+assert.ok(delegatedPhotoSubmit?.[0].includes("'website-photo-form'"),'Gallery upload form must be handled by delegated submit listener');
+assert.ok(galleryUi.includes("if(formId==='website-photo-form')"),'Gallery upload must have a submission handler');
+assert.ok(galleryUi.includes("await fetch('/api/website/photos'"),'Gallery upload must POST to the portal API');
+const galleryResponse=await worker.fetch(new Request('https://portal.attowfiqmasjid.org/api/public/masjid-photos'),env);
+assert.equal(galleryResponse.status,200,'Published photo feed must be accessible');
+assert.ok(Array.isArray((await galleryResponse.json()).items),'Published photo feed must contain an items array');
