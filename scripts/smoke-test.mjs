@@ -1283,3 +1283,44 @@ assert.equal(officialEmailConfig.vars.ADMISSIONS_EMAIL,'admissions@attowfiqmasji
 const officialEmailWorker=fs.readFileSync(new URL('../src/worker.js',import.meta.url),'utf8');
 assert.ok(officialEmailWorker.includes('reply_to:options.replyTo'), 'Resend messages support Reply-To');
 assert.ok(officialEmailWorker.includes('replyTo:env.ADMISSIONS_EMAIL'), 'Guardian invites reply to admissions');
+
+
+// Public Madrasah website admissions regression: creates a pending application only.
+const madrasahOrigin='https://madrasah.attowfiqmasjid.org';
+const publicAdmissionUrl='http://localhost:8787/api/public/admissions';
+const admissionReady=await worker.fetch(new Request(publicAdmissionUrl,{
+ headers:{Origin:madrasahOrigin},method:'GET'}),env);
+assert.equal(admissionReady.status,200,'Public admission service readiness');
+assert.equal((await admissionReady.json()).accepting,true);
+assert.equal(admissionReady.headers.get('Access-Control-Allow-Origin'),madrasahOrigin);
+const admissionOptions=await worker.fetch(new Request(publicAdmissionUrl,{
+ headers:{Origin:madrasahOrigin,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'content-type'},
+ method:'OPTIONS'}),env);
+assert.equal(admissionOptions.status,204,'Admission preflight must allow approved site');
+assert.equal(admissionOptions.headers.get('Access-Control-Allow-Origin'),madrasahOrigin);
+const publicApplicant={first_name:'Public',last_name:'Applicant',dob:'2016-04-03',gender:'Female',
+ home_address:'12 Sample Road',postcode:'BL3 5BJ',guardian_name:'Guardian Example',
+ guardian_email:'public-guardian@example.test',guardian_phone:'07000123123',
+ guardian_relationship:'Mother',previous_attended:'no',
+ level_starting:true,level_qaaidah:false,level_quran:false,arabic_read_write:false,
+ consent_first_aid:false,consent_photos:false,parent_confirmed:true,
+ form_started_at:Date.now()-7000};
+const admissionRequest=await worker.fetch(new Request(publicAdmissionUrl,{
+ method:'POST',headers:{Origin:madrasahOrigin,'Content-Type':'application/json'},
+ body:JSON.stringify(publicApplicant)}),env);
+const admissionResult=await admissionRequest.json();
+assert.equal(admissionRequest.status,201,JSON.stringify(admissionResult));
+assert.match(admissionResult.reference,/^MAT-\d{4}-/);
+const record=sqlite.prepare('SELECT * FROM admissions WHERE guardian_email=?').get('public-guardian@example.test');
+assert.ok(record,'A public application must be written to the private admissions register');
+assert.equal(record.status,'new','Public submissions cannot accept or enrol a child');
+assert.equal(record.student_id,null,'No student record is created until staff acceptance');
+assert.equal(record.parent_confirmed,1);
+assert.equal(record.consent_photos,0,'Optional photo consent must remain unchecked');
+const forbidden=await worker.fetch(new Request(publicAdmissionUrl,{
+ method:'GET',headers:{Origin:'https://not-our-site.example'}}),env);
+assert.equal(forbidden.status,403,'Foreign origins cannot submit');
+const invalidPublic=await worker.fetch(new Request(publicAdmissionUrl,{
+ method:'POST',headers:{Origin:madrasahOrigin,'Content-Type':'application/json'},
+ body:JSON.stringify({...publicApplicant,gender:'Unknown',guardian_email:'invalid-another@example.test'})}),env);
+assert.equal(invalidPublic.status,400,'Invalid gender is rejected before insertion');
