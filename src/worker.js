@@ -678,8 +678,9 @@ const escapeHtml=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 async function handle(req,env){
  const u=new URL(req.url), path=u.pathname,method=req.method,db=env.DB;
  if(!db)error('Cloudflare D1 binding missing. Configure wrangler.jsonc and run migrations.',503);
- if(method!=='GET') consented(req);
+ if(method!=='GET'&&path!=='/api/public/admissions') consented(req);
  if(path==='/api/health')return json({ok:true,service:'Madrasah At-Towfiq portal'});
+ if(path==='/api/public/admissions')return publicAdmissionSubmit(req,env);
 
  if(path==='/api/public/masjid-videos'){
   if(method!=='GET')error('Method not allowed',405);
@@ -1770,7 +1771,24 @@ export default {
   if(event.cron!=='0 8 * * 5')return;
   ctx.waitUntil((async()=>{if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM||env.EMAIL_FROM.includes('example.org'))return;const v=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_enabled'");if(v?.value!=='true')return;const m=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_message'");const people=await all(env.DB,"SELECT email FROM users WHERE active=1 AND role IN ('parent','teacher','staff')");for(const p of people){await mail(env,p.email,'Jumu’ah reminder — Madrasah At-Towfiq',`<div style="font-family:Arial,sans-serif"><h2>Madrasah At-Towfiq</h2><p>${escapeHtml(m?.value||'Assalamu alaikum. Jumu’ah Mubarak.')}</p></div>`);}})());
  },
- async fetch(req,env){const url=new URL(req.url);if(!url.pathname.startsWith('/api/')){return env.ASSETS.fetch(req);}
-   try{return await handle(req,env);}catch(err){const code=err.status||((/UNIQUE constraint failed/i).test(err.message)?409:500);if(code>=500)console.error(err);return json({error:code>=500?'Unexpected server error':err.message},code);}
+ async fetch(req,env){
+  const url=new URL(req.url);
+  if(!url.pathname.startsWith('/api/'))return env.ASSETS.fetch(req);
+  const isPublicAdmission=url.pathname==='/api/public/admissions';
+  const origin=isPublicAdmission?publicAdmissionOrigin(req):'';
+  if(isPublicAdmission&&req.method==='OPTIONS')
+   return origin?new Response(null,{status:204,headers:publicAdmissionCors(origin)}):new Response(null,{status:403});
+  try{
+   const result=await handle(req,env);
+   if(origin)for(const [k,v] of Object.entries(publicAdmissionCors(origin)))result.headers.set(k,v);
+   return result;
+  }catch(err){
+   const code=err.status||(/UNIQUE constraint failed/i.test(err.message)?409:500);
+   if(code>=500)console.error(err);
+   const result=json({error:code>=500?'Unexpected server error':err.message},code);
+   if(origin)for(const [k,v] of Object.entries(publicAdmissionCors(origin)))result.headers.set(k,v);
+   return result;
+  }
+
  }
 };
