@@ -654,7 +654,7 @@ async function publicAdmissionSubmit(req,env){
  for(const [category,token,maximum] of [['ip',req.headers.get('CF-Connecting-IP')||'local-test',6],['guardian',email(b.guardian_email),4]]){
   const key='public_admission_rate_'+day+'_'+category+'_'+(await sha(token)).slice(0,26);
   const result=await run(env.DB,"INSERT INTO school_settings(key,value) VALUES(?,'1') ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT) WHERE CAST(value AS INTEGER)<?",key,maximum);
-  if(Number(result?.meta?.changes||0)===0)error('Daily submission limit reached. Please contact the madrasah.',429);
+  if(Number(result?.meta?.changes??result?.changes??0)===0)error('Daily submission limit reached. Please contact the madrasah.',429);
  }
  const fields=['first_name','last_name','dob','gender','home_address','postcode','home_telephone','guardian_name','guardian_email',
  'guardian_phone','emergency_phone','guardian_relationship','previous_attended','previous_institute','level_starting','level_qaaidah',
