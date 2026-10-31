@@ -614,6 +614,66 @@ async function saveMasjidVideos(db,items){
  await run(db,'INSERT INTO school_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',MASJID_VIDEO_KEY,JSON.stringify(items));
 }
 
+
+// Public website admission intake: submissions only; acceptance stays staff-only.
+const PUBLIC_MADRASAH_ORIGINS=['https://attowfiqmasjid.org','https://www.attowfiqmasjid.org'];
+function publicAdmissionOrigin(req){
+ const origin=req.headers.get('origin')||'';
+ return PUBLIC_MADRASAH_ORIGINS.includes(origin) || 
+   (new URL(req.url).hostname==='localhost' && origin===new URL(req.url).origin)?origin:'';
+}
+function publicAdmissionCors(origin){
+ return {'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Methods':'POST, OPTIONS',
+ 'Access-Control-Allow-Headers':'Content-Type','Access-Control-Max-Age':'600','Vary':'Origin','Cache-Control':'no-store'};
+}
+async function publicAdmissionSubmit(req,env){
+ if(req.method!=='POST')error('Method not allowed',405);
+ if(!publicAdmissionOrigin(req))error('The application must be submitted from the official Madrasah website',403);
+ if(!/^application\/json(?:\s*;|$)/i.test(req.headers.get('content-type')||''))error('JSON application required',415);
+ const b=await input(req);
+ if(b.website)return json({ok:true,reference:null,acknowledgement_status:'not_sent'});
+ if(!Number.isFinite(Number(b.form_started_at))||
+    Number(b.form_started_at)>Date.now()-2800||Number(b.form_started_at)<Date.now()-7200000)
+  error('Please reload the form and complete the application before submitting');
+ if(b.parent_confirmed!==true)error('Please confirm the parent or guardian declaration');
+ const firstName=short(b.first_name,80),lastName=short(b.last_name,80);
+ const name=short([firstName,lastName].filter(Boolean).join(' '),170);
+ if(!firstName||!lastName||!isDate(b.dob)||Date.parse(b.dob+'T00:00:00Z')>Date.now())
+  error('Pupil name and a valid date of birth are required');
+ if(!['Male','Female','Prefer not to say'].includes(b.gender))error('Select a valid gender');
+ if(!short(b.home_address,260)||!short(b.postcode,16))error('Home address and postcode are required');
+ if(!short(b.guardian_name,120)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email(b.guardian_email)))error('Guardian name and valid email are required');
+ if(!short(b.guardian_phone,40)||!short(b.guardian_relationship,50))error('Guardian contact number and relationship are required');
+ if(!['yes','no','unknown'].includes(b.previous_attended))error('Please select a previous madrasah attendance option');
+ if(b.previous_attended==='yes'&&!short(b.previous_institute,150))error('Please name the previous madrasah');
+ const booleans=['level_starting','level_qaaidah','level_quran','arabic_read_write','consent_first_aid','consent_photos'];
+ if(booleans.some(k=>typeof b[k]!=='boolean'))error('Please provide valid learning level and consent choices');
+ // Atomic D1 counters: daily limits for IP and guardian, without recording raw IP.
+ const day=nowDate().replace(/-/g,'');
+ for(const [category,token,maximum] of [['ip',req.headers.get('CF-Connecting-IP')||'local-test',6],['guardian',email(b.guardian_email),4]]){
+  const key='public_admission_rate_'+day+'_'+category+'_'+(await sha(token)).slice(0,26);
+  const result=await run(env.DB,"INSERT INTO school_settings(key,value) VALUES(?,'1') ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT) WHERE CAST(value AS INTEGER)<?",key,maximum);
+  if(Number(result?.meta?.changes||0)===0)error('Daily submission limit reached. Please contact the madrasah.',429);
+ }
+ const fields=['first_name','last_name','dob','gender','home_address','postcode','home_telephone','guardian_name','guardian_email',
+ 'guardian_phone','emergency_phone','guardian_relationship','previous_attended','previous_institute','level_starting','level_qaaidah',
+ 'qaaidah_page','level_quran','quran_surah','arabic_read_write','medical_information','allergies','additional_learning_needs',
+ 'consent_first_aid','consent_photos','message'];
+ const size={first_name:80,last_name:80,dob:10,gender:30,home_address:260,postcode:16,home_telephone:40,guardian_name:120,
+ guardian_email:254,guardian_phone:40,emergency_phone:40,guardian_relationship:50,previous_attended:12,previous_institute:150,
+ qaaidah_page:55,quran_surah:100,medical_information:1600,allergies:1000,additional_learning_needs:1600,message:1500};
+ const values=fields.map(k=>booleans.includes(k)?Number(b[k]):k==='guardian_email'?email(b[k]):short(b[k],size[k]||120));
+ const rid=id(),columns=['id','child_name','phone','parent_confirmed',...fields];
+ await run(env.DB,'INSERT INTO admissions('+columns.join(',')+') VALUES('+columns.map(()=>'?').join(',')+')',
+  rid,name,short(b.guardian_phone,40),1,...values);
+ let receipt={reference:applicationReceiptReference(rid,iso()),acknowledgement_status:'not_sent'};
+ try{
+  const record=await first(env.DB,'SELECT id,child_name,guardian_name,guardian_email,created_at FROM admissions WHERE id=?',rid);
+  receipt=await sendApplicationReceipt(env.DB,env,record);
+ }catch(err){console.error('Public application acknowledgement unavailable',err);}
+ return json({ok:true,reference:receipt.reference,acknowledgement_status:receipt.acknowledgement_status},201,{'Cache-Control':'no-store'});
+}
+
 const escapeHtml=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function handle(req,env){
  const u=new URL(req.url), path=u.pathname,method=req.method,db=env.DB;
