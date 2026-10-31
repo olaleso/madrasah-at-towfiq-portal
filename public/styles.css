@@ -453,3 +453,19 @@
 .website-gallery-actions{display:flex;flex-direction:column;gap:7px;align-items:stretch}
 @media(max-width:840px){.website-gallery-entry{grid-template-columns:125px minmax(0,1fr)}.website-gallery-actions{grid-column:1/-1;flex-direction:row;flex-wrap:wrap}.website-gallery-entry img{height:106px}}
 @media(max-width:520px){.website-gallery-entry{grid-template-columns:1fr}.website-gallery-entry img{height:185px}.website-photo-form{padding:15px}}
+
+/* Phase 1 masjid publishing: contained in Website Content, no global design changes. */
+.masjid-community-admin{margin:25px 0}
+.masjid-community-banner{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:19px 21px;border:1px solid #d7e3ea;border-left:4px solid #b79b56;border-radius:12px;background:#f5f9fa;margin:18px 0}
+.masjid-community-banner strong{font-size:16px;color:#123d5b}
+.masjid-community-banner p{font-size:13px;color:#526b7b;line-height:1.7;margin:8px 0 0}
+.masjid-community-banner button{white-space:nowrap}
+.masjid-community-editor{border:1px solid #e2e8ee;border-radius:14px;padding:20px;margin:17px 0 28px;background:#fbfcfd}
+.masjid-community-items{display:grid;gap:12px;margin-top:15px}
+.masjid-community-entry{display:flex;gap:20px;justify-content:space-between;border:1px solid #dfe7eb;border-radius:13px;padding:17px;background:#fff}
+.masjid-community-entry-copy{min-width:0}
+.masjid-community-entry-copy h4{color:#163c5d;font-size:17px;margin:10px 0 6px}
+.masjid-community-entry-copy p{font-size:13px;color:#536c7f;line-height:1.65;margin:0 0 8px;white-space:pre-wrap;overflow-wrap:anywhere}
+.masjid-community-entry-copy small{font-size:11px;color:#688096}
+.masjid-community-entry-actions{display:flex;flex-wrap:wrap;gap:7px;align-items:center;align-content:flex-start;justify-content:flex-end;flex:none}
+@media(max-width:740px){.masjid-community-banner,.masjid-community-entry{flex-direction:column;align-items:stretch}.masjid-community-entry-actions{justify-content:flex-start}.masjid-community-editor{padding:15px}}
