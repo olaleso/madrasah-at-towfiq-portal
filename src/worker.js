@@ -616,7 +616,7 @@ async function saveMasjidVideos(db,items){
 
 
 // Public website admission intake: submissions only; acceptance stays staff-only.
-const PUBLIC_MADRASAH_ORIGINS=['https://attowfiqmasjid.org','https://www.attowfiqmasjid.org'];
+const PUBLIC_MADRASAH_ORIGINS=['https://madrasah.attowfiqmasjid.org','https://attowfiqmasjid.org','https://www.attowfiqmasjid.org'];
 function publicAdmissionOrigin(req){
  const origin=req.headers.get('origin')||'';
  return PUBLIC_MADRASAH_ORIGINS.includes(origin) || 
