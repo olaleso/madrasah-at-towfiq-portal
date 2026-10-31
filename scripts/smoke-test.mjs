@@ -1324,3 +1324,17 @@ const invalidPublic=await worker.fetch(new Request(publicAdmissionUrl,{
  method:'POST',headers:{Origin:madrasahOrigin,'Content-Type':'application/json'},
  body:JSON.stringify({...publicApplicant,gender:'Unknown',guardian_email:'invalid-another@example.test'})}),env);
 assert.equal(invalidPublic.status,400,'Invalid gender is rejected before insertion');
+
+
+
+// Admin dashboard admissions attention — no public/pupil data is exposed to teachers/parents.
+const admissionDashboardSource=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+assert.ok(admissionDashboardSource.includes("function pendingAdmissionsPanel()"),'Pending admissions panel must exist on dashboard');
+assert.ok(admissionDashboardSource.includes("function pendingApplications()"),'Application queue must exclude enrolled or decided pupils');
+assert.ok(admissionDashboardSource.includes("a.status==='new'||a.status==='reviewing'"),'Both new and reviewing applicants count as pending');
+assert.ok(admissionDashboardSource.includes("page==='dashboard'&&userCan('admin','staff')"),'Dashboard admissions must only be loaded for authorised roles');
+assert.ok(admissionDashboardSource.includes("data-action=\"admission-open\""),'Pending application must have one-click review');
+assert.ok(admissionDashboardSource.includes("if(a==='admission-open')"),'Review action must navigate into the admissions register');
+assert.ok(admissionDashboardSource.includes("label:'Admissions to review'"),'Dashboard KPI must show pending applications');
+assert.ok(!admissionDashboardSource.includes("Upcoming moments"),'Redundant upcoming moments panel should be replaced');
+assert.ok(admissionDashboardSource.includes("classChoices:get('classes')"),'Admissions approval must continue requiring class allocation');
