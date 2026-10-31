@@ -281,3 +281,21 @@ if ($LASTEXITCODE -ne 0) { throw "Worker deployment failed" }
 Manual verification using no genuine child data: admin → School management → Academic calendar; create fictional Autumn term, verify an overlapping term cannot be added, add a holiday linked to the term, and confirm a linked term cannot be deleted. View the calendar as a parent; no edit controls should appear. Parent → Community → Contact preferences; by default SMS/WhatsApp are unchecked, enter an international mobile number you control, explicitly confirm and save a choice; refresh, verify persistence, then uncheck and save to withdraw. If you have a teacher/guardian account, check both normal Staff view and restricted Family view. Do not attempt to send live SMS/WhatsApp because the service is deliberately not enabled.
 
 Existing community event dates are not moved into the new academic timetable. No historical consent is inferred, and existing parents are not automatically opted in.
+
+## v1.9.0 — Weekly class timetable
+
+**Important:** Apply additive migration `0014_class_weekly_timetable.sql` **before** deploying v1.9.0 Worker code. The private D1 `attowfiq_portal` database, Worker name, administrator login, R2 DBS file binding and Resend secret stay unchanged. Before a production schema change, verify Cloudflare D1 Time Travel and retain a recovery bookmark.
+
+```powershell
+cd C:\App\Madrasah-At-Towfiq-Portal\madrasah-at-towfiq-portal
+git pull origin main
+npm run test
+if ($LASTEXITCODE -ne 0) { throw "Tests failed; do not deploy" }
+npx wrangler d1 time-travel info attowfiq_portal
+npm run db:migrate:remote
+if ($LASTEXITCODE -ne 0) { throw "Migration failed; do not deploy" }
+npm run deploy
+if ($LASTEXITCODE -ne 0) { throw "Deployment failed" }
+```
+
+After rollout: sign in as an admin and add a fictional weekly session for a configured class. Check adding another overlapping lesson in that class fails. Check two classes cannot occupy the same room at overlapping times, or share a teacher at the same time. Check the parent view contains only their children's class lessons; switch a dual-role teacher/guardian into Family view and ensure they cannot edit sessions. Check the printable timetable, then delete the fictional record. This release does not send notices to families when you alter scheduled lessons.

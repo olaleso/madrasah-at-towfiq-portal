@@ -979,8 +979,85 @@ async function handle(req,env){
   await audit(db,user,'assign_roster','class',classId,`${requested.length} pupils selected; ${updates.length} class links changed`);
   return json({ok:true,class_id:classId,assigned:requested.length,changed:updates.length});
  }
+ // A weekly timetable is a distinct, structured record. The legacy class
+ // schedule description stays intact for existing classes.
+ if(path==='/api/timetable'){
+  if(method==='GET'){
+   let scope='1=1',params=[];
+   if(user.role==='teacher'){scope='c.teacher_id=?';params=[user.id];}
+   else if(user.role==='parent'){
+    scope="EXISTS (SELECT 1 FROM students s WHERE s.class_id=c.id AND s.parent_id=? AND s.status='active')";
+    params=[user.id];
+   }
+   return json({items:await all(db,`SELECT t.id,t.class_id,t.weekday,t.starts_at,t.ends_at,t.subject,t.room,t.notes,
+      c.name AS class_name,c.stage,c.teacher_id,u.name AS teacher_name
+      FROM class_timetable_sessions t JOIN classes c ON c.id=t.class_id
+      LEFT JOIN users u ON u.id=c.teacher_id
+      WHERE ${scope}
+      ORDER BY t.weekday,t.starts_at,c.name,t.subject LIMIT 1500`,...params)});
+  }
+  requireRole(user,'admin','staff');
+  if(method!=='POST'&&method!=='PATCH'&&method!=='DELETE')error('Method not allowed',405);
+  const b=await input(req);
+  if(method==='DELETE'){
+   const sessionId=short(b.id,100);
+   const row=await first(db,'SELECT id FROM class_timetable_sessions WHERE id=?',sessionId);
+   if(!row)error('Timetable session not found',404);
+   await run(db,'DELETE FROM class_timetable_sessions WHERE id=?',sessionId);
+   await audit(db,user,'delete','class_timetable',sessionId);
+   return json({ok:true});
+  }
+  const classId=short(b.class_id,100);
+  const classRecord=await first(db,'SELECT id,teacher_id,name FROM classes WHERE id=?',classId);
+  if(!classRecord)error('Select an existing learning class',404);
+  const weekday=Number(b.weekday);
+  if(!Number.isInteger(weekday)||weekday<1||weekday>7)error('Choose a valid weekday (Monday to Sunday)',400);
+  const startsAt=short(b.starts_at,5),endsAt=short(b.ends_at,5);
+  const validTime=t=>/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(t);
+  if(!validTime(startsAt)||!validTime(endsAt)||startsAt>=endsAt)
+   error('Choose valid class times; end time must be after start time',400);
+  const subject=short(b.subject,100),room=short(b.room,80),notes=short(b.notes,400);
+  if(!subject||typeof b.subject!=='string'||b.subject.trim().length>100)error('Enter a lesson name of up to 100 characters',400);
+  if(typeof b.room==='string'&&b.room.length>80)error('Room name is too long',400);
+  if(typeof b.notes==='string'&&b.notes.length>400)error('Session notes are too long',400);
+  const timetableId=method==='PATCH'?short(b.id,100):id();
+  if(method==='PATCH'&&!await first(db,'SELECT id FROM class_timetable_sessions WHERE id=?',timetableId))
+   error('Timetable session not found',404);
+  const overlapping=await all(db,`SELECT t.id,t.class_id,t.subject,t.room,c.name AS class_name,c.teacher_id
+    FROM class_timetable_sessions t JOIN classes c ON c.id=t.class_id
+    WHERE t.weekday=? AND t.id<>? AND t.starts_at<? AND t.ends_at>?`,
+    weekday,timetableId,endsAt,startsAt);
+  const overlap=overlapping.find(x=>x.class_id===classId ||
+    (classRecord.teacher_id&&x.teacher_id===classRecord.teacher_id) ||
+    (room&&String(x.room||'').trim().toLowerCase()===room.toLowerCase()));
+  if(overlap){
+   let conflict=overlap.class_id===classId?'This class already has an overlapping lesson':
+    classRecord.teacher_id&&overlap.teacher_id===classRecord.teacher_id?'The assigned teacher is teaching another class at that time':
+    'The selected room is booked by another class at that time';
+   error(conflict+' ('+overlap.class_name+': '+overlap.subject+')',409);
+  }
+  if(method==='POST'){
+   await run(db,`INSERT INTO class_timetable_sessions(id,class_id,weekday,starts_at,ends_at,subject,room,notes,created_by)
+      VALUES(?,?,?,?,?,?,?,?,?)`,timetableId,classId,weekday,startsAt,endsAt,subject,room,notes,user.id);
+  }else{
+   await run(db,`UPDATE class_timetable_sessions
+      SET class_id=?,weekday=?,starts_at=?,ends_at=?,subject=?,room=?,notes=?,updated_at=CURRENT_TIMESTAMP
+      WHERE id=?`,classId,weekday,startsAt,endsAt,subject,room,notes,timetableId);
+  }
+  await audit(db,user,method==='POST'?'create':'update','class_timetable',timetableId);
+  return json({ok:true,id:timetableId});
+ }
  if(path==='/api/classes'){
-  if(method==='GET'){const c=user.role==='teacher'?await all(db,'SELECT c.*,u.name AS teacher_name,(SELECT COUNT(*) FROM students s WHERE s.class_id=c.id) AS enrolled FROM classes c LEFT JOIN users u ON u.id=c.teacher_id WHERE c.teacher_id=? ORDER BY c.name',user.id):await all(db,'SELECT c.*,u.name AS teacher_name,(SELECT COUNT(*) FROM students s WHERE s.class_id=c.id) AS enrolled FROM classes c LEFT JOIN users u ON u.id=c.teacher_id ORDER BY c.name');return json({items:c});}
+  if(method==='GET'){
+   const base='SELECT c.*,u.name AS teacher_name,(SELECT COUNT(*) FROM students s WHERE s.class_id=c.id) AS enrolled FROM classes c LEFT JOIN users u ON u.id=c.teacher_id';
+   let query=base+' ORDER BY c.name',args=[];
+   if(user.role==='teacher'){query=base+' WHERE c.teacher_id=? ORDER BY c.name';args=[user.id];}
+   else if(user.role==='parent'){
+    // Families must not receive another class's name, membership count or timetable.
+    query=base+" WHERE EXISTS (SELECT 1 FROM students s WHERE s.class_id=c.id AND s.parent_id=? AND s.status='active') ORDER BY c.name";args=[user.id];
+   }
+   return json({items:await all(db,query,...args)});
+  }
   requireRole(user,'admin','staff');const b=await input(req);
   if(method==='POST'){
    if(!short(b.name,100))error('Class name required');
@@ -997,6 +1074,16 @@ async function handle(req,env){
    if(!Number.isInteger(capacity)||capacity<1||capacity>1000)error('Class capacity must be between 1 and 1000',400);
    const total=await first(db,'SELECT COUNT(*) AS total FROM students WHERE class_id=?',b.id);
    if(Number(total?.total||0)>capacity)error('Class already has '+total.total+' pupils. Increase capacity or reallocate pupils first.',409);
+   const newTeacher=short(b.teacher_id,100);
+   if(newTeacher){
+    const conflict=await first(db,`SELECT other.id FROM class_timetable_sessions mine
+      JOIN class_timetable_sessions other ON other.weekday=mine.weekday
+        AND other.class_id<>mine.class_id AND other.starts_at<mine.ends_at
+        AND other.ends_at>mine.starts_at
+      JOIN classes linked ON linked.id=other.class_id
+      WHERE mine.class_id=? AND linked.teacher_id=? LIMIT 1`,b.id,newTeacher);
+    if(conflict)error('This teacher already has an overlapping weekly timetable session in another class',409);
+   }
    await run(db,'UPDATE classes SET name=?,stage=?,teacher_id=?,capacity=?,schedule=? WHERE id=?',short(b.name,100),short(b.stage,60),b.teacher_id||null,capacity,short(b.schedule,200),b.id);
    await audit(db,user,'update','class',b.id);return json({ok:true});
   }

@@ -5,6 +5,8 @@ import worker from '../src/worker.js';
 import assert from 'node:assert/strict';
 import {pbkdf2Sync,randomBytes} from 'node:crypto';
 const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0008_pupil_progress_reports.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0009_compliance_communications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0010_staff_dbs_review.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0011_dbs_evidence_received.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0012_in_app_notifications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0013_academic_calendar_communication_preferences.sql',import.meta.url),'utf8'));
+sqlite.exec(fs.readFileSync(new URL('../migrations/0014_class_weekly_timetable.sql',import.meta.url),'utf8'));
+
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
 for(const filename of ['0001_initial.sql','0002_expanded_admissions.sql','0003_safeguarding_declarations.sql']) oldDb.exec(fs.readFileSync(new URL('../migrations/'+filename,import.meta.url),'utf8'));
@@ -68,6 +70,44 @@ sqlite.prepare("INSERT INTO users(id,name,email,role,password_hash,password_salt
 const legacyLogin=await req('/auth/login',{email:'legacy@example.test',password:'legacy-password-123'},'POST',false);
 assert.equal(legacyLogin.status,200,JSON.stringify(legacyLogin.data));
 z=await req('/classes',{name:'Foundation',stage:'Foundation',capacity:20});assert.equal(z.status,200,JSON.stringify(z.data));const class_id=z.data.id;
+// v1.9.0: Weekly timetable is private, editable by office staff and validated
+// against same-class, teacher and physical-room scheduling conflicts.
+const timetableRow={class_id,weekday:6,starts_at:'10:00',ends_at:'12:00',subject:'Qur’an & Qaaidah',room:'Room A',notes:'Bring Qaaidah book'};
+z=await req('/timetable',timetableRow);assert.equal(z.status,200,JSON.stringify(z.data));const timetableId=z.data.id;
+z=await req('/timetable');assert.equal(z.status,200);assert.equal(z.data.items.length,1);
+assert.equal(z.data.items[0].class_name,'Foundation');
+assert.equal(z.data.items[0].weekday,6);
+assert.equal(z.data.items[0].subject,timetableRow.subject);
+z=await req('/timetable',{...timetableRow,starts_at:'11:30',ends_at:'12:30',room:'Room C'});
+assert.equal(z.status,409,'A class cannot be double-booked');
+z=await req('/timetable',{...timetableRow,starts_at:'12:00',ends_at:'13:00',subject:'Islamic Studies',room:'Room A'});
+assert.equal(z.status,200,'Back-to-back sessions are permitted');const adjacentId=z.data.id;
+z=await req('/timetable',{...timetableRow,weekday:0});assert.equal(z.status,400,'Invalid weekday blocked');
+z=await req('/timetable',{...timetableRow,starts_at:'24:00'});assert.equal(z.status,400,'24:00 is not a valid wall clock time');
+z=await req('/timetable',{...timetableRow,starts_at:'12:00',ends_at:'11:00'});assert.equal(z.status,400,'End cannot precede start');
+z=await req('/timetable',{...timetableRow,class_id:'unknown-class'});assert.equal(z.status,404,'Class must exist');
+z=await req('/classes',{name:'Timetable Studio A',stage:'Hifdh',capacity:16,teacher_id:'legacy-fixture'});assert.equal(z.status,200);const timetableClassA=z.data.id;
+z=await req('/classes',{name:'Timetable Studio B',stage:'Qaaidah',capacity:16,teacher_id:'legacy-fixture'});assert.equal(z.status,200);const timetableClassB=z.data.id;
+z=await req('/timetable',{...timetableRow,class_id:timetableClassA,starts_at:'10:30',ends_at:'11:30',subject:'Hifdh',room:'room a'});
+assert.equal(z.status,409,'Rooms are case-insensitive and cannot overlap');
+z=await req('/timetable',{...timetableRow,class_id:timetableClassA,starts_at:'10:30',ends_at:'11:30',subject:'Hifdh',room:'Room B'});
+assert.equal(z.status,200);const teacherSessionId=z.data.id;
+z=await req('/timetable',{...timetableRow,class_id:timetableClassB,starts_at:'10:45',ends_at:'11:45',subject:'Qur’an revision',room:'Room C'});
+assert.equal(z.status,409,'A teacher cannot be scheduled to different classes simultaneously');
+z=await req('/timetable',{...timetableRow,class_id:timetableClassB,starts_at:'11:30',ends_at:'13:00',subject:'Qur’an revision',room:'Room C'});
+assert.equal(z.status,200,'Teacher can start another class as soon as the preceding session ends');
+const alternateId=z.data.id;
+z=await req('/classes',{id:timetableClassB,name:'Timetable Studio B',stage:'Qaaidah',capacity:16,teacher_id:'legacy-fixture',schedule:''},'PATCH');
+assert.equal(z.status,200);
+z=await req('/timetable',{id:timetableId,...timetableRow,weekday:5,starts_at:'09:30',ends_at:'11:00'},'PATCH');
+assert.equal(z.status,200,'Admin can move a timetable session');
+z=await req('/timetable');assert.equal(z.data.items.find(x=>x.id===timetableId).weekday,5);
+z=await req('/timetable',{id:adjacentId},'DELETE');assert.equal(z.status,200);
+z=await req('/timetable',{id:adjacentId},'DELETE');assert.equal(z.status,404,'Deleted lesson cannot be deleted again');
+const anonymousTimetable=await req('/timetable',undefined,'GET',false);
+assert.equal(anonymousTimetable.status,401,'Timetable must not be publicly accessible');
+// Restore timetable on Saturday for the linked-family view test below.
+z=await req('/timetable',{id:timetableId,...timetableRow},'PATCH');assert.equal(z.status,200);
 // Test the new paper-form-equivalent admissions fields without any real child data.
 const application={first_name:'Sample',last_name:'Learner',dob:'2017-06-12',gender:'Female',home_address:'Example Road',postcode:'BL1 1AA',home_telephone:'',guardian_name:'Example Guardian',guardian_email:'example.guardian@example.test',guardian_phone:'07000000000',emergency_phone:'07000000001',guardian_relationship:'Mother',previous_attended:'yes',previous_institute:'Example Madrasah',level_starting:0,level_qaaidah:1,qaaidah_page:'15',level_quran:0,quran_surah:'',arabic_read_write:1,medical_information:'Needs inhaler access when indicated',allergies:'No allergies reported',additional_learning_needs:'Extra reading support',consent_first_aid:1,consent_photos:0,message:'Test application only'};
 // A new admission triggers exactly one formal receipt email, before any acceptance.
@@ -222,6 +262,21 @@ assert.ok(z.data.items.some(x=>x.student_id===student_id&&x.account_id===guardia
 const invite=new URL(autoGuardianUrl).searchParams.get('invite');
 let pa=await req('/auth/accept-invite',{token:invite,password:'twelve-character-guardian-pass'},'POST',false);assert.equal(pa.status,200);
 const parent_cookie=pa.response.headers.get('set-cookie').split(';')[0];const parent_csrf=pa.data.csrf;
+// Only classes currently attended by this parent's active children may be read.
+const timetableAdminCookie=cookie,timetableAdminCsrf=csrf;
+cookie=parent_cookie;csrf=parent_csrf;
+let familyTimetable=await req('/timetable');
+assert.equal(familyTimetable.status,200,JSON.stringify(familyTimetable.data));
+assert.ok(familyTimetable.data.items.some(x=>x.id===timetableId),'Parent sees their pupil’s class schedule');
+assert.ok(familyTimetable.data.items.every(x=>x.class_id===class_id),'Parent never sees unrelated class schedules');
+const familyClasses=await req('/classes');
+assert.equal(familyClasses.status,200);
+assert.ok(familyClasses.data.items.length>0);
+assert.ok(familyClasses.data.items.every(x=>x.id===class_id),'Class directory must not expose other families’ class information');
+familyTimetable=await req('/timetable',{...timetableRow,subject:'Unauthorised'},'POST');
+assert.equal(familyTimetable.status,403,'Guardian cannot edit timetable');
+cookie=timetableAdminCookie;csrf=timetableAdminCsrf;
+
 assert.equal(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student_id).parent_id,guardian_id,'Activation links the unlinked accepted pupil by verified invitation email');
 assert.notEqual(sqlite.prepare('SELECT parent_id FROM students WHERE id=?').get(student2).parent_id,guardian_id,'Other pupil stays with its own guardian');
 const oldCookie=cookie,oldCsrf=csrf;cookie=parent_cookie;csrf=parent_csrf;
@@ -291,6 +346,12 @@ csrf=staffPass.data.csrf;
 z=await req('/auth/me',null,'GET');assert.equal(z.status,200,JSON.stringify(z.data));
 assert.equal(z.data.user.role,'teacher');
 assert.equal(z.data.user.has_family,true,'Staff parent can switch to family access');
+const teacherVisibleTimetable=await req('/timetable');
+assert.equal(teacherVisibleTimetable.status,200);
+assert.ok(teacherVisibleTimetable.data.items.every(x=>x.teacher_id===staff_id),'Teacher view must not show unrelated class sessions');
+const teacherFamilyTimetable=await req('/timetable',null,'GET',true,'family');
+assert.equal(teacherFamilyTimetable.status,200);
+assert.ok(teacherFamilyTimetable.data.items.every(x=>x.class_id===class_id),'Dual-role family view only shows the child’s class');
 z=await req('/students',null,'GET',true,'family');assert.equal(z.status,200);
 assert.equal(z.data.items.length,1,'Family view only shows linked pupil');
 assert.equal(z.data.items[0].id,storedTeacherChild.id);
@@ -1242,6 +1303,17 @@ assert.ok(admissionsUi.includes("'reset-success'"),'Password reset success page 
 assert.ok(admissionsUi.includes("args.password!==args.confirm_password"),'Forgot-password flow confirms new password');
 
 assert.ok(admissionsUi.includes('function familyDashboard()'),'Parent family dashboard is present');
+assert.ok(admissionsUi.includes('function timetablePage()'),'Weekly timetable page exists');
+assert.ok(admissionsUi.includes("case'timetable':content=timetablePage()"),'Timetable has its own route');
+const timetableMigration=fs.readFileSync(new URL('../migrations/0014_class_weekly_timetable.sql',import.meta.url),'utf8');
+assert.ok(timetableMigration.includes('REFERENCES classes(id) ON DELETE CASCADE'),'Timetable has an indexed parent-class relation');
+assert.ok(admissionsUi.includes("timetable:['timetable', 'classes']"),'Timetable loads its authorised class choices');
+assert.ok(admissionsUi.includes("['timetable','Weekly timetable'"),'Timetable has school navigation');
+assert.ok(admissionsUi.includes("case 'timetable-add':case 'timetable-edit'"),'Staff can create and edit weekly lessons');
+assert.ok(admissionsUi.includes("if(a==='timetable-delete')"),'Staff can delete lessons with confirmation');
+assert.ok(admissionsUi.includes("if(a==='timetable-print')"),'Printable weekly timetable exists');
+assert.ok(admissionsUi.includes("window.print()"),'Print action calls the browser printing interface');
+
 assert.ok(admissionsUi.includes('family-switch'),'Family view switch appears in the UI');
 assert.ok(admissionsUi.includes('x-portal-view'),'Family view requests carry their restricted role');
 assert.ok(admissionsUi.includes("if(a==='family-switch')"),'Switch action is interactive');
