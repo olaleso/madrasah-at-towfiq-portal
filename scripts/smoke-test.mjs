@@ -1317,9 +1317,9 @@ assert.equal(record.status,'new','Public submissions cannot accept or enrol a ch
 assert.equal(record.student_id,null,'No student record is created until staff acceptance');
 assert.equal(record.parent_confirmed,1);
 assert.equal(record.consent_photos,0,'Optional photo consent must remain unchecked');
-const forbidden=await worker.fetch(new Request(publicAdmissionUrl,{
+const forbiddenAdmissionOrigin=await worker.fetch(new Request(publicAdmissionUrl,{
  method:'GET',headers:{Origin:'https://not-our-site.example'}}),env);
-assert.equal(forbidden.status,403,'Foreign origins cannot submit');
+assert.equal(forbiddenAdmissionOrigin.status,403,'Foreign origins cannot submit');
 const invalidPublic=await worker.fetch(new Request(publicAdmissionUrl,{
  method:'POST',headers:{Origin:madrasahOrigin,'Content-Type':'application/json'},
  body:JSON.stringify({...publicApplicant,gender:'Unknown',guardian_email:'invalid-another@example.test'})}),env);
