@@ -1438,3 +1438,13 @@ assert.ok(galleryUi.includes("await fetch('/api/website/photos'"),'Gallery uploa
 const galleryResponse=await worker.fetch(new Request('https://portal.attowfiqmasjid.org/api/public/masjid-photos'),env);
 assert.equal(galleryResponse.status,200,'Published photo feed must be accessible');
 assert.ok(Array.isArray((await galleryResponse.json()).items),'Published photo feed must contain an items array');
+
+
+// Phase 1 regressions: the optional community UI is registered for delegated
+// submissions and its original-site restoration control is always available.
+const phase1App=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+const phase1Submit=phase1App.match(/document\.addEventListener\('submit',[\s\S]*?\}\);/);
+assert.ok(phase1Submit?.[0].includes("'website-community-form'"),'Masjid community form must use the existing delegated submit handler');
+assert.ok(phase1App.includes("if(formId==='website-community-form')"),'Masjid community form must save through authenticated API');
+assert.ok(phase1App.includes("data-action=\"community-enable\""),'Masjid administrator must have a reversible on/off control');
+assert.ok(phase1App.includes("Restore original site"),'Instant rollback control must be visible when enabled');
