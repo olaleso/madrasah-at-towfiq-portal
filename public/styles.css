@@ -435,3 +435,21 @@
  .timetable-day,.timetable-session{break-inside:avoid;page-break-inside:avoid}
  .timetable-session{box-shadow:none}
 }
+
+/* Website content: authentic Masjid photo gallery administration */
+.website-gallery-admin{margin-top:24px}
+.website-gallery-metrics{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 20px}
+.website-gallery-metrics span{background:#f3f7fb;border:1px solid #dfe8f0;border-radius:999px;padding:8px 12px;color:#375976;font-size:12px;font-weight:700}
+.website-photo-form{background:#f9fbfc;border:1px solid #e0e8ed;border-radius:16px;padding:22px;margin:0 0 24px}
+.website-photo-form input[type=file]{max-width:100%;font-size:13px}
+.website-photo-form .field small{display:block;color:#61758b;margin-top:6px}
+.website-gallery-items{display:grid;gap:13px}
+.website-gallery-entry{display:grid;grid-template-columns:minmax(130px,200px) minmax(0,1fr) auto;align-items:center;gap:16px;padding:15px;border:1px solid #e0e8f0;border-radius:14px}
+.website-gallery-entry img{width:100%;height:136px;object-fit:cover;border-radius:10px;background:#e9edef}
+.website-gallery-details{min-width:0}
+.website-gallery-details strong{display:block;font-size:16px;color:#213c58}
+.website-gallery-details small{display:block;color:#3f6b87;margin-top:6px;font-size:12px}
+.website-gallery-details p{font-size:13px;color:#5b6f80;margin:8px 0 0;overflow-wrap:anywhere}
+.website-gallery-actions{display:flex;flex-direction:column;gap:7px;align-items:stretch}
+@media(max-width:840px){.website-gallery-entry{grid-template-columns:125px minmax(0,1fr)}.website-gallery-actions{grid-column:1/-1;flex-direction:row;flex-wrap:wrap}.website-gallery-entry img{height:106px}}
+@media(max-width:520px){.website-gallery-entry{grid-template-columns:1fr}.website-gallery-entry img{height:185px}.website-photo-form{padding:15px}}
