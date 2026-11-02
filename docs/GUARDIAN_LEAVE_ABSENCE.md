@@ -27,8 +27,9 @@ cd C:\App\Madrasah-At-Towfiq-Portal\madrasah-at-towfiq-portal
 git pull origin main
 npm run test
 
-# Take a remote D1 backup before migration.
-npx wrangler@latest d1 export attowfiq_portal --remote --output .\attowfiq-before-leave-requests.sql
+# Store backups OUTSIDE the Git repository.
+New-Item -ItemType Directory -Force C:\App\Attowfiq-Backups | Out-Null
+npx wrangler@latest d1 export attowfiq_portal --remote --output C:\App\Attowfiq-Backups\attowfiq-before-leave-requests.sql
 
 # Add the new table and indexes, without changing existing records.
 npx wrangler@latest d1 migrations apply attowfiq_portal --remote
