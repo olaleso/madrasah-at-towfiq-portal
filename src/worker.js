@@ -1433,11 +1433,11 @@ async function handle(req,env){
    if(pupil.status!=='active')error('Leave requests are only available for enrolled students',403);
    const type=String(b.request_type||'');
    if(!['absence','leave'].includes(type))error('Choose Absence notification or Leave request');
-   const first=String(b.starts_on||''),last=String(b.ends_on||'');
-   if(!isDbsDate(first)||!isDbsDate(last))error('Enter valid start and end dates');
+   const startsOn=String(b.starts_on||''),endsOn=String(b.ends_on||'');
+   if(!isDbsDate(startsOn)||!isDbsDate(endsOn))error('Enter valid start and end dates');
    const day=x=>Date.parse(x+'T00:00:00Z');
-   const startDays=Math.round((day(first)-day(schoolLocalDate()))/86400000);
-   const duration=Math.round((day(last)-day(first))/86400000)+1;
+   const startDays=Math.round((day(startsOn)-day(schoolLocalDate()))/86400000);
+   const duration=Math.round((day(endsOn)-day(startsOn))/86400000)+1;
    if(duration<1||duration>30)error('Select a date range of 1–30 days');
    if(startDays < -60 ||startDays > 365)error('Choose dates within the last 60 days or the coming year');
    const reason=String(b.reason||'');
@@ -1446,14 +1446,14 @@ async function handle(req,env){
    if(String(b.details||'').trim().length>500)error('Additional information must be 500 characters or fewer');
    const overlap=await first(db,`SELECT id FROM student_leave_requests
       WHERE student_id=? AND status IN ('pending','approved','acknowledged')
-      AND starts_on<=? AND ends_on>=? LIMIT 1`,pupil.id,last,first);
+      AND starts_on<=? AND ends_on>=? LIMIT 1`,pupil.id,endsOn,startsOn);
    if(overlap)error('An active notice already covers some of these dates. Review it before submitting another.',409);
    const requestId=id();
    await run(db,`INSERT INTO student_leave_requests
      (id,student_id,submitted_by,request_type,starts_on,ends_on,reason,details,status)
      VALUES(?,?,?,?,?,?,?,?, 'pending')`,
-     requestId,pupil.id,user.id,type,first,last,reason,details);
-   await audit(db,user,'submit','student_leave_request',requestId,type+' '+first+' to '+last);
+     requestId,pupil.id,user.id,type,startsOn,endsOn,reason,details);
+   await audit(db,user,'submit','student_leave_request',requestId,type+' '+startsOn+' to '+endsOn);
    const label=type==='leave'?'Leave request':'Absence notification';
    const allStaff=await all(db,`SELECT DISTINCT u.id FROM users u
      LEFT JOIN classes c ON c.teacher_id=u.id
