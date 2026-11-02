@@ -1409,6 +1409,116 @@ async function handle(req,env){
    await audit(db,user,'review','admission',b.id,b.status);return json({ok:true});
   }
  }
+
+ // Guardian absence notifications and leave requests. These do not alter the
+ // official attendance register; only staff make or approve that decision.
+ if(path==='/api/leave-requests'){
+  if(method==='GET'){
+   const scope=studentScope(user);
+   const items=await all(db,`SELECT r.id,r.student_id,r.request_type,r.starts_on,r.ends_on,
+     r.reason,r.details,r.status,r.review_note,r.reviewed_at,r.created_at,r.updated_at,
+     s.first_name,s.last_name,s.student_no,c.name AS class_name,
+     COALESCE(p.name,'Former guardian') AS parent_name
+     FROM student_leave_requests r JOIN students s ON s.id=r.student_id
+     LEFT JOIN classes c ON c.id=s.class_id
+     LEFT JOIN users p ON p.id=r.submitted_by
+     WHERE ${scope.where} AND s.status='active'${user.role==='parent'?' AND r.submitted_by=?':''}
+     ORDER BY CASE WHEN r.status='pending' THEN 0 ELSE 1 END,r.created_at DESC LIMIT 250`,...scope.args,...(user.role==='parent'?[user.id]:[]));
+   return json({items});
+  }
+  if(method==='POST'){
+   requireRole(user,'parent');
+   const b=await input(req);
+   const pupil=await permittedStudent(db,user,String(b.student_id||''));
+   if(pupil.status!=='active')error('Leave requests are only available for enrolled students',403);
+   const type=String(b.request_type||'');
+   if(!['absence','leave'].includes(type))error('Choose Absence notification or Leave request');
+   const startsOn=String(b.starts_on||''),endsOn=String(b.ends_on||'');
+   if(!isDbsDate(startsOn)||!isDbsDate(endsOn))error('Enter valid start and end dates');
+   const day=x=>Date.parse(x+'T00:00:00Z');
+   const startDays=Math.round((day(startsOn)-day(schoolLocalDate()))/86400000);
+   const duration=Math.round((day(endsOn)-day(startsOn))/86400000)+1;
+   if(duration<1||duration>30)error('Select a date range of 1–30 days');
+   if(startDays < -60 ||startDays > 365)error('Choose dates within the last 60 days or the coming year');
+   const reason=String(b.reason||'');
+   if(!['illness','appointment','family','travel','other'].includes(reason))error('Select a reason');
+   const details=short(b.details||'',500);
+   if(String(b.details||'').trim().length>500)error('Additional information must be 500 characters or fewer');
+   const overlap=await first(db,`SELECT id FROM student_leave_requests
+      WHERE student_id=? AND status IN ('pending','approved','acknowledged')
+      AND starts_on<=? AND ends_on>=? LIMIT 1`,pupil.id,endsOn,startsOn);
+   if(overlap)error('An active notice already covers some of these dates. Review it before submitting another.',409);
+   const requestId=id();
+   await run(db,`INSERT INTO student_leave_requests
+     (id,student_id,submitted_by,request_type,starts_on,ends_on,reason,details,status)
+     VALUES(?,?,?,?,?,?,?,?, 'pending')`,
+     requestId,pupil.id,user.id,type,startsOn,endsOn,reason,details);
+   await audit(db,user,'submit','student_leave_request',requestId,type+' '+startsOn+' to '+endsOn);
+   const label=type==='leave'?'Leave request':'Absence notification';
+   const allStaff=await all(db,`SELECT DISTINCT u.id FROM users u
+     LEFT JOIN classes c ON c.teacher_id=u.id
+     WHERE u.active=1 AND (u.role IN ('admin','staff') OR
+       (u.role='teacher' AND c.id=?))`,pupil.class_id);
+   for(const member of allStaff){
+    await createInboxNotification(db,member.id,pupil.id,'attendance',requestId,
+       'New student '+label.toLowerCase(),
+       label+' submitted for '+pupil.first_name+' '+pupil.last_name+'. Review it in Leave & absence.',
+       'attendance');
+   }
+   return json({ok:true,id:requestId,status:'pending'},201);
+  }
+  if(method==='PATCH'){
+   const b=await input(req),rid=String(b.id||'');
+   const record=await first(db,`SELECT r.*,s.parent_id,s.first_name,s.last_name
+     FROM student_leave_requests r JOIN students s ON s.id=r.student_id WHERE r.id=?`,rid);
+   if(!record)error('Request not found',404);
+   if(b.action==='cancel'){
+    requireRole(user,'parent');
+    if(record.parent_id!==user.id||record.submitted_by!==user.id)error('This is not your request',403);
+    if(record.status!=='pending')error('Only pending submissions can be withdrawn',409);
+    await run(db,`UPDATE student_leave_requests
+     SET status='cancelled',updated_at=? WHERE id=? AND status='pending'`,iso(),rid);
+    await audit(db,user,'cancel','student_leave_request',rid);
+    // The original notice may already have been read. Notify office staff and
+    // the class teacher about the withdrawal with a distinct idempotency key.
+    const roster=await all(db,`SELECT DISTINCT u.id FROM users u
+      LEFT JOIN classes c ON c.teacher_id=u.id
+      JOIN students s ON s.id=?
+      WHERE u.active=1 AND (u.role IN ('admin','staff') OR
+        (u.role='teacher' AND c.id=s.class_id))`,record.student_id);
+    for(const member of roster){
+     await createInboxNotification(db,member.id,record.student_id,'attendance',
+      rid+'|withdrawn','Student leave / absence withdrawn',
+      'A guardian withdrew a previously submitted leave or absence notice. See the Leave & absence queue.',
+      'attendance');
+    }
+    return json({ok:true,status:'cancelled'});
+   }
+   requireRole(user,'admin','staff');
+   if(b.action!=='review')error('Invalid review action');
+   if(record.status!=='pending')error('This request has already been reviewed or withdrawn',409);
+   const decision=String(b.status||'');
+   const allowed=record.request_type==='absence'?['acknowledged','declined']:['approved','declined'];
+   if(!allowed.includes(decision))error('Choose an appropriate review outcome');
+   if(String(b.review_note||'').length>300)error('Review note must be 300 characters or fewer');
+   const reviewNote=short(b.review_note||'',300);
+   await run(db,`UPDATE student_leave_requests
+      SET status=?,review_note=?,reviewed_by=?,reviewed_at=?,updated_at=?
+      WHERE id=? AND status='pending'`,decision,reviewNote,user.id,iso(),iso(),rid);
+   await audit(db,user,'review','student_leave_request',rid,decision);
+   const parent=await first(db,`SELECT s.parent_id FROM students s JOIN users u
+     ON u.id=s.parent_id AND u.active=1 WHERE s.id=? AND s.status='active'`,record.student_id);
+   if(parent?.parent_id){
+    await createInboxNotification(db,parent.parent_id,record.student_id,'attendance',rid+'|'+decision,
+      record.request_type==='leave'?'Leave request update':'Absence notice update',
+      'Your submission for '+record.first_name+' '+record.last_name+' has been '+decision+'. Open Leave & absence for details.',
+      'attendance');
+   }
+   return json({ok:true,status:decision});
+  }
+  error('Method not allowed',405);
+ }
+
  if(path==='/api/attendance'){
   if(method==='GET'){const s=studentScope(user),day=short(u.searchParams.get('date')||nowDate(),10);const rows=await all(db,`SELECT a.*,s.first_name,s.last_name,s.class_id FROM attendance a JOIN students s ON s.id=a.student_id WHERE ${s.where} AND (?='' OR a.date=?) ORDER BY s.first_name`,...s.args,u.searchParams.has('date')?day:'',u.searchParams.has('date')?day:'');return json({items:rows});}
    requireRole(user,'admin','staff','teacher');
