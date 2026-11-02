@@ -1422,8 +1422,8 @@ async function handle(req,env){
      FROM student_leave_requests r JOIN students s ON s.id=r.student_id
      LEFT JOIN classes c ON c.id=s.class_id
      LEFT JOIN users p ON p.id=r.submitted_by
-     WHERE ${scope.where} AND s.status='active'
-     ORDER BY CASE WHEN r.status='pending' THEN 0 ELSE 1 END,r.created_at DESC LIMIT 250`,...scope.args);
+     WHERE ${scope.where} AND s.status='active'${user.role==='parent'?' AND r.submitted_by=?':''}
+     ORDER BY CASE WHEN r.status='pending' THEN 0 ELSE 1 END,r.created_at DESC LIMIT 250`,...scope.args,...(user.role==='parent'?[user.id]:[]));
    return json({items});
   }
   if(method==='POST'){
