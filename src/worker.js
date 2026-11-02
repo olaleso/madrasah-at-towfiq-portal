@@ -1479,6 +1479,19 @@ async function handle(req,env){
     await run(db,`UPDATE student_leave_requests
      SET status='cancelled',updated_at=? WHERE id=? AND status='pending'`,iso(),rid);
     await audit(db,user,'cancel','student_leave_request',rid);
+    // The original notice may already have been read. Notify office staff and
+    // the class teacher about the withdrawal with a distinct idempotency key.
+    const roster=await all(db,`SELECT DISTINCT u.id FROM users u
+      LEFT JOIN classes c ON c.teacher_id=u.id
+      JOIN students s ON s.id=?
+      WHERE u.active=1 AND (u.role IN ('admin','staff') OR
+        (u.role='teacher' AND c.id=s.class_id))`,record.student_id);
+    for(const member of roster){
+     await createInboxNotification(db,member.id,record.student_id,'attendance',
+      rid+'|withdrawn','Student leave / absence withdrawn',
+      'A guardian withdrew a previously submitted leave or absence notice. See the Leave & absence queue.',
+      'attendance');
+    }
     return json({ok:true,status:'cancelled'});
    }
    requireRole(user,'admin','staff');
