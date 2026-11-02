@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {pbkdf2Sync,randomBytes} from 'node:crypto';
 const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0008_pupil_progress_reports.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0009_compliance_communications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0010_staff_dbs_review.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0011_dbs_evidence_received.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0012_in_app_notifications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0013_academic_calendar_communication_preferences.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0014_class_weekly_timetable.sql',import.meta.url),'utf8'));
+sqlite.exec(fs.readFileSync(new URL('../migrations/0015_student_leave_requests.sql',import.meta.url),'utf8'));
 
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
@@ -288,7 +289,66 @@ z=await req('/admissions');assert.equal(z.status,403,'Parent must not view appli
 z=await req('/guardians');assert.equal(z.status,403,'Parents cannot list other guardians');
 z=await req('/guardians',{student_id},'POST');assert.equal(z.status,403,'Parents cannot issue invitations');
 z=await req('/fees/bulk',{mode:'all',period:'2027-02',amount_pence:3000,confirm:'ISSUE_BULK_INVOICES'});assert.equal(z.status,403,'Parents cannot bulk invoice pupils');
+
+ // Guardian leave requests: ownership, duplicate protection, data constraints,
+ // office approval and strict separation from the attendance register.
+ const leaveDay=offset=>new Date(Date.now()+offset*86400000).toISOString().slice(0,10);
+ let leaveTest=await req('/leave-requests');
+ assert.equal(leaveTest.status,200);
+ assert.deepEqual(leaveTest.data.items,[]);
+ const absenceInput={student_id,request_type:'absence',starts_on:leaveDay(2),ends_on:leaveDay(2),
+   reason:'illness',details:'Student is unwell and will miss class.'};
+ leaveTest=await req('/leave-requests',{...absenceInput,student_id:student2});
+ assert.equal(leaveTest.status,403,'Guardian cannot report another family’s child');
+ leaveTest=await req('/leave-requests',absenceInput);
+ assert.equal(leaveTest.status,201,JSON.stringify(leaveTest.data));
+ const absenceId=leaveTest.data.id;
+ leaveTest=await req('/leave-requests',absenceInput);
+ assert.equal(leaveTest.status,409,'Overlapping active absence notices are blocked');
+ leaveTest=await req('/leave-requests');
+ assert.equal(leaveTest.data.items.length,1);
+ leaveTest=await req('/leave-requests',{id:absenceId,action:'review',status:'acknowledged'},'PATCH');
+ assert.equal(leaveTest.status,403,'Guardian must not review own notice');
+ leaveTest=await req('/leave-requests',{...absenceInput,starts_on:'2026-02-30',ends_on:'2026-02-30'});
+ assert.equal(leaveTest.status,400,'Impossible dates are rejected');
+ leaveTest=await req('/leave-requests',{...absenceInput,starts_on:leaveDay(4),ends_on:leaveDay(38)});
+ assert.equal(leaveTest.status,400,'Date range longer than 30 days rejected');
+ const leaveInput={...absenceInput,request_type:'leave',starts_on:leaveDay(5),ends_on:leaveDay(6),reason:'family'};
+ leaveTest=await req('/leave-requests',leaveInput);
+ assert.equal(leaveTest.status,201,JSON.stringify(leaveTest.data));
+ const leaveId=leaveTest.data.id;
+ const toWithdraw=await req('/leave-requests',{...absenceInput,starts_on:leaveDay(12),ends_on:leaveDay(12)});
+ assert.equal(toWithdraw.status,201);
+ leaveTest=await req('/leave-requests',{id:toWithdraw.data.id,action:'cancel'},'PATCH');
+ assert.equal(leaveTest.status,200);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM attendance WHERE student_id=? AND date=?').get(student_id,leaveDay(2)).n,0,
+   'Guardian notices do not mark attendance');
 cookie=oldCookie;csrf=oldCsrf;
+ // Staff actions and guardian feedback.
+ let leaveStaff=await req('/leave-requests');
+ assert.equal(leaveStaff.status,200);
+ assert.ok(leaveStaff.data.items.some(x=>x.id===absenceId&&x.status==='pending'));
+ leaveStaff=await req('/leave-requests',{id:absenceId,action:'review',status:'acknowledged',
+   review_note:'Thank you for letting us know.'},'PATCH');
+ assert.equal(leaveStaff.status,200,JSON.stringify(leaveStaff.data));
+ leaveStaff=await req('/leave-requests',{id:leaveId,action:'review',status:'approved',
+   review_note:'Leave approved.'},'PATCH');
+ assert.equal(leaveStaff.status,200);
+ leaveStaff=await req('/leave-requests',{id:leaveId,action:'review',status:'declined'},'PATCH');
+ assert.equal(leaveStaff.status,409,'Reviewed request cannot be approved twice');
+ const guardianNotices=sqlite.prepare("SELECT COUNT(*) AS n FROM portal_notifications WHERE recipient_id=? AND kind='attendance'").get(guardian_id).n;
+ assert.ok(guardianNotices>=2,'Parent gets in-app review notifications');
+ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM attendance WHERE student_id=? AND date=?').get(student_id,leaveDay(2)).n,0,
+   'Staff review does not silently record attendance');
+ cookie=parent_cookie;csrf=parent_csrf;
+ const parentStatus=await req('/leave-requests');
+ assert.equal(parentStatus.data.items.find(x=>x.id===absenceId).status,'acknowledged');
+ assert.equal(parentStatus.data.items.find(x=>x.id===leaveId).status,'approved');
+ assert.equal(parentStatus.data.items.find(x=>x.id===leaveId).review_note,'Leave approved.');
+ const cancelledReviewed=await req('/leave-requests',{id:leaveId,action:'cancel'},'PATCH');
+ assert.equal(cancelledReviewed.status,409);
+ cookie=oldCookie;csrf=oldCsrf;
+
 // Updating accepted admission details keeps the pupil's basic details in sync.
 const emailLogBeforeAdmissionEdit=sqlite.prepare('SELECT COUNT(*) AS total FROM email_log').get().total;
 z=await req('/admissions',{...application,id:application_id,update_details:true,first_name:'Updated',last_name:'Learner',previous_attended:'no',previous_institute:''},'PATCH');
