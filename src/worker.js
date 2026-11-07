@@ -635,6 +635,47 @@ function galleryToBase64(bytes){
  let result='';for(let i=0;i<bytes.length;i+=16000)result+=String.fromCharCode(...bytes.subarray(i,i+16000));
  return btoa(result);
 }
+
+const MASJID_PUBLIC_ORIGINS=['https://attowfiqmasjid.org','https://www.attowfiqmasjid.org'];
+function publicMasjidContactOrigin(req){
+ const origin=req.headers.get('origin')||'';
+ if(MASJID_PUBLIC_ORIGINS.includes(origin))return origin;
+ const self=new URL(req.url);
+ return self.hostname==='localhost'&&origin===self.origin?origin:'';
+}
+async function publicMasjidEnquiry(req,env){
+ if(!publicMasjidContactOrigin(req))error('Use the official Masjid At-Towfiq contact page',403);
+ if(req.method==='GET')return json({accepting:true},200,{'Cache-Control':'no-store'});
+ if(req.method!=='POST')error('Method not allowed',405);
+ if(!/^application\/json(?:\s*;|$)/i.test(req.headers.get('content-type')||''))error('JSON enquiry required',415);
+ const x=await input(req);
+ // Invisible bot field. No personal information from automated spam is stored.
+ if(String(x.website||'').trim())return json({ok:true,reference:null},200,{'Cache-Control':'no-store'});
+ const t=Number(x.form_started_at);
+ if(!Number.isFinite(t)||t>Date.now()-2300||t<Date.now()-7200000)
+   error('Please refresh the contact page and complete the enquiry form',400);
+ if(x.privacy_confirmed!==true)error('Please confirm that the masjid may use your details to respond',400);
+ const name=String(x.name||'').trim(),mailAddress=String(x.email||'').trim().toLowerCase(),
+  phone=String(x.phone||'').trim(),message=String(x.message||'').trim(),topic=String(x.topic||'');
+ if(name.length<2||name.length>100||/[<>]/.test(name))error('Enter your name (2–100 characters)',400);
+ if(mailAddress.length>254||!/^\S+@\S+\.\S+$/.test(mailAddress))error('Enter a valid email address',400);
+ if(phone.length>35||/[<>]/.test(phone))error('Invalid telephone number',400);
+ if(!['general','nikah','counselling','funeral','sheikh','volunteering','other'].includes(topic))
+  error('Select an enquiry category',400);
+ if(message.length<20||message.length>2000)error('Enter a message between 20 and 2000 characters',400);
+ // A single daily counter covers a submitted form, not the number of children.
+ const day=nowDate().replace(/-/g,'');
+ for(const [kind,token,limit] of [['ip',req.headers.get('CF-Connecting-IP')||'local-test',8],['email',mailAddress,5]]){
+  const key='masjid_contact_rate_'+day+'_'+kind+'_'+(await sha(token)).slice(0,26);
+  const result=await run(env.DB,"INSERT INTO school_settings(key,value) VALUES(?,'1') ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT) WHERE CAST(value AS INTEGER)<?",key,limit);
+  if(Number(result?.meta?.changes??result?.changes??0)===0)error('Daily enquiry limit reached. Please phone the masjid for assistance.',429);
+ }
+ const rid=id();
+ await run(env.DB,'INSERT INTO masjid_contact_enquiries(id,name,email,phone,topic,message) VALUES(?,?,?,?,?,?)',
+  rid,name,mailAddress,phone,topic,message);
+ return json({ok:true,reference:'MAS-'+rid.replace(/[^a-zA-Z0-9]/g,'').slice(0,10).toUpperCase()},201,{'Cache-Control':'no-store'});
+}
+
 // Public website admission intake: submissions only; acceptance stays staff-only.
 const PUBLIC_MADRASAH_ORIGINS=['https://madrasah.attowfiqmasjid.org','https://attowfiqmasjid.org','https://www.attowfiqmasjid.org'];
 function publicAdmissionOrigin(req){
@@ -755,9 +796,10 @@ const escapeHtml=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 async function handle(req,env){
  const u=new URL(req.url), path=u.pathname,method=req.method,db=env.DB;
  if(!db)error('Cloudflare D1 binding missing. Configure wrangler.jsonc and run migrations.',503);
- if(method!=='GET'&&path!=='/api/public/admissions') consented(req);
+ if(method!=='GET'&&!['/api/public/admissions','/api/public/masjid-enquiries'].includes(path)) consented(req);
  if(path==='/api/health')return json({ok:true,service:'Madrasah At-Towfiq portal'});
  if(path==='/api/public/admissions')return publicAdmissionSubmit(req,env);
+ if(path==='/api/public/masjid-enquiries')return publicMasjidEnquiry(req,env);
 
 
  // Entire Phase 1 feed is hidden until an administrator enables it.
@@ -878,6 +920,28 @@ async function handle(req,env){
   const image=await first(db,'SELECT value FROM school_settings WHERE key=?','masjid_photo_'+pid);
   if(!image?.value)error('Photo unavailable',404);
   return galleryImageResponse(image.value,false);
+ }
+
+
+ if(path==='/api/website/enquiries'){
+  requireRole(user,'admin');
+  if(method==='GET'){
+   return json({items:await all(db,`SELECT id,name,email,phone,topic,message,status,admin_note,created_at,updated_at
+     FROM masjid_contact_enquiries ORDER BY CASE WHEN status='new' THEN 0 WHEN status='in_progress' THEN 1 ELSE 2 END, created_at DESC LIMIT 200`)});
+  }
+  if(method==='PATCH'){
+   const x=await input(req),enquiryId=String(x.id||''),status=String(x.status||'');
+   if(!['new','in_progress','closed'].includes(status))error('Invalid enquiry status',400);
+   const note=String(x.admin_note||'').trim();
+   if(note.length>500)error('Internal note must be 500 characters or fewer',400);
+   const original=await first(db,'SELECT id FROM masjid_contact_enquiries WHERE id=?',enquiryId);
+   if(!original)error('Enquiry not found',404);
+   await run(db,`UPDATE masjid_contact_enquiries SET status=?,admin_note=?,reviewed_by=?,updated_at=? WHERE id=?`,
+    status,note,user.id,iso(),enquiryId);
+   await audit(db,user,'review','masjid_contact_enquiry',enquiryId,status);
+   return json({ok:true});
+  }
+  error('Method not allowed',405);
  }
 
  if(path==='/api/website/community'){
@@ -2159,8 +2223,9 @@ export default {
   const url=new URL(req.url);
   if(!url.pathname.startsWith('/api/'))return env.ASSETS.fetch(req);
   const isPublicAdmission=url.pathname==='/api/public/admissions';
-  const origin=isPublicAdmission?publicAdmissionOrigin(req):'';
-  if(isPublicAdmission&&req.method==='OPTIONS')
+  const isPublicMasjidContact=url.pathname==='/api/public/masjid-enquiries';
+  const origin=isPublicMasjidContact?publicMasjidContactOrigin(req):isPublicAdmission?publicAdmissionOrigin(req):'';
+  if((isPublicAdmission||isPublicMasjidContact)&&req.method==='OPTIONS')
    return origin?new Response(null,{status:204,headers:{...publicAdmissionCors(origin),'X-Robots-Tag':'noindex'}}):new Response(null,{status:403,headers:{'X-Robots-Tag':'noindex'}});
   try{
    const result=await handle(req,env);
