@@ -650,7 +650,7 @@ async function publicAdmissionSubmit(req,env){
  if(!publicAdmissionOrigin(req))error('The application must be submitted from the official Madrasah website',403);
  if(req.method==='GET')return json({accepting:true,max_children:6},200,{'Cache-Control':'no-store'});
  if(req.method!=='POST')error('Method not allowed',405);
- if(!/^application\\/json(?:\\s*;|$)/i.test(req.headers.get('content-type')||''))error('JSON application required',415);
+ if(!/^application\/json(?:\s*;|$)/i.test(req.headers.get('content-type')||''))error('JSON application required',415);
  const b=await input(req);
  if(b.website)return json({ok:true,reference:null,acknowledgement_status:'not_sent'});
  if(!Number.isFinite(Number(b.form_started_at))||
@@ -666,7 +666,7 @@ async function publicAdmissionSubmit(req,env){
   'guardian_phone','emergency_phone','guardian_relationship'];
  const shared=Object.fromEntries(sharedNames.map(k=>[k,b[k]]));
  if(!short(shared.home_address,260)||!short(shared.postcode,16))error('Home address and postcode are required');
- if(!short(shared.guardian_name,120)||!/^\\S+@\\S+\\.\\S+$/.test(email(shared.guardian_email)))error('Guardian name and valid email are required');
+ if(!short(shared.guardian_name,120)||!/^\S+@\S+\.\S+$/.test(email(shared.guardian_email)))error('Guardian name and valid email are required');
  if(!short(shared.guardian_phone,40)||!short(shared.guardian_relationship,50))
   error('Guardian contact number and relationship are required');
  const booleans=['level_starting','level_qaaidah','level_quran','arabic_read_write','consent_first_aid','consent_photos'];
