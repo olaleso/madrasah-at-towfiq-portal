@@ -8,6 +8,7 @@ const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('.
 sqlite.exec(fs.readFileSync(new URL('../migrations/0014_class_weekly_timetable.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0015_student_leave_requests.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0016_family_applications.sql',import.meta.url),'utf8'));
+sqlite.exec(fs.readFileSync(new URL('../migrations/0017_masjid_contact_enquiries.sql',import.meta.url),'utf8'));
 
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
@@ -1457,6 +1458,59 @@ const invalidPublic=await worker.fetch(new Request(publicAdmissionUrl,{
  method:'POST',headers:{Origin:madrasahOrigin,'Content-Type':'application/json'},
  body:JSON.stringify({...publicApplicant,gender:'Unknown',guardian_email:'invalid-another@example.test'})}),env);
 assert.equal(invalidPublic.status,400,'Invalid gender is rejected before insertion');
+
+// Website contact page: in-browser form, public POST-only record creation,
+// administrator-only queue and strict separation from pupil/guardian data.
+const masjidContactUrl='http://localhost:8787/api/public/masjid-enquiries';
+const contactOrigin='http://localhost:8787';
+const contactPreflight=await worker.fetch(new Request(masjidContactUrl,{method:'OPTIONS',
+ headers:{Origin:contactOrigin,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'content-type'}}),env);
+assert.equal(contactPreflight.status,204);
+assert.equal(contactPreflight.headers.get('Access-Control-Allow-Origin'),contactOrigin);
+const contactReady=await worker.fetch(new Request(masjidContactUrl,{method:'GET',
+ headers:{Origin:contactOrigin}}),env);
+assert.equal(contactReady.status,200);
+assert.equal((await contactReady.json()).accepting,true);
+const contactMessage={name:'Example Visitor',email:'visitor@example.test',phone:'07000001111',
+ topic:'nikah',message:'Please advise what information is needed to arrange a Nikah.',
+ privacy_confirmed:true,form_started_at:Date.now()-6500};
+const badContact=await worker.fetch(new Request(masjidContactUrl,{method:'POST',
+ headers:{Origin:contactOrigin,'Content-Type':'application/json'},
+ body:JSON.stringify({...contactMessage,topic:'bogus'})}),env);
+assert.equal(badContact.status,400,'Reject invalid service enquiry topics');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM masjid_contact_enquiries').get().n,0);
+const contactSubmit=await worker.fetch(new Request(masjidContactUrl,{method:'POST',
+ headers:{Origin:contactOrigin,'Content-Type':'application/json'},
+ body:JSON.stringify(contactMessage)}),env);
+const contactAnswer=await contactSubmit.json();
+assert.equal(contactSubmit.status,201,JSON.stringify(contactAnswer));
+assert.match(contactAnswer.reference,/^MAS-[A-F0-9]{10}$/);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM masjid_contact_enquiries').get().n,1);
+assert.equal(sqlite.prepare('SELECT status FROM masjid_contact_enquiries').get().status,'new');
+const contactCrossOrigin=await worker.fetch(new Request(masjidContactUrl,{method:'POST',
+ headers:{Origin:'https://example.invalid','Content-Type':'application/json'},
+ body:JSON.stringify(contactMessage)}),env);
+assert.equal(contactCrossOrigin.status,403,'Do not accept enquiries from a foreign website');
+const contactPrevCookie=cookie,contactPrevCsrf=csrf;
+const contactAdminLogin=await req('/auth/login',{email:'admin@example.test',password:'new-super-secure-test-password'},'POST',false);
+assert.equal(contactAdminLogin.status,200,'Admin can sign back in to review contact enquiries');
+cookie=contactAdminLogin.response.headers.get('set-cookie').split(';')[0];
+csrf=contactAdminLogin.data.csrf;
+const adminContact=await req('/website/enquiries');
+assert.equal(adminContact.status,200,JSON.stringify(adminContact.data));
+assert.equal(adminContact.data.items.length,1);
+assert.equal(adminContact.data.items[0].topic,'nikah');
+const contactId=adminContact.data.items[0].id;
+const contactReviewed=await req('/website/enquiries',{id:contactId,status:'in_progress',admin_note:'Staff follow-up pending'},'PATCH');
+assert.equal(contactReviewed.status,200,JSON.stringify(contactReviewed.data));
+assert.equal(sqlite.prepare('SELECT status FROM masjid_contact_enquiries WHERE id=?').get(contactId).status,'in_progress');
+assert.equal((await req('/website/enquiries')).data.items[0].admin_note,'Staff follow-up pending');
+const noSessionContact=await worker.fetch(new Request('http://localhost:8787/api/website/enquiries',
+ {headers:{Origin:contactOrigin},method:'GET'}),env);
+assert.equal(noSessionContact.status,401,'Public visitors cannot read private contact messages');
+cookie=contactPrevCookie;csrf=contactPrevCsrf;
+
+
 
 // A guardian can submit multiple children under one common household record.
 // Every child retains separate learning/support consent and separate review status.

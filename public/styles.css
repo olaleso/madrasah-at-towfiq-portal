@@ -494,3 +494,17 @@
 .leave-attendance-shortcut{display:flex;align-items:center;justify-content:space-between;gap:14px;border:1px solid #d9e5ed;border-left:4px solid #c2a061;border-radius:12px;background:#f4f8fb;padding:13px 17px;margin-bottom:17px}
 .leave-attendance-shortcut>span{display:flex;align-items:center;gap:9px;color:#234c6e;font-size:13px;font-weight:750}
 @media(max-width:600px){.leave-attendance-shortcut{flex-direction:column;align-items:stretch}.leave-attendance-shortcut>span{line-height:1.5}}
+
+/* Masjid public-contact inbox, accessible only to authorised portal administrators. */
+.public-enquiry-admin{margin-bottom:27px}
+.masjid-enquiry-cards{display:grid;gap:13px;margin-top:20px}
+.masjid-enquiry-card{border:1px solid #dce5ec;border-radius:13px;padding:19px 21px;background:#fff}
+.masjid-enquiry-card h4{margin:12px 0 7px;color:#163c5c;font-size:18px}
+.masjid-enquiry-contact{font-size:12px;line-height:1.65;color:#597084;overflow-wrap:anywhere}
+.masjid-enquiry-contact a{color:#1c5e91}
+.masjid-enquiry-message{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.7;color:#354e61;background:#f6f9fb;border:1px solid #e5edf2;border-radius:9px;padding:14px 15px;margin:12px 0}
+.masjid-enquiry-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(140px,190px) auto;gap:12px;align-items:end}
+.masjid-enquiry-actions .field{display:grid;gap:6px}
+.masjid-enquiry-actions textarea,.masjid-enquiry-actions select{width:100%;box-sizing:border-box;border:1px solid #cddce7;border-radius:8px;padding:10px;font:inherit;font-size:12px;background:#fff;color:#163a58}
+.masjid-enquiry-actions .btn{white-space:nowrap}
+@media(max-width:790px){.masjid-enquiry-actions{grid-template-columns:1fr}.masjid-enquiry-card{padding:16px}}
