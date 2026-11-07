@@ -1458,6 +1458,89 @@ const invalidPublic=await worker.fetch(new Request(publicAdmissionUrl,{
  body:JSON.stringify({...publicApplicant,gender:'Unknown',guardian_email:'invalid-another@example.test'})}),env);
 assert.equal(invalidPublic.status,400,'Invalid gender is rejected before insertion');
 
+// A guardian can submit multiple children under one common household record.
+// Every child retains separate learning/support consent and separate review status.
+const householdEmail='sibling-guardian@example.test';
+const siblingShared={
+ home_address:'27 Family Test Street',postcode:'BL3 4AB',guardian_name:'Family Test Guardian',
+ guardian_email:householdEmail,guardian_phone:'07000012345',
+ guardian_relationship:'Father',parent_confirmed:true,form_started_at:Date.now()-9000
+};
+const siblingChildren=[
+ {first_name:'Amin',last_name:'Family',dob:'2016-05-07',gender:'Male',
+ previous_attended:'no',level_starting:true,level_qaaidah:false,
+ level_quran:false,arabic_read_write:false,consent_first_aid:true,consent_photos:false,
+ medical_information:'Private medical test notes'},
+ {first_name:'Maryam',last_name:'Family',dob:'2018-08-14',gender:'Female',
+ previous_attended:'yes',previous_institute:'Example Institute',level_starting:false,
+ level_qaaidah:true,level_quran:false,arabic_read_write:true,
+ consent_first_aid:false,consent_photos:true,allergies:'Test confidential allergies'}
+];
+const siblingsBefore=sqlite.prepare('SELECT COUNT(*) AS total FROM admissions').get().total;
+const badFamily=await worker.fetch(new Request(publicAdmissionUrl,{
+ method:'POST',headers:{Origin:madrasahOrigin,'Content-Type':'application/json'},
+ body:JSON.stringify({...siblingShared,children:[siblingChildren[0],{...siblingChildren[1],gender:'Invalid'}]})
+}),env);
+assert.equal(badFamily.status,400,'Invalid sibling prevents the entire family submission');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS total FROM admissions').get().total,siblingsBefore,
+ 'No partial family application rows');
+let familyEmails=[];
+const originalFamilyFetch=globalThis.fetch;
+env.RESEND_API_KEY='family-receipt-test-key';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async(url,options)=>{
+ assert.equal(String(url),'https://api.resend.com/emails');
+ familyEmails.push(JSON.parse(options.body));
+ return new Response(JSON.stringify({id:'family-receipt-id'}),{status:200,headers:{'content-type':'application/json'}});
+};
+let familyResult;
+try{
+ const familyResponse=await worker.fetch(new Request(publicAdmissionUrl,{
+  method:'POST',headers:{Origin:madrasahOrigin,'Content-Type':'application/json'},
+  body:JSON.stringify({...siblingShared,children:siblingChildren})
+ }),env);
+ familyResult=await familyResponse.json();
+ assert.equal(familyResponse.status,201,JSON.stringify(familyResult));
+ assert.match(familyResult.reference,/^MAT-FAM-\d{4}-[A-F0-9]{10}$/);
+ assert.equal(familyResult.applications.length,2);
+ assert.equal(familyResult.acknowledgement_status,'sent');
+ assert.equal(familyEmails.length,1,'Send only one acknowledgement email per family');
+ assert.equal(familyEmails[0].to[0],householdEmail);
+ assert.ok(familyEmails[0].html.includes('Amin Family'));
+ assert.ok(familyEmails[0].html.includes('Maryam Family'));
+ assert.ok(familyEmails[0].html.includes(familyResult.reference));
+ assert.ok(!familyEmails[0].html.includes('Private medical test notes'));
+ assert.ok(!familyEmails[0].html.includes('Test confidential allergies'));
+}finally{
+ globalThis.fetch=originalFamilyFetch;
+ delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
+}
+const savedSiblings=sqlite.prepare('SELECT * FROM admissions WHERE guardian_email=? ORDER BY first_name')
+ .all(householdEmail);
+assert.equal(savedSiblings.length,2);
+assert.equal(savedSiblings[0].family_application_id,savedSiblings[1].family_application_id);
+assert.equal(savedSiblings[0].status,'new');
+assert.equal(savedSiblings[1].status,'new');
+assert.equal(savedSiblings[0].consent_first_aid,1);
+assert.equal(savedSiblings[1].consent_first_aid,0);
+assert.equal(savedSiblings[0].consent_photos,0);
+assert.equal(savedSiblings[1].consent_photos,1);
+assert.equal(savedSiblings[0].home_address,savedSiblings[1].home_address);
+assert.equal(savedSiblings[0].guardian_phone,savedSiblings[1].guardian_phone);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS total FROM admissions').get().total,siblingsBefore+2);
+assert.ok(!savedSiblings[0].student_id&&!savedSiblings[1].student_id,'No auto-acceptance');
+
+// Single child through the new family form remains valid too.
+const newSingle=await worker.fetch(new Request(publicAdmissionUrl,{
+ method:'POST',headers:{Origin:madrasahOrigin,'Content-Type':'application/json'},
+ body:JSON.stringify({...siblingShared,guardian_email:'single-new-form@example.test',
+  children:[{...siblingChildren[0],first_name:'Only'}]})
+}),env);
+assert.equal(newSingle.status,201,'One-child mode works through the new interface');
+assert.equal((await newSingle.json()).applications.length,1);
+
+
 
 
 // Admin dashboard admissions attention — no public/pupil data is exposed to teachers/parents.
