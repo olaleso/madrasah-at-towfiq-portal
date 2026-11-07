@@ -648,7 +648,7 @@ function publicAdmissionCors(origin){
 }
 async function publicAdmissionSubmit(req,env){
  if(!publicAdmissionOrigin(req))error('The application must be submitted from the official Madrasah website',403);
- if(req.method==='GET')return json({accepting:true},200,{'Cache-Control':'no-store'});
+ if(req.method==='GET')return json({accepting:true,max_children:6},200,{'Cache-Control':'no-store'});
  if(req.method!=='POST')error('Method not allowed',405);
  if(!/^application\/json(?:\s*;|$)/i.test(req.headers.get('content-type')||''))error('JSON application required',415);
  const b=await input(req);
@@ -657,42 +657,98 @@ async function publicAdmissionSubmit(req,env){
     Number(b.form_started_at)>Date.now()-2800||Number(b.form_started_at)<Date.now()-7200000)
   error('Please reload the form and complete the application before submitting');
  if(b.parent_confirmed!==true)error('Please confirm the parent or guardian declaration');
- const firstName=short(b.first_name,80),lastName=short(b.last_name,80);
- const name=short([firstName,lastName].filter(Boolean).join(' '),170);
- if(!firstName||!lastName||!isDate(b.dob)||Date.parse(b.dob+'T00:00:00Z')>Date.now())
-  error('Pupil name and a valid date of birth are required');
- if(!['Male','Female','Prefer not to say'].includes(b.gender))error('Select a valid gender');
- if(!short(b.home_address,260)||!short(b.postcode,16))error('Home address and postcode are required');
- if(!short(b.guardian_name,120)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email(b.guardian_email)))error('Guardian name and valid email are required');
- if(!short(b.guardian_phone,40)||!short(b.guardian_relationship,50))error('Guardian contact number and relationship are required');
- if(!['yes','no','unknown'].includes(b.previous_attended))error('Please select a previous madrasah attendance option');
- if(b.previous_attended==='yes'&&!short(b.previous_institute,150))error('Please name the previous madrasah');
+ // Older single-pupil clients remain supported. New families submit one shared
+ // guardian/address record and an array of independently reviewed children.
+ const children=b.children===undefined?[b]:b.children;
+ if(!Array.isArray(children)||!children.length||children.length>6)
+  error('Please include between one and six children per application');
+ const sharedNames=['home_address','postcode','home_telephone','guardian_name','guardian_email',
+  'guardian_phone','emergency_phone','guardian_relationship'];
+ const shared=Object.fromEntries(sharedNames.map(k=>[k,b[k]]));
+ if(!short(shared.home_address,260)||!short(shared.postcode,16))error('Home address and postcode are required');
+ if(!short(shared.guardian_name,120)||!/^\S+@\S+\.\S+$/.test(email(shared.guardian_email)))error('Guardian name and valid email are required');
+ if(!short(shared.guardian_phone,40)||!short(shared.guardian_relationship,50))
+  error('Guardian contact number and relationship are required');
  const booleans=['level_starting','level_qaaidah','level_quran','arabic_read_write','consent_first_aid','consent_photos'];
- if(booleans.some(k=>typeof b[k]!=='boolean'))error('Please provide valid learning level and consent choices');
- // Atomic D1 counters: daily limits for IP and guardian, without recording raw IP.
+ const fields=['first_name','last_name','dob','gender','home_address','postcode','home_telephone','guardian_name','guardian_email',
+  'guardian_phone','emergency_phone','guardian_relationship','previous_attended','previous_institute','level_starting','level_qaaidah',
+  'qaaidah_page','level_quran','quran_surah','arabic_read_write','medical_information','allergies','additional_learning_needs',
+  'consent_first_aid','consent_photos','message'];
+ const sizes={first_name:80,last_name:80,dob:10,gender:30,home_address:260,postcode:16,home_telephone:40,guardian_name:120,
+  guardian_email:254,guardian_phone:40,emergency_phone:40,guardian_relationship:50,previous_attended:12,previous_institute:150,
+  qaaidah_page:55,quran_surah:100,medical_information:1600,allergies:1000,additional_learning_needs:1600,message:1500};
+ const unique=new Set();
+ const checked=children.map((raw,i)=>{
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))error('Invalid child details',400);
+  const entry={...raw,...shared};
+  const firstName=short(entry.first_name,80),lastName=short(entry.last_name,80);
+  const name=short([firstName,lastName].filter(Boolean).join(' '),170);
+  if(!firstName||!lastName||!isDbsDate(entry.dob)||Date.parse(entry.dob+'T00:00:00Z')>Date.now())
+   error('Child '+(i+1)+': enter a name and valid date of birth');
+  if(!['Male','Female','Prefer not to say'].includes(entry.gender))error('Child '+(i+1)+': select a valid gender');
+  if(!['yes','no','unknown'].includes(entry.previous_attended))error('Child '+(i+1)+': choose previous madrasah attendance');
+  if(entry.previous_attended==='yes'&&!short(entry.previous_institute,150))
+   error('Child '+(i+1)+': enter the previous madrasah name');
+  if(booleans.some(k=>typeof entry[k]!=='boolean'))error('Child '+(i+1)+': confirm learning levels and consent choices');
+  const signature=(firstName+'|'+lastName+'|'+entry.dob).toLowerCase();
+  if(unique.has(signature))error('The same child has been added twice. Please review the application',400);
+  unique.add(signature);
+  const values=fields.map(k=>booleans.includes(k)?Number(entry[k]):k==='guardian_email'?email(entry[k]):short(entry[k],sizes[k]||120));
+  return {name,firstName,lastName,values};
+ });
+ // Rate-limit one form submission, not each sibling. Never store the source IP.
  const day=nowDate().replace(/-/g,'');
- for(const [category,token,maximum] of [['ip',req.headers.get('CF-Connecting-IP')||'local-test',6],['guardian',email(b.guardian_email),4]]){
+ for(const [category,token,maximum] of [['ip',req.headers.get('CF-Connecting-IP')||'local-test',6],['guardian',email(shared.guardian_email),4]]){
   const key='public_admission_rate_'+day+'_'+category+'_'+(await sha(token)).slice(0,26);
   const result=await run(env.DB,"INSERT INTO school_settings(key,value) VALUES(?,'1') ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT) WHERE CAST(value AS INTEGER)<?",key,maximum);
   if(Number(result?.meta?.changes??result?.changes??0)===0)error('Daily submission limit reached. Please contact the madrasah.',429);
  }
- const fields=['first_name','last_name','dob','gender','home_address','postcode','home_telephone','guardian_name','guardian_email',
- 'guardian_phone','emergency_phone','guardian_relationship','previous_attended','previous_institute','level_starting','level_qaaidah',
- 'qaaidah_page','level_quran','quran_surah','arabic_read_write','medical_information','allergies','additional_learning_needs',
- 'consent_first_aid','consent_photos','message'];
- const size={first_name:80,last_name:80,dob:10,gender:30,home_address:260,postcode:16,home_telephone:40,guardian_name:120,
- guardian_email:254,guardian_phone:40,emergency_phone:40,guardian_relationship:50,previous_attended:12,previous_institute:150,
- qaaidah_page:55,quran_surah:100,medical_information:1600,allergies:1000,additional_learning_needs:1600,message:1500};
- const values=fields.map(k=>booleans.includes(k)?Number(b[k]):k==='guardian_email'?email(b[k]):short(b[k],size[k]||120));
- const rid=id(),columns=['id','child_name','phone','parent_confirmed',...fields];
- await run(env.DB,'INSERT INTO admissions('+columns.join(',')+') VALUES('+columns.map(()=>'?').join(',')+')',
-  rid,name,short(b.guardian_phone,40),1,...values);
- let receipt={reference:applicationReceiptReference(rid,iso()),acknowledgement_status:'not_sent'};
- try{
-  const record=await first(env.DB,'SELECT id,child_name,guardian_name,guardian_email,created_at FROM admissions WHERE id=?',rid);
-  receipt=await sendApplicationReceipt(env.DB,env,record);
- }catch(err){console.error('Public application acknowledgement unavailable',err);}
- return json({ok:true,reference:receipt.reference,acknowledgement_status:receipt.acknowledgement_status},201,{'Cache-Control':'no-store'});
+ const familyId=checked.length>1?id():null;
+ const columns=['id','child_name','phone','parent_confirmed','family_application_id',...fields];
+ const sql='INSERT INTO admissions('+columns.join(',')+') VALUES('+columns.map(()=>'?').join(',')+')';
+ const entries=checked.map(child=>({...child,id:id()}));
+ // D1 batch applies all child inserts in one atomic transaction: no half-submitted families.
+ await env.DB.batch(entries.map(child=>env.DB.prepare(sql).bind(
+   child.id,child.name,short(shared.guardian_phone,40),1,familyId,...child.values)));
+ const responseItems=entries.map(child=>({
+   student_name:child.name,reference:applicationReceiptReference(child.id,iso())
+ }));
+ let acknowledgement_status='not_sent';
+ let reference=responseItems[0].reference;
+ if(familyId){
+  reference='MAT-FAM-'+new Date().getUTCFullYear()+'-'+familyId.replace(/[^a-zA-Z0-9]/g,'').slice(0,10).toUpperCase();
+  try{
+   const html=familyApplicationReceiptHtml({
+     guardianName:shared.guardian_name,reference,applications:responseItems,admissionsEmail:env.ADMISSIONS_EMAIL
+   });
+   const sent=await mail(env,email(shared.guardian_email),
+     'Madrasah At-Towfiq | Family application received ('+reference+')',html,{replyTo:env.ADMISSIONS_EMAIL});
+   acknowledgement_status=sent.sent?'sent':'not_sent';
+  }catch(err){console.error('Family application receipt unavailable',err);}
+ }else{
+  try{
+   const record=await first(env.DB,'SELECT id,child_name,guardian_name,guardian_email,created_at FROM admissions WHERE id=?',entries[0].id);
+   const receipt=await sendApplicationReceipt(env.DB,env,record);
+   reference=receipt.reference;acknowledgement_status=receipt.acknowledgement_status;
+  }catch(err){console.error('Public application acknowledgement unavailable',err);}
+ }
+ return json({ok:true,reference,applications:responseItems,acknowledgement_status},201,{'Cache-Control':'no-store'});
+}
+function familyApplicationReceiptHtml({guardianName,reference,applications,admissionsEmail}){
+ const safe=escapeHtml;
+ const names=applications.map(x=>'<li style="padding:8px 0;border-bottom:1px solid #e4e9f2"><strong>'+safe(x.student_name)+'</strong><span style="display:block;color:#61738b;font-size:12px">Individual reference: '+safe(x.reference)+'</span></li>').join('');
+ return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>'+
+  '<body style="background:#f1f4fa;margin:0;padding:24px;font-family:Arial,sans-serif;color:#203b60">'+
+  '<div style="max-width:600px;margin:auto;background:#fff;border:1px solid #dae4f2;border-radius:15px;overflow:hidden">'+
+  '<div style="background:#172e57;color:#fff;padding:26px;text-align:center"><strong style="font-size:21px">Madrasah At-Towfiq</strong><p style="font-size:12px;color:#d7dfea">FAMILY ADMISSIONS · BOLTON</p></div>'+
+  '<div style="padding:30px"><p>Assalāmu ʿalaykum wa raḥmatullāhi wa barakātuh</p><p><strong>Dear '+safe(guardianName)+',</strong></p>'+
+  '<h1 style="font:normal 27px Georgia,serif">Your family application has been received</h1>'+
+  '<p>Jazākum Allāhu khayran. We have received '+applications.length+' applications in one submission. Each child will be reviewed individually.</p>'+
+  '<p style="background:#f1f5fb;padding:14px;border-left:3px solid #d8b66b"><strong>Family reference: '+safe(reference)+'</strong></p>'+
+  '<h2 style="font-size:18px">Children included</h2><ul style="list-style:none;padding:0">'+names+'</ul>'+
+  '<p>This acknowledgement is not an offer of admission. The team will contact you about the outcome for each child.</p>'+
+  '<p>For enquiries, email <a href="mailto:'+safe(admissionsEmail||'admissions@attowfiqmasjid.org')+'">'+safe(admissionsEmail||'admissions@attowfiqmasjid.org')+'</a>.</p>'+
+  '<p>Kind regards,<br><strong>The Admissions Team</strong><br>Madrasah At-Towfiq</p></div></div></body></html>';
 }
 
 const escapeHtml=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
