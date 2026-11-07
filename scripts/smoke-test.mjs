@@ -1492,7 +1492,7 @@ const contactCrossOrigin=await worker.fetch(new Request(masjidContactUrl,{method
  body:JSON.stringify(contactMessage)}),env);
 assert.equal(contactCrossOrigin.status,403,'Do not accept enquiries from a foreign website');
 const contactPrevCookie=cookie,contactPrevCsrf=csrf;
-const contactAdminLogin=await req('/auth/login',{email:'admin@example.test',password:'this-is-a-secure-test-password'},'POST',false);
+const contactAdminLogin=await req('/auth/login',{email:'admin@example.test',password:'new-super-secure-test-password'},'POST',false);
 assert.equal(contactAdminLogin.status,200,'Admin can sign back in to review contact enquiries');
 cookie=contactAdminLogin.response.headers.get('set-cookie').split(';')[0];
 csrf=contactAdminLogin.data.csrf;
