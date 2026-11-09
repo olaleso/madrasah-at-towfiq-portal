@@ -923,6 +923,35 @@ async function handle(req,env){
  }
 
 
+ // Private, admin-only certificate template. No names, witnesses or generated
+ // certificates are ever stored by this feature. One approved original image
+ // is saved in D1 for use by the browser-side certificate renderer.
+ if(path==='/api/masjid/marriage-template'){
+  requireRole(user,'admin');
+  const key='masjid_marriage_certificate_template_v1';
+  if(method==='GET'){
+   const record=await first(db,'SELECT value FROM school_settings WHERE key=?',key);
+   return json({configured:!!record?.value,image:record?.value||null},200,
+      {'Cache-Control':'private, no-store'});
+  }
+  if(method==='PUT'){
+   const length=Number(req.headers.get('content-length')||0);
+   if(length>1100000)error('Template exceeds 1.1 MB',413);
+   const raw=await req.text();
+   if(raw.length>1100000)error('Template exceeds 1.1 MB',413);
+   let payload;
+   try{payload=JSON.parse(raw);}catch{error('Invalid image upload',400);}
+   const img=payload?.image;
+   if(typeof img!=='string'||!/^data:image\/jpeg;base64,\/9j\/[A-Za-z0-9+/=]+$/.test(img)||img.length<15000||img.length>1050000)
+    error('Upload a valid optimised JPEG certificate template (maximum 750 KB)',400);
+   if(payload.confirmed!==true)error('Confirm this is the approved Masjid At-Towfiq certificate template',400);
+   await run(db,'INSERT INTO school_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',key,img);
+   await audit(db,user,'update_template','masjid_marriage_certificate',key,'Approved background JPEG uploaded');
+   return json({ok:true,configured:true},200,{'Cache-Control':'private, no-store'});
+  }
+  error('Method not allowed',405);
+ }
+
  if(path==='/api/website/enquiries'){
   requireRole(user,'admin');
   if(method==='GET'){
