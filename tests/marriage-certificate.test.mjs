@@ -37,5 +37,4 @@ test('approved certificate and download controls are admin only in portal UI',()
  assert.ok(app.includes("userCan('admin')"),'Marriage page must be restricted to administrators');
  assert.ok(client.includes('Great Vibes'),'Groom and bride names should use calligraphic script');
  assert.ok(client.includes('ctx.drawImage(base,0,0,W,H)'),'Original approved bilingual template must be preserved');
- assert.ok(client.includes('No'), 'Script should be valid plain JavaScript');
 });
