@@ -1508,6 +1508,25 @@ assert.equal((await req('/website/enquiries')).data.items[0].admin_note,'Staff f
 const noSessionContact=await worker.fetch(new Request('http://localhost:8787/api/website/enquiries',
  {headers:{Origin:contactOrigin},method:'GET'}),env);
 assert.equal(noSessionContact.status,401,'Public visitors cannot read private contact messages');
+
+// Marriage certificate background: private admin-only storage and image validation.
+// Personal bride, groom, and witnesses remain client-side and are never stored here.
+const beforeTemplate=await req('/masjid/marriage-template');
+assert.equal(beforeTemplate.status,200);
+assert.equal(beforeTemplate.data.configured,false);
+const invalidTemplate=await req('/masjid/marriage-template',{image:'data:text/html;base64,SGVsbG8=',confirmed:true},'PUT');
+assert.equal(invalidTemplate.status,400,'Only an approved image/jpeg base64 certificate template is permitted');
+const testTemplate='data:image/jpeg;base64,'+Buffer.concat([Buffer.from([0xff,0xd8,0xff]),Buffer.alloc(11997,0xff)]).toString('base64');
+const uploadedTemplate=await req('/masjid/marriage-template',{image:testTemplate,confirmed:true},'PUT');
+assert.equal(uploadedTemplate.status,200,JSON.stringify(uploadedTemplate.data));
+const savedTemplate=await req('/masjid/marriage-template');
+assert.equal(savedTemplate.status,200);
+assert.equal(savedTemplate.data.configured,true);
+assert.equal(savedTemplate.data.image,testTemplate,'Approved artwork persists without personal details');
+assert.ok(!sqlite.prepare("SELECT value FROM school_settings WHERE key='masjid_marriage_certificate_template_v1'").get().value.includes('groom'),'No names saved to template');
+const publicTemplate=await worker.fetch(new Request('http://localhost:8787/api/masjid/marriage-template'),env);
+assert.equal(publicTemplate.status,401,'Public visitors cannot retrieve the approved marriage certificate template');
+
 cookie=contactPrevCookie;csrf=contactPrevCsrf;
 
 
