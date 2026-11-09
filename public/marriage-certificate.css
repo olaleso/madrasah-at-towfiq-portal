@@ -1,0 +1,22 @@
+@import url('https://fonts.googleapis.com/css2?family=Great+Vibes&display=swap');
+/* Admin-only Nikah certificate studio. Matches the navy/gold portal palette. */
+.marriage-intro{display:flex;justify-content:space-between;align-items:flex-start;gap:22px;padding:18px 22px;margin-bottom:22px;background:#f6f8fa;border:1px solid #dce5eb;border-left:4px solid #c3a05d;border-radius:13px}
+.marriage-intro>div{max-width:700px}.marriage-intro strong{display:flex;align-items:center;gap:9px;color:#163e61;font-size:15px}.marriage-intro p{font-size:12px;color:#61798a;line-height:1.65;margin:8px 0 0}.marriage-intro>p{max-width:260px}
+.marriage-workspace{display:grid;grid-template-columns:minmax(270px,355px) minmax(0,1fr);gap:18px;align-items:start}
+.marriage-form-side,.marriage-preview-side{min-width:0}.marriage-form-side .form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.marriage-form-side .field{min-width:0}.marriage-form-side .field.wide{grid-column:1/-1}
+.marriage-form-side .field input{max-width:100%;width:100%;box-sizing:border-box}.marriage-signature-note{margin:17px 0;padding:13px 14px;border-radius:9px;background:#f3f7f9;border-left:3px solid #c1a26e;color:#556e81;font-size:12px;line-height:1.7;display:flex;gap:9px}.marriage-signature-note svg{flex:none;margin-top:2px}
+.marriage-template-settings{margin-top:25px;border:1px solid #dde7ef;border-radius:11px;background:#fcfdfe;padding:15px}
+.marriage-template-settings summary{font-size:12px;font-weight:800;color:#214e70;cursor:pointer;padding:3px 0}
+.marriage-template-settings .field{display:grid;gap:8px;font-size:12px;margin:14px 0;color:#425f74}
+.marriage-template-settings input[type=file]{width:100%;max-width:100%;font-size:11px}
+.marriage-template-checkbox{display:flex;align-items:flex-start;gap:8px;margin-bottom:13px;font-size:12px;line-height:1.65;color:#485f74}
+.marriage-template-checkbox input{margin-top:4px;flex:none}
+.marriage-canvas-shell{background:#f3f6f8;border:1px solid #d6e0e8;border-radius:12px;overflow:hidden;display:grid;place-items:center;min-height:210px}
+.marriage-canvas-shell canvas{display:block;width:100%;height:auto;aspect-ratio:1535/1024;max-width:100%;background:#fff}
+.marriage-canvas-shell canvas[hidden]{display:none!important}.marriage-no-template{padding:42px;text-align:center;font-size:13px;color:#688094;line-height:1.8}.marriage-no-template[hidden]{display:none}
+.marriage-download-actions{display:flex;flex-wrap:wrap;gap:11px;margin:19px 0}
+.marriage-download-actions button{min-width:180px;display:flex;align-items:center;gap:8px;justify-content:center}
+.marriage-download-actions button:disabled{opacity:.5;cursor:not-allowed}
+.marriage-status{border-radius:9px;padding:12px 14px;background:#edf8f1;border:1px solid #c8e4d0;color:#17683d;font-size:12px;line-height:1.65}.marriage-status[data-error=true]{background:#fff3f0;border-color:#e8c1bc;color:#9d342b}.marriage-status[hidden]{display:none!important}
+@media(max-width:1180px){.marriage-workspace{grid-template-columns:1fr}.marriage-intro{flex-direction:column}.marriage-intro>p{max-width:100%}}
+@media(max-width:610px){.marriage-form-side .form-grid{grid-template-columns:1fr}.marriage-form-side .field.wide{grid-column:1}.marriage-intro{padding:14px}.marriage-download-actions button{flex:1 1 100%}}
