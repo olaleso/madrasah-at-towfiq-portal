@@ -9,6 +9,7 @@ sqlite.exec(fs.readFileSync(new URL('../migrations/0014_class_weekly_timetable.s
 sqlite.exec(fs.readFileSync(new URL('../migrations/0015_student_leave_requests.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0016_family_applications.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0017_masjid_contact_enquiries.sql',import.meta.url),'utf8'));
+sqlite.exec(fs.readFileSync(new URL('../migrations/0018_legacy_student_import_records.sql',import.meta.url),'utf8'));
 
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
@@ -1665,3 +1666,117 @@ assert.ok(phase1Submit?.[0].includes("'website-community-form'"),'Masjid communi
 assert.ok(phase1App.includes("if(formId==='website-community-form')"),'Masjid community form must save through authenticated API');
 assert.ok(phase1App.includes("data-action=\"community-enable\""),'Masjid administrator must have a reversible on/off control');
 assert.ok(phase1App.includes("Restore original site"),'Instant rollback control must be visible when enabled');
+
+
+
+// Legacy roster intake: import only after admin preview and explicit confirmation.
+// Missing details must stay blank, no parent invitations, and repeated files must
+// be idempotent. All records below are fictional fixture data.
+const legacyBeforeCookie=cookie,legacyBeforeCsrf=csrf;
+const legacyAdminLogin=await req('/auth/login',{email:'admin@example.test',password:'new-super-secure-test-password'},'POST',false);
+assert.equal(legacyAdminLogin.status,200,'Administrator can log in to perform legacy imports');
+cookie=legacyAdminLogin.response.headers.get('set-cookie').split(';')[0];
+csrf=legacyAdminLogin.data.csrf;
+const legacyHash='a'.repeat(64);
+const legacyRows=[
+ {source_row:2,first_name:'Legacy',last_name:'Alpha',dob:'',gender:'',
+  guardian_name:'Example Guardian A',guardian_email:'',guardian_phone:'7500000123',
+  address:'',class_id:'',review_note:'Missing DOB, sex and guardian email'},
+ {source_row:3,first_name:'Legacy',last_name:'Beta',dob:'2015-04-09',gender:'',
+  guardian_name:'Example Guardian B',guardian_email:'parent.beta@example.test',
+  guardian_phone:'',address:'Example Road, Bolton',class_id:'',review_note:''}
+];
+let legacyPreview=await req('/legacy-students/preview',{source_hash:legacyHash,filename:'test-legacy.csv',items:legacyRows});
+assert.equal(legacyPreview.status,200,JSON.stringify(legacyPreview.data));
+assert.equal(legacyPreview.data.summary.ready,2);
+assert.equal(legacyPreview.data.summary.blocked,0);
+assert.equal(legacyPreview.data.summary.missing_details,2);
+const legacyBeforeCount=sqlite.prepare('SELECT COUNT(*) AS n FROM students').get().n;
+let legacyAttempt=await req('/legacy-students/commit',{source_hash:legacyHash,filename:'test-legacy.csv',items:legacyRows,
+ confirmation:'not confirmed'});
+assert.equal(legacyAttempt.status,400,'Import requires explicit typed confirmation');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM students').get().n,legacyBeforeCount);
+const invalidLegacyRow={...legacyRows[0],source_row:4,guardian_email:'bad email'};
+legacyAttempt=await req('/legacy-students/commit',{source_hash:'b'.repeat(64),filename:'bad-test.csv',
+ items:[invalidLegacyRow],confirmation:'IMPORT LEGACY STUDENTS'});
+assert.equal(legacyAttempt.status,409,'Invalid data cannot be imported');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM students').get().n,legacyBeforeCount);
+const usersBeforeLegacy=sqlite.prepare('SELECT COUNT(*) AS n FROM users').get().n;
+let legacyCommit=await req('/legacy-students/commit',{
+ source_hash:legacyHash,filename:'test-legacy.csv',items:legacyRows,
+ confirmation:'IMPORT LEGACY STUDENTS'
+});
+assert.equal(legacyCommit.status,200,JSON.stringify(legacyCommit.data));
+assert.equal(legacyCommit.data.created,2);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM students').get().n,legacyBeforeCount+2);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM users').get().n,usersBeforeLegacy,
+ 'Import never creates guardian accounts automatically');
+const imported=sqlite.prepare("SELECT * FROM students WHERE first_name='Legacy' ORDER BY last_name").all();
+assert.equal(imported.length,2);
+assert.equal(imported[0].dob,null,'Missing DOB stays null');
+assert.equal(imported[0].gender,'','Missing gender stays blank');
+assert.equal(imported[0].parent_id,null,'Unverified parent must never be linked automatically');
+assert.equal(imported[0].phone,'07500000123','UK phone format restored safely');
+assert.match(imported[0].student_no,/^MATT-\d{4}-\d{4}$/);
+assert.notEqual(imported[0].student_no,imported[1].student_no);
+const admission=sqlite.prepare('SELECT status,student_id,guardian_email FROM admissions WHERE student_id=?').get(imported[0].id);
+assert.equal(admission.status,'accepted','Historic enrolled pupils remain linked to accepted historical records');
+assert.equal(admission.guardian_email,'');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM legacy_student_import_records').get().n,2);
+legacyCommit=await req('/legacy-students/commit',{
+ source_hash:legacyHash,filename:'test-legacy.csv',items:legacyRows,
+ confirmation:'IMPORT LEGACY STUDENTS'
+});
+assert.equal(legacyCommit.status,200);
+assert.equal(legacyCommit.data.created,0,'Same roster is not imported a second time');
+assert.equal(legacyCommit.data.already_imported,2);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM students').get().n,legacyBeforeCount+2);
+legacyPreview=await req('/legacy-students/preview',{source_hash:legacyHash,filename:'test-legacy.csv',items:legacyRows});
+assert.equal(legacyPreview.data.summary.already_imported,2);
+const adminLegacyList=await req('/legacy-students');
+assert.equal(adminLegacyList.status,200);
+assert.equal(adminLegacyList.data.items.length,2);
+let fillLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,
+ dob:'2016-09-02',gender:'Male',guardian_email:'verified.alpha@example.test',guardian_name:'Verified Guardian A'},'PATCH');
+assert.equal(fillLegacy.status,200,JSON.stringify(fillLegacy.data));
+assert.equal(sqlite.prepare('SELECT dob FROM students WHERE id=?').get(imported[0].id).dob,'2016-09-02');
+assert.equal(sqlite.prepare('SELECT guardian_email FROM admissions WHERE student_id=?').get(imported[0].id).guardian_email,'verified.alpha@example.test');
+// Simulate office-verified parent-child linkage in this test only.
+sqlite.prepare('UPDATE students SET parent_id=? WHERE id=?').run(guardian_id,imported[0].id);
+cookie=parent_cookie;csrf=parent_csrf;
+let parentLegacy=await req('/legacy-students');
+assert.equal(parentLegacy.status,403,'Parents cannot view the entire legacy roster');
+parentLegacy=await req('/legacy-students/commit',{source_hash:'c'.repeat(64),items:legacyRows,
+ confirmation:'IMPORT LEGACY STUDENTS'});
+assert.equal(parentLegacy.status,403,'Parents cannot import pupil records');
+parentLegacy=await req('/legacy-students/profile',{student_id:imported[1].id,address:'Other family property'},'PATCH');
+assert.equal(parentLegacy.status,403,'Parent cannot amend an unlinked child');
+parentLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,gender:'Female'},'PATCH');
+assert.equal(parentLegacy.status,403,'Parent cannot overwrite verified gender');
+parentLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,address:'Verified home address'},'PATCH');
+assert.equal(parentLegacy.status,200,'Linked parent can fill missing home address');
+assert.equal(sqlite.prepare('SELECT address FROM students WHERE id=?').get(imported[0].id).address,'Verified home address');
+const profilePage=await req('/legacy-students/profile?student_id='+encodeURIComponent(imported[0].id));
+assert.equal(profilePage.status,200);
+assert.equal(profilePage.data.profile.dob,'2016-09-02');
+assert.equal(profilePage.data.profile.first_aid_consent,'','No first-aid permission is assumed on import');
+assert.equal(profilePage.data.profile.guardian_email,null,'Parent API must not expose internal admission guardian email');
+const otherProfile=await req('/legacy-students/profile?student_id='+encodeURIComponent(imported[1].id));
+assert.equal(otherProfile.status,403,'Parent cannot read another imported student\'s support details');
+parentLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,
+ emergency_phone:'07000123456',allergies:'No known allergies',additional_learning_needs:'Extra reading help',
+ consent_first_aid:'yes',consent_photos:'no'},'PATCH');
+assert.equal(parentLegacy.status,200,JSON.stringify(parentLegacy.data));
+const savedSupport=sqlite.prepare('SELECT emergency_phone,allergies,additional_learning_needs,consent_first_aid,consent_photos FROM admissions WHERE student_id=?').get(imported[0].id);
+assert.equal(savedSupport.emergency_phone,'07000123456');
+assert.equal(savedSupport.allergies,'No known allergies');
+assert.equal(savedSupport.consent_first_aid,1);
+assert.equal(savedSupport.consent_photos,0);
+const savedConsents=sqlite.prepare('SELECT first_aid_consent,photo_consent FROM legacy_student_import_records WHERE student_id=?').get(imported[0].id);
+assert.equal(savedConsents.first_aid_consent,1);
+assert.equal(savedConsents.photo_consent,0,'Explicit No is different from unrecorded');
+parentLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,consent_photos:'yes'},'PATCH');
+assert.equal(parentLegacy.status,403,'Parents cannot replace an existing explicit consent without school review');
+parentLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,allergies:'Changed after saving'},'PATCH');
+assert.equal(parentLegacy.status,403,'Previously recorded health details require office correction');
+cookie=legacyBeforeCookie;csrf=legacyBeforeCsrf;
