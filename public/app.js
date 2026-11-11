@@ -242,9 +242,14 @@ function studentDetail(s){let tab=S.studentTab,hws=get('homework').filter(x=>x.s
 function legacyPage(){
  if(!userCan('admin'))return blank('Administrator access required','Legacy imports are restricted to administrators.');
  const rows=get('legacy-students');
- const missing=x=>[['DOB',x.dob],['Gender',x.gender],['Class',x.class_id],
-  ['Guardian',x.guardian_name],['Parent email',x.guardian_email],
-  ['Phone',x.phone],['Address',x.address],['Linked parent',x.parent_id]].filter(([,val])=>!val).map(([label])=>label);
+ const missing=x=>[
+  ['DOB',!x.dob],['Gender',!x.gender],['Class',!x.class_id],
+  ['Guardian',!x.guardian_name],['Parent email',!x.guardian_email],
+  ['Phone',!x.phone],['Address',!x.address],['Linked parent',!x.parent_id],
+  ['Guardian relationship',!x.guardian_relationship],['Emergency contact',!x.emergency_phone],
+  ['First aid consent',x.first_aid_consent===null||x.first_aid_consent===undefined],
+  ['Photography consent',x.photo_consent===null||x.photo_consent===undefined]
+ ].filter(([,isMissing])=>isMissing).map(([label])=>label);
  return `${pagehead('Legacy student import','A controlled way to enrol historic pupils without fabricating missing details.',`<button type="button" class="btn white" data-action="nav" data-value="students">${ico('students',16)} Student directory</button>`)}
  <section class="surface legacy-upload-box">
    <div class="surface-head"><div><h3>Step 1 · Upload a prepared CSV</h3><p class="muted small">Use the normalised import CSV generated from the legacy workbook. The original Excel source should be retained securely by the school.</p></div><button class="btn white smol" id="legacy-template-button" type="button">${ico('download',15)} Empty CSV template</button></div>
