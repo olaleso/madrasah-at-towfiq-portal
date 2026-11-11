@@ -1242,12 +1242,10 @@ async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
   const pupil=get('students').find(x=>x.id===selectedId);
   if(!pupil||!pupil.legacy_imported)throw Error('Legacy student profile not found');
   const admin=userCan('admin');
-  let guardian={};
-  if(admin){
-   const remote=await api('/legacy-students');
-   guardian=remote.items.find(x=>x.student_id===selectedId)||{};
-  }
+  const remote=await api('/legacy-students/profile?student_id='+encodeURIComponent(selectedId));
+  const guardian=remote.profile||{};
   const canEdit=key=>admin||!pupil[key];
+  const canEditExtra=key=>admin||!guardian[key];
   const body=`<input type="hidden" name="student_id" value="${h(pupil.id)}">
     <div class="legacy-profile-explain">Existing details are displayed for reference. A parent can complete blanks but cannot overwrite previously verified information. Contact the madrasah office for corrections.</div>
     <div class="form-grid">
@@ -1259,7 +1257,25 @@ async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
        ${field('Guardian email (office verified)','guardian_email',guardian.guardian_email||'','email','maxlength="254"','wide')}
        ${field('Guardian phone (office verified)','guardian_phone',guardian.guardian_phone||'','tel','maxlength="35"','wide')}`:''}
     </div>
-    <p class="small muted">Parent-account linking is a separate, verified administrative action under Parents &amp; guardians.</p>`;
+    <h4 class="legacy-section-title">Emergency contact &amp; learning support</h4>
+    <p class="small muted">Provide any relevant support needs. If there are none, you may state "None" explicitly. Medical information is handled privately by authorised school personnel.</p>
+    <div class="form-grid">
+      ${field('Emergency contact telephone','emergency_phone',guardian.emergency_phone||'','tel',canEditExtra('emergency_phone')?'maxlength="35"':'disabled')}
+      ${field('Relationship to the child','guardian_relationship',guardian.guardian_relationship||'','text',canEditExtra('guardian_relationship')?'maxlength="50"':'disabled')}
+      ${field('Medical / health information','medical_information',guardian.medical_information||'','textarea',canEditExtra('medical_information')?'maxlength="1600"':'disabled','wide')}
+      ${field('Allergies','allergies',guardian.allergies||'','textarea',canEditExtra('allergies')?'maxlength="1000"':'disabled','wide')}
+      ${field('Additional learning support','additional_learning_needs',guardian.additional_learning_needs||'','textarea',canEditExtra('additional_learning_needs')?'maxlength="1600"':'disabled','wide')}
+    </div>
+    <h4 class="legacy-section-title">Explicit parental permissions</h4>
+    <div class="form-grid">
+      ${select('First aid in an emergency','consent_first_aid',
+         htmlOptions([['','Not answered'],['yes','Yes – I consent'],['no','No – I do not consent']],guardian.first_aid_consent||''),
+         canEditExtra('first_aid_consent')?'':'disabled')}
+      ${select('Photography within madrasah activities','consent_photos',
+         htmlOptions([['','Not answered'],['yes','Yes – I consent'],['no','No – I do not consent']],guardian.photo_consent||''),
+         canEditExtra('photo_consent')?'':'disabled')}
+    </div>
+    <p class="small muted">Consent is not assumed. A blank selection remains <strong>Not answered</strong>. Parent-account linking is a separate, verified administrative action under Parents &amp; guardians.</p>`;
   modal('Complete legacy profile · '+sidName(pupil),body,'legacy-completion-form',true,'Save verified details');
   return;
  }
