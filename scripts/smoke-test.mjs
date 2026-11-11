@@ -1756,4 +1756,27 @@ assert.equal(parentLegacy.status,403,'Parent cannot overwrite verified gender');
 parentLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,address:'Verified home address'},'PATCH');
 assert.equal(parentLegacy.status,200,'Linked parent can fill missing home address');
 assert.equal(sqlite.prepare('SELECT address FROM students WHERE id=?').get(imported[0].id).address,'Verified home address');
+const profilePage=await req('/legacy-students/profile?student_id='+encodeURIComponent(imported[0].id));
+assert.equal(profilePage.status,200);
+assert.equal(profilePage.data.profile.dob,'2016-09-02');
+assert.equal(profilePage.data.profile.first_aid_consent,'','No first-aid permission is assumed on import');
+assert.equal(profilePage.data.profile.guardian_email,null,'Parent API must not expose internal admission guardian email');
+const otherProfile=await req('/legacy-students/profile?student_id='+encodeURIComponent(imported[1].id));
+assert.equal(otherProfile.status,403,'Parent cannot read another imported student's support details');
+parentLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,
+ emergency_phone:'07000123456',allergies:'No known allergies',additional_learning_needs:'Extra reading help',
+ consent_first_aid:'yes',consent_photos:'no'},'PATCH');
+assert.equal(parentLegacy.status,200,JSON.stringify(parentLegacy.data));
+const savedSupport=sqlite.prepare('SELECT emergency_phone,allergies,additional_learning_needs,consent_first_aid,consent_photos FROM admissions WHERE student_id=?').get(imported[0].id);
+assert.equal(savedSupport.emergency_phone,'07000123456');
+assert.equal(savedSupport.allergies,'No known allergies');
+assert.equal(savedSupport.consent_first_aid,1);
+assert.equal(savedSupport.consent_photos,0);
+const savedConsents=sqlite.prepare('SELECT first_aid_consent,photo_consent FROM legacy_student_import_records WHERE student_id=?').get(imported[0].id);
+assert.equal(savedConsents.first_aid_consent,1);
+assert.equal(savedConsents.photo_consent,0,'Explicit No is different from unrecorded');
+parentLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,consent_photos:'yes'},'PATCH');
+assert.equal(parentLegacy.status,403,'Parents cannot replace an existing explicit consent without school review');
+parentLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,allergies:'Changed after saving'},'PATCH');
+assert.equal(parentLegacy.status,403,'Previously recorded health details require office correction');
 cookie=legacyBeforeCookie;csrf=legacyBeforeCsrf;
