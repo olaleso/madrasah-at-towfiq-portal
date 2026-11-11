@@ -1,4 +1,5 @@
 import {loadCommunity,saveCommunity,validateCommunityEntry,publicCommunity,COMMUNITY_LIMIT} from './masjid-community.mjs';
+import {validateLegacyBatch,matchExistingLegacy,validLegacyDate,normalizeLegacyPhone} from './legacy-students.mjs';
 const ROLES = ['admin','staff','teacher','parent'];
 
 const QURAN_SURAHS='Al-Fatihah|Al-Baqarah|Aal-Imran|An-Nisa|Al-Maidah|Al-Anam|Al-Araf|Al-Anfal|At-Tawbah|Yunus|Hud|Yusuf|Ar-Rad|Ibrahim|Al-Hijr|An-Nahl|Al-Isra|Al-Kahf|Maryam|Ta-Ha|Al-Anbiya|Al-Hajj|Al-Muminun|An-Nur|Al-Furqan|Ash-Shuara|An-Naml|Al-Qasas|Al-Ankabut|Ar-Rum|Luqman|As-Sajdah|Al-Ahzab|Saba|Fatir|Ya-Sin|As-Saffat|Sad|Az-Zumar|Ghafir|Fussilat|Ash-Shura|Az-Zukhruf|Ad-Dukhan|Al-Jathiyah|Al-Ahqaf|Muhammad|Al-Fath|Al-Hujurat|Qaf|Adh-Dhariyat|At-Tur|An-Najm|Al-Qamar|Ar-Rahman|Al-Waqiah|Al-Hadid|Al-Mujadilah|Al-Hashr|Al-Mumtahanah|As-Saff|Al-Jumuah|Al-Munafiqun|At-Taghabun|At-Talaq|At-Tahrim|Al-Mulk|Al-Qalam|Al-Haqqah|Al-Maarij|Nuh|Al-Jinn|Al-Muzzammil|Al-Muddaththir|Al-Qiyamah|Al-Insan|Al-Mursalat|An-Naba|An-Naziat|Abasa|At-Takwir|Al-Infitar|Al-Mutaffifin|Al-Inshiqaq|Al-Buruj|At-Tariq|Al-Ala|Al-Ghashiyah|Al-Fajr|Al-Balad|Ash-Shams|Al-Layl|Ad-Duha|Ash-Sharh|At-Tin|Al-Alaq|Al-Qadr|Al-Bayyinah|Az-Zalzalah|Al-Adiyat|Al-Qariah|At-Takathur|Al-Asr|Al-Humazah|Al-Fil|Quraysh|Al-Maun|Al-Kawthar|Al-Kafirun|An-Nasr|Al-Masad|Al-Ikhlas|Al-Falaq|An-Nas'.split('|');
@@ -1444,9 +1445,157 @@ async function handle(req,env){
      ?await all(db,"SELECT DISTINCT u.id,u.name,u.email,u.role FROM users u JOIN students s ON s.parent_id=u.id JOIN classes c ON c.id=s.class_id WHERE c.teacher_id=? AND u.active=1 ORDER BY u.name",user.id)
      :await all(db,"SELECT id,name,email,role FROM users WHERE active=1 AND id<>? ORDER BY name",user.id);return json({items:contacts});
  }
+
+ // Explicit administrator-only legacy roster migration. This does not relax the
+ // public admissions requirements or send guardian invitations without review.
+ if(path==='/api/legacy-students'){
+  requireRole(user,'admin');
+  if(method!=='GET')error('Method not allowed',405);
+  return json({items:await all(db,`SELECT li.id,li.source_hash,li.source_filename,
+    li.source_row,li.review_note,li.imported_at,s.id AS student_id,
+    s.student_no,s.first_name,s.last_name,s.dob,s.gender,s.address,s.phone,
+    s.class_id,c.name AS class_name,s.parent_id,s.status,
+    a.guardian_name,a.guardian_email,a.guardian_phone
+    FROM legacy_student_import_records li
+    JOIN students s ON s.id=li.student_id
+    LEFT JOIN admissions a ON a.student_id=s.id
+    LEFT JOIN classes c ON c.id=s.class_id
+    ORDER BY li.imported_at DESC,li.source_row ASC LIMIT 500`)});
+ }
+ if(path==='/api/legacy-students/preview'||path==='/api/legacy-students/commit'){
+  requireRole(user,'admin');
+  if(method!=='POST')error('Method not allowed',405);
+  const payload=await input(req);
+  if(!/^[0-9a-f]{64}$/i.test(String(payload.source_hash||'')))
+   error('Invalid source file fingerprint',400);
+  const sourceHash=String(payload.source_hash).toLowerCase();
+  const filename=short(payload.filename,100)||'Legacy pupil roster.csv';
+  let checked;
+  try{checked=validateLegacyBatch(payload.items);}
+  catch(err){error(err.message,400);}
+  const existing=await all(db,'SELECT id,student_no,first_name,last_name,dob FROM students');
+  const sameSource=await all(db,
+    'SELECT source_row,student_id FROM legacy_student_import_records WHERE source_hash=?',sourceHash);
+  const imported=new Map(sameSource.map(x=>[Number(x.source_row),x.student_id]));
+  const classes=await all(db,'SELECT id,name,capacity,(SELECT COUNT(*) FROM students WHERE class_id=c.id) AS enrolled FROM classes c');
+  const capacity=new Map(classes.map(x=>[x.id,{capacity:Number(x.capacity),enrolled:Number(x.enrolled)}]));
+  const requested=new Map();
+  const results=checked.map((result)=>{
+   const {student,errors,warnings}=result;
+   const already=imported.has(student.source_row);
+   const matches=already?[]:matchExistingLegacy(student,existing);
+   if(matches.length)errors.push('Possible existing student: '+matches.map(x=>x.student_no).join(', '));
+   if(student.class_id){
+    if(!capacity.has(student.class_id))errors.push('Selected class no longer exists');
+    else requested.set(student.class_id,(requested.get(student.class_id)||0)+Number(!already));
+   }
+   return {source_row:student.source_row,name:[student.first_name,student.last_name].join(' '),
+    errors,warnings,already_imported:already,existing_student_id:already?imported.get(student.source_row):null,
+    missing_count:result.missing.length};
+  });
+  for(const item of results){
+   const source=checked.find(x=>x.student.source_row===item.source_row)?.student;
+   if(source?.class_id&&capacity.has(source.class_id)){
+    const limit=capacity.get(source.class_id);
+    if(limit.enrolled+(requested.get(source.class_id)||0)>limit.capacity)
+     item.errors.push('Selected class capacity would be exceeded');
+   }
+  }
+  const fresh=checked.filter(x=>!imported.has(x.student.source_row));
+  const blocking=results.filter(x=>x.errors.length&&!x.already_imported);
+  if(path.endsWith('/preview')){
+   return json({items:results,summary:{total:checked.length,
+    ready:fresh.length-blocking.length,blocked:blocking.length,
+    already_imported:checked.length-fresh.length,
+    missing_details:results.filter(x=>x.missing_count>0).length}});
+  }
+  if(payload.confirmation!=='IMPORT LEGACY STUDENTS')
+   error('Type IMPORT LEGACY STUDENTS to confirm the reviewed import',400);
+  if(blocking.length)error('Fix or deselect '+blocking.length+' blocked rows before importing',409);
+  if(!fresh.length)return json({ok:true,created:0,already_imported:checked.length});
+  const year=Number(schoolLocalDate().slice(0,4));
+  const sequence=await first(db,'SELECT last_number FROM student_number_sequences WHERE enrollment_year=?',year);
+  if(Number(sequence?.last_number||0)+fresh.length>9999)
+   error('The student registration number allocation limit has been reached',409);
+  const ops=[
+   db.prepare(`INSERT INTO student_number_sequences(enrollment_year,last_number) VALUES(?,?)
+     ON CONFLICT(enrollment_year) DO UPDATE SET last_number=last_number+?
+     WHERE last_number+?<=9999`).bind(year,fresh.length,fresh.length,fresh.length)
+  ];
+  for(let index=0;index<fresh.length;index++){
+   const {student}=fresh[index],sid=id();
+   ops.push(db.prepare(`INSERT INTO students
+      (id,student_no,first_name,last_name,dob,gender,class_id,parent_id,phone,address,status)
+     SELECT ?,'MATT-'||printf('%04d',?)||'-'||printf('%04d',last_number-?+?),
+       ?,?,?,?,?,NULL,?,?,'active'
+     FROM student_number_sequences WHERE enrollment_year=?`)
+    .bind(sid,year,fresh.length,index+1,student.first_name,student.last_name,
+     student.dob||null,student.gender||'',student.class_id||null,
+     student.guardian_phone,student.address,year));
+   ops.push(db.prepare(`INSERT INTO admissions
+     (id,child_name,first_name,last_name,dob,gender,guardian_name,guardian_email,
+      guardian_phone,home_address,phone,status,student_id,message,parent_confirmed)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`)
+    .bind(sid,[student.first_name,student.last_name].join(' '),student.first_name,
+     student.last_name,student.dob||null,student.gender||'',student.guardian_name,
+     student.guardian_email,student.guardian_phone,student.address,
+     student.guardian_phone,'accepted',sid,
+     'Existing student imported from a legacy school roster. Details pending verification.'));
+   ops.push(db.prepare(`INSERT INTO legacy_student_import_records
+     (id,source_hash,source_filename,source_row,student_id,imported_by,review_note)
+     VALUES(?,?,?,?,?,?,?)`).bind(id(),sourceHash,filename,student.source_row,sid,user.id,student.review_note));
+  }
+  // D1 batches are a transaction: all student registrations, historical
+  // admissions and import references commit together or all roll back.
+  await db.batch(ops);
+  await audit(db,user,'legacy_bulk_import','students',sourceHash.slice(0,16),
+    'Created '+fresh.length+' enrolled legacy pupils without automatic family invitations');
+  return json({ok:true,created:fresh.length,already_imported:checked.length-fresh.length});
+ }
+ if(path==='/api/legacy-students/profile'){
+  if(method!=='PATCH')error('Method not allowed',405);
+  requireRole(user,'admin','parent');
+  const details=await input(req),studentId=String(details.student_id||'');
+  const pupil=await permittedStudent(db,user,studentId);
+  const legacy=await first(db,'SELECT id FROM legacy_student_import_records WHERE student_id=?',studentId);
+  if(!legacy)error('Not a legacy imported pupil',404);
+  const admission=await first(db,'SELECT * FROM admissions WHERE student_id=?',studentId);
+  if(!admission)error('Imported pupil admission record was not found',404);
+  const fields=['dob','gender','phone','address'],changes={};
+  for(const key of fields){
+   if(details[key]===undefined)continue;
+   const val=short(details[key],key==='address'?260:100);
+   if(key==='dob'&&val&&!validLegacyDate(val))error('Use a valid date of birth',400);
+   if(key==='gender'&&val&&!['Male','Female','Prefer not to say'].includes(val))
+    error('Select a valid gender',400);
+   if(key==='phone'&&val&&(/[<>]/.test(val)||val.length>35))error('Invalid contact number',400);
+   if(user.role==='parent'&&String(pupil[key]||'').trim()&&String(pupil[key]).trim()!==val)
+    error('An existing detail can only be corrected by the school office',403);
+   changes[key]=key==='phone'?normalizeLegacyPhone(val):val;
+  }
+  const next={...pupil,...changes};
+  const guardianName=details.guardian_name!==undefined?short(details.guardian_name,120):admission.guardian_name;
+  const guardianEmail=details.guardian_email!==undefined?email(details.guardian_email):admission.guardian_email;
+  const guardianPhone=details.guardian_phone!==undefined?normalizeLegacyPhone(details.guardian_phone):admission.guardian_phone;
+  if(user.role==='parent'&&['guardian_name','guardian_email','guardian_phone'].some(k=>details[k]!==undefined))
+   error('Contact account changes must be verified by the madrasah office',403);
+  if(guardianEmail&&!/^\S+@\S+\.\S+$/.test(guardianEmail))
+   error('Invalid guardian email',400);
+  await db.batch([
+   db.prepare('UPDATE students SET dob=?,gender=?,phone=?,address=? WHERE id=?')
+    .bind(next.dob||null,next.gender||'',next.phone||'',next.address||'',studentId),
+   db.prepare(`UPDATE admissions SET dob=?,gender=?,guardian_name=?,guardian_email=?,
+     guardian_phone=?,phone=?,home_address=?,updated_at=? WHERE student_id=?`)
+    .bind(next.dob||null,next.gender||'',guardianName||'',guardianEmail||'',
+     guardianPhone||'',next.phone||'',next.address||'',iso(),studentId)
+  ]);
+  await audit(db,user,'complete_legacy_profile','student',studentId,'Edited legacy pupil profile fields');
+  return json({ok:true});
+ }
+
  if(path==='/api/students/bulk'&&method==='POST')error('New pupils must be enrolled through an accepted admission application',403);
  if(path==='/api/students'){
-  if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT s.*,c.name AS class_name,u.name AS parent_name,(SELECT COALESCE(SUM(points),0) FROM behaviour b WHERE b.student_id=s.id) AS behaviour_score FROM students s LEFT JOIN classes c ON c.id=s.class_id LEFT JOIN users u ON u.id=s.parent_id WHERE ${s.where} ORDER BY s.first_name,s.last_name`,...s.args)});}
+  if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT s.*,c.name AS class_name,u.name AS parent_name,CASE WHEN li.student_id IS NOT NULL THEN 1 ELSE 0 END AS legacy_imported,CASE WHEN li.student_id IS NOT NULL AND (s.dob IS NULL OR trim(s.dob)='' OR trim(coalesce(s.gender,''))='' OR trim(coalesce(s.phone,''))='' OR trim(coalesce(s.address,''))='' OR s.class_id IS NULL OR s.parent_id IS NULL) THEN 1 ELSE 0 END AS legacy_incomplete,(SELECT COALESCE(SUM(points),0) FROM behaviour b WHERE b.student_id=s.id) AS behaviour_score FROM students s LEFT JOIN classes c ON c.id=s.class_id LEFT JOIN users u ON u.id=s.parent_id LEFT JOIN legacy_student_import_records li ON li.student_id=s.id WHERE ${s.where} ORDER BY s.first_name,s.last_name`,...s.args)});}
   requireRole(user,'admin','staff');const b=await input(req);
   if(method==='POST')error('New pupils must be enrolled through an accepted admission application',403);
   if(method==='PATCH'){if(!b.id)error('Student ID required');const existing=await first(db,'SELECT * FROM students WHERE id=?',b.id);if(!existing)error('Student not found',404);const obj={...existing};for(const k of FIELDS_STUDENT)if(b[k]!==undefined)obj[k]=b[k];
