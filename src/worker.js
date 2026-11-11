@@ -1452,10 +1452,11 @@ async function handle(req,env){
   requireRole(user,'admin');
   if(method!=='GET')error('Method not allowed',405);
   return json({items:await all(db,`SELECT li.id,li.source_hash,li.source_filename,
-    li.source_row,li.review_note,li.imported_at,s.id AS student_id,
+    li.source_row,li.review_note,li.imported_at,li.first_aid_consent,li.photo_consent,s.id AS student_id,
     s.student_no,s.first_name,s.last_name,s.dob,s.gender,s.address,s.phone,
     s.class_id,c.name AS class_name,s.parent_id,s.status,
-    a.guardian_name,a.guardian_email,a.guardian_phone
+    a.guardian_name,a.guardian_email,a.guardian_phone,a.guardian_relationship,a.emergency_phone,
+    a.medical_information,a.allergies,a.additional_learning_needs
     FROM legacy_student_import_records li
     JOIN students s ON s.id=li.student_id
     LEFT JOIN admissions a ON a.student_id=s.id
@@ -1553,14 +1554,25 @@ async function handle(req,env){
   return json({ok:true,created:fresh.length,already_imported:checked.length-fresh.length});
  }
  if(path==='/api/legacy-students/profile'){
-  if(method!=='PATCH')error('Method not allowed',405);
+  if(!['PATCH','GET'].includes(method))error('Method not allowed',405);
   requireRole(user,'admin','parent');
-  const details=await input(req),studentId=String(details.student_id||'');
+  const details=method==='GET'?{student_id:new URL(req.url).searchParams.get('student_id')}:await input(req);
+  const studentId=String(details.student_id||'');
   const pupil=await permittedStudent(db,user,studentId);
-  const legacy=await first(db,'SELECT id FROM legacy_student_import_records WHERE student_id=?',studentId);
+  const legacy=await first(db,'SELECT * FROM legacy_student_import_records WHERE student_id=?',studentId);
   if(!legacy)error('Not a legacy imported pupil',404);
   const admission=await first(db,'SELECT * FROM admissions WHERE student_id=?',studentId);
   if(!admission)error('Imported pupil admission record was not found',404);
+  if(method==='GET')return json({profile:{
+   student_id:studentId,dob:pupil.dob||'',gender:pupil.gender||'',phone:pupil.phone||'',address:pupil.address||'',
+   guardian_name:admission.guardian_name||'',guardian_email:user.role==='admin'?admission.guardian_email||'':null,
+   guardian_phone:user.role==='admin'?admission.guardian_phone||'':null,
+   emergency_phone:admission.emergency_phone||'',guardian_relationship:admission.guardian_relationship||'',
+   medical_information:admission.medical_information||'',allergies:admission.allergies||'',
+   additional_learning_needs:admission.additional_learning_needs||'',
+   first_aid_consent:legacy.first_aid_consent===null?'':legacy.first_aid_consent?'yes':'no',
+   photo_consent:legacy.photo_consent===null?'':legacy.photo_consent?'yes':'no'
+  }},200,{'Cache-Control':'private, no-store'});
   const fields=['dob','gender','phone','address'],changes={};
   for(const key of fields){
    if(details[key]===undefined)continue;
@@ -1583,13 +1595,44 @@ async function handle(req,env){
    error('Invalid guardian email',400);
   if(pupil.parent_id&&guardianEmail!==email(admission.guardian_email))
    error('A linked guardian email cannot be changed here. Contact the office to verify and re-link the correct account.',409);
+  const extraValues={},limits={emergency_phone:35,guardian_relationship:50,
+   medical_information:1600,allergies:1000,additional_learning_needs:1600};
+  for(const [key,max] of Object.entries(limits)){
+   if(details[key]===undefined)continue;
+   const value=short(details[key],max);
+   if(user.role==='parent'&&String(admission[key]||'').trim()&&
+      String(admission[key]).trim()!==value)
+    error('A previously recorded support/contact detail must be corrected by the madrasah office',403);
+   extraValues[key]=value;
+  }
+  for(const field of ['emergency_phone','guardian_relationship'])
+   if(extraValues[field]&&/[<>]/.test(extraValues[field]))error('Invalid emergency contact detail',400);
+  const consent={};
+  for(const [field,column] of [['consent_first_aid','first_aid_consent'],['consent_photos','photo_consent']]){
+   if(details[field]===undefined||details[field]==='')continue;
+   if(!['yes','no'].includes(details[field]))error('Explicitly choose Yes or No for the requested consent',400);
+   const value=details[field]==='yes'?1:0;
+   if(user.role==='parent'&&legacy[column]!==null&&legacy[column]!==value)
+     error('An existing consent answer must be reviewed by school staff',403);
+   consent[column]=value;
+  }
+  const finalExtra=Object.fromEntries(Object.keys(limits).map(k=>[k,extraValues[k]??admission[k]??'']));
+  const aid=consent.first_aid_consent??legacy.first_aid_consent;
+  const photo=consent.photo_consent??legacy.photo_consent;
   await db.batch([
    db.prepare('UPDATE students SET dob=?,gender=?,phone=?,address=? WHERE id=?')
     .bind(next.dob||null,next.gender||'',next.phone||'',next.address||'',studentId),
    db.prepare(`UPDATE admissions SET dob=?,gender=?,guardian_name=?,guardian_email=?,
-     guardian_phone=?,phone=?,home_address=?,updated_at=? WHERE student_id=?`)
+     guardian_phone=?,phone=?,home_address=?,emergency_phone=?,guardian_relationship=?,
+     medical_information=?,allergies=?,additional_learning_needs=?,
+     consent_first_aid=?,consent_photos=?,updated_at=? WHERE student_id=?`)
     .bind(next.dob||null,next.gender||'',guardianName||'',guardianEmail||'',
-     guardianPhone||'',next.phone||'',next.address||'',iso(),studentId)
+     guardianPhone||'',next.phone||'',next.address||'',
+     finalExtra.emergency_phone,finalExtra.guardian_relationship,
+     finalExtra.medical_information,finalExtra.allergies,finalExtra.additional_learning_needs,
+     aid??0,photo??0,iso(),studentId),
+   db.prepare('UPDATE legacy_student_import_records SET first_aid_consent=?,photo_consent=? WHERE student_id=?')
+    .bind(aid??null,photo??null,studentId)
   ]);
   await audit(db,user,'complete_legacy_profile','student',studentId,'Edited legacy pupil profile fields');
   return json({ok:true});
