@@ -96,10 +96,10 @@
   list.addEventListener('change',event=>{if(event.target.classList.contains('legacy-select'))update();});
   previewButton.addEventListener('click',async()=>{
    const chosen=file.files?.[0];if(!chosen){toast('Select a CSV import file first',true);return;}
-   if(chosen.size>350000)throw Error('CSV file is too large (limit 350 KB)');
    previewButton.disabled=true;commit.disabled=true;response=null;
    $('legacy-file-status').textContent='Validating the file and checking possible duplicates…';
    try{
+    if(chosen.size>350000)throw Error('CSV file is too large (limit 350 KB)');
     const contents=await chosen.text();
     rows=buildRows(contents,classes);
     if(rows.length<1)throw Error('No students found');
