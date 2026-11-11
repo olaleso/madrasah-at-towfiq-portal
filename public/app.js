@@ -156,6 +156,7 @@ function classroomPage(){
 
 function familyDashboard(){
  const children=get('students').filter(s=>s.status==='active');
+ const legacyPending=children.filter(s=>s.legacy_imported&&s.legacy_incomplete);
  const allHomework=get('homework'),attendance=get('attendance'),behaviours=get('behaviour'),fees=get('fees'),reports=get('progress-reports');
  const announcements=get('announcements').slice(0,3);
  const firstName=(S.user.name||'Parent').split(/\s+/)[0];
@@ -189,6 +190,7 @@ function familyDashboard(){
  ].sort((a,b)=>String(b.date||'').localeCompare(String(a.date||''))).slice(0,6);
  return `${pagehead('Assalamu alaikum, '+firstName+' ✨','Your family’s learning, attendance and character — together in one secure place.')}
  <div class="family-hero"><div><span class="family-hero-kicker">MADRASAH AT-TOWFIQ · FAMILY PORTAL</span><h2>Every child. Every lesson.<br>One learning journey.</h2><p>Stay informed, celebrate progress and support your children’s Islamic education at home.</p><button class="btn white" data-action="nav" data-value="homework">${ico('book',16)} View homework</button> <button class="btn white" data-action="nav" data-value="leave">${ico('calendar',16)} Notify an absence / request leave</button></div><div class="family-hero-art" lang="ar" aria-hidden="true">بِسْمِ اللَّهِ</div></div>
+ ${legacyPending.length?`<div class="legacy-profile-banner"><div><strong>${ico('info',17)} Help us complete your child's school record</strong><p>Some details were unavailable when the madrasah transferred its earlier student records. You can add missing details securely; the school office handles corrections and guardian verification.</p></div><button class="btn primary smol" data-action="family-student" data-id="${h(legacyPending[0].id)}" type="button">Review your child's profile</button></div>`:''}
  <div class="family-metrics">${[
   ['Children enrolled',children.length,'students'],
   ['Homework pending',pending.length,'book'],
