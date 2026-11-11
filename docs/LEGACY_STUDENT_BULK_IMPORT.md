@@ -31,7 +31,7 @@ The prepared **confidential** files are available to the user as chat downloads:
 4. Type `IMPORT LEGACY STUDENTS` as the final confirmation, then click **Import selected pupils**.
 5. Successful import creates active historic student entries, one historical accepted-admission record each, normal `MATT-YYYY-NNNN` registration numbers, and source provenance. The source roster row/hash prevents retry duplicates.
 6. No class is assumed and no parent accounts or email invitations are created. The administrator confirms family relationships and class assignments separately.
-7. Admin can complete a profile from the legacy queue. Verified parents can fill blank DOB, gender, phone and address fields from their child's own profile; they cannot modify verified values or another family's records.
+7. Admin can complete a profile from the legacy queue. Verified linked parents can fill blank DOB, gender, phone, address, emergency contact and health/learning support fields from their child's own profile. They can explicitly record Yes/No for first-aid and activity photography consent. No consent is inferred from old missing data. Parents cannot modify existing values or another family's records.
 
 ## Security/integrity
 - Admin-only import preview/commit/list; the school staff and parents cannot invoke the bulk import.
@@ -39,8 +39,8 @@ The prepared **confidential** files are available to the user as chat downloads:
 - The Worker **revalidates the selected rows** and searches for likely existing students, even if the browser preview was manipulated.
 - A D1 `batch()` transaction commits allocation, pupil records, admission linkage, and import provenance atomically. Failure rolls back the batch; a retry of the exact source file skips already imported source rows.
 - The existing `POST /api/students` and `POST /api/students/bulk` bans remain intact for ordinary manual student creation.
-- No auto parent invitation, photo/first-aid consent, invoice, payment, attendance, homework or behaviour record is created. Existing admissions consent declarations are not fabricated (`parent_confirmed=0`).
-- Parent edits are restricted by linked-child role check and only allowed on previously blank fields. Guardian email changes require admin verification and cannot be changed after a parent account is linked through this profile editor.
+- No auto parent invitation, photo/first-aid consent, invoice, payment, attendance, homework or behaviour record is created. Existing admissions consent declarations are not fabricated (`parent_confirmed=0`). Explicit consents remain nullable/unknown in the new legacy provenance table until a linked guardian or administrator records an answer.
+- Parent edits are restricted by linked-child role check and only allowed on previously blank fields, including health/learning support and emergency contact. A prior explicit consent cannot be changed by a parent without office review. Guardian email changes require admin verification and cannot be changed after a parent account is linked through this profile editor.
 - Uploaded CSV is **not** sent to GitHub, an external AI service, or an email provider.
 
 ## Deploy (PowerShell)
@@ -66,7 +66,7 @@ After deployment, **select the CSV in the administrator page and preview before 
 - After actual import, verify the created count, unique registration numbers, correct phone formats and blank unknown fields.
 - Verify the Parents & guardians page: no automatic family invitations; confirm each guardian identity before **Link & notify**.
 - Assign classes explicitly and verify capacity.
-- Test a linked parent can fill an empty contact or DOB field but cannot overwrite a preexisting one.
+- Test a linked parent can fill an empty contact or DOB field, provide previously absent health/learning support, and explicitly choose Yes or No to first-aid/photography consent. Verify other guardians cannot read or modify those details, and parents cannot overwrite pre-existing values.
 
 ## Rollback and data retention
 The UI/API can be reverted by reverting the feature PR merge commit and redeploying. **Do not drop the import tracking table**; it records which source rows were imported and protects against duplication.
