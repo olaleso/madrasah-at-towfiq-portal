@@ -1762,7 +1762,7 @@ assert.equal(profilePage.data.profile.dob,'2016-09-02');
 assert.equal(profilePage.data.profile.first_aid_consent,'','No first-aid permission is assumed on import');
 assert.equal(profilePage.data.profile.guardian_email,null,'Parent API must not expose internal admission guardian email');
 const otherProfile=await req('/legacy-students/profile?student_id='+encodeURIComponent(imported[1].id));
-assert.equal(otherProfile.status,403,'Parent cannot read another imported student's support details');
+assert.equal(otherProfile.status,403,'Parent cannot read another imported student\'s support details');
 parentLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,
  emergency_phone:'07000123456',allergies:'No known allergies',additional_learning_needs:'Extra reading help',
  consent_first_aid:'yes',consent_photos:'no'},'PATCH');
