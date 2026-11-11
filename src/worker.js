@@ -1548,8 +1548,8 @@ async function handle(req,env){
   // D1 batches are a transaction: all student registrations, historical
   // admissions and import references commit together or all roll back.
   await db.batch(ops);
-  await audit(db,user,'legacy_bulk_import','students',sourceHash.slice(0,16),
-    'Created '+fresh.length+' enrolled legacy pupils without automatic family invitations');
+  try{await audit(db,user,'legacy_bulk_import','students',sourceHash.slice(0,16),
+    'Created '+fresh.length+' enrolled legacy pupils without automatic family invitations');}catch(err){console.error('Legacy import audit unavailable',err);}
   return json({ok:true,created:fresh.length,already_imported:checked.length-fresh.length});
  }
  if(path==='/api/legacy-students/profile'){
@@ -1581,6 +1581,8 @@ async function handle(req,env){
    error('Contact account changes must be verified by the madrasah office',403);
   if(guardianEmail&&!/^\S+@\S+\.\S+$/.test(guardianEmail))
    error('Invalid guardian email',400);
+  if(pupil.parent_id&&guardianEmail!==email(admission.guardian_email))
+   error('A linked guardian email cannot be changed here. Contact the office to verify and re-link the correct account.',409);
   await db.batch([
    db.prepare('UPDATE students SET dob=?,gender=?,phone=?,address=? WHERE id=?')
     .bind(next.dob||null,next.gender||'',next.phone||'',next.address||'',studentId),
