@@ -251,6 +251,7 @@ function legacyPage(){
   ['Photography consent',x.photo_consent===null||x.photo_consent===undefined]
  ].filter(([,isMissing])=>isMissing).map(([label])=>label);
  return `${pagehead('Legacy student import','A controlled way to enrol historic pupils without fabricating missing details.',`<button type="button" class="btn white" data-action="nav" data-value="students">${ico('students',16)} Student directory</button>`)}
+ <section class="surface"><div class="surface-head"><div><h3>Migration email delivery</h3><p class="muted small">Retry eligible failed guardian notices without reimporting pupils. Previously accepted notices will not be resent.</p></div><button type="button" class="btn white smol" data-action="legacy-retry-notices">${ico('refresh',16)} Retry failed emails</button></div><p class="muted small" id="legacy-delivery-stats">Loading migration notice statuses…</p></section>
  <section class="surface legacy-upload-box">
    <div class="surface-head"><div><h3>Step 1 · Upload a prepared CSV</h3><p class="muted small">Use the normalised import CSV generated from the legacy workbook. The original Excel source should be retained securely by the school.</p></div><button class="btn white smol" id="legacy-template-button" type="button">${ico('download',15)} Empty CSV template</button></div>
    <div class="legacy-warning"><strong>${ico('shield',17)} Safety checks</strong><p>Existing pupils can be enrolled with DOB, gender, class, guardian contacts and consents still unknown. UK-formatted dates are converted safely; impossible or future DOBs are saved as blank and flagged for correction. Class names not found in this portal remain unassigned. Duplicate identities still require review. No parent invitations are sent automatically. Keep the spreadsheet private.</p></div>
@@ -1446,6 +1447,15 @@ async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
   await navigate(key);return;
  }
  if(a==='back-dashboard'){await navigate('dashboard');return;}
+ if(a==='legacy-retry-notices'){
+  if(!userCan('admin'))return;
+  const approved=await confirmDialog({title:'Retry failed migration emails?',message:'Attempt eligible failed guardian notices now?',details:'Only previously failed or pending notices with attempts remaining will be processed. Resend may still reject rate-limited or invalid addresses. Previously accepted messages are excluded.',actionLabel:'Retry failed notices',tone:'warning'});
+  if(!approved)return;
+  const result=await post('/legacy-students/notices/retry',{confirmation:'RETRY FAILED NOTICES'});
+  toast(result.accepted+' notice(s) accepted by Resend; '+result.eligible+' failed notices were eligible for retry.');
+  await navigate('legacy');
+  return;
+ }
  if(a==='menu'){$('#shell')?.classList.toggle('menu-open');return;}
  if(a==='family-switch'){
   if(!S.user?.has_family || S.staffRole==='parent')return;
