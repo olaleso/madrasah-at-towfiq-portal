@@ -262,6 +262,10 @@ function legacyPage(){
    <div id="legacy-preview-results">${blank('No preview yet','Choose the CSV and select Preview to see all rows and missing information.')}</div>
    <div class="legacy-confirm-panel" id="legacy-confirm-panel" hidden>
     <p class="small">Confirm that these are already-enrolled legacy pupils and that you have permission to process the roster. Verify guardianship separately before linking parent access.</p>
+    ${get('students').length===0?`<label style="display:flex;align-items:flex-start;gap:8px;margin:12px 0 18px">
+      <input type="checkbox" id="legacy-restart-numbers" checked style="margin-top:3px">
+      <span><strong>First live intake:</strong> Start registration numbers at <code>MATT-${new Date().getFullYear()}-0001</code>. Previous test numbers are reused only because the student and admissions directories have been cleared. The server verifies this again at import.</span>
+    </label>`:'<p class="small muted">Existing pupil numbers are preserved; the next available MATT registration number will be allocated automatically.</p>'}
     <div class="legacy-warning" style="margin-bottom:16px">
       <strong>${ico('mail',16)} Notify parents about their migrated pupils</strong>
       <p>One beautifully formatted service email will be queued per verified guardian address. Siblings imported together receive one email listing their registration numbers. This is not an account invitation or permission to access a child’s records.</p>
