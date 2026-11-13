@@ -159,50 +159,77 @@ const CATALOG=[
  ['disrespect','Disrespectful language',-2],['disruption','Deliberately disrupting the lesson',-2],['refusal','Refusing to follow reasonable instructions',-2],['disturbing','Repeatedly disturbing other pupils’ learning',-2],['arguing','Arguing aggressively with another pupil',-3],['swearing','Swearing or using offensive language',-3],['damage','Deliberately damaging property',-4],['bullying','Bullying or repeated intimidation',-5],['threatening','Threatening another pupil',-5],['fighting','Fighting or physical aggression',-5],['harassment','Serious harassment or discriminatory abuse',-5],
  ['punctual','Arriving on time',1],['equipment','Bringing all books and equipment',1],['homework','Completing homework',1],['manners','Showing excellent manners',1],['following','Following instructions promptly',1],['participation','Participating positively in class',1],['helping','Helping another student',2],['respect','Showing exceptional respect to teachers',2],['hifdh-effort','Excellent effort in Qur’an memorisation',2],['leadership','Demonstrating leadership and responsibility',2],['resolution','Helping resolve a disagreement peacefully',3],['improvement','Outstanding improvement in behaviour',3],['kindness','Exceptional act of kindness or character',3]
 ].map(([code,label,points])=>({code,label,points,category:points>0?'positive':'concern'}));
-async function mail(env,to,subject,html,options={}){const e=id();if(!env.RESEND_API_KEY||!env.EMAIL_FROM){await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status,error) VALUES(?,?,?,?,?)',e,to,subject,'not_configured','Resend API key or sender not configured');return {sent:false};}try{const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Authorization':`Bearer ${env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:env.EMAIL_FROM,to:[to],subject,html,...(options.replyTo?{reply_to:options.replyTo}:{})})});if(!r.ok)throw new Error(`Provider returned ${r.status}`);await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status) VALUES(?,?,?,?)',e,to,subject,'sent');return {sent:true};}catch(err){await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status,error) VALUES(?,?,?,?,?)',e,to,subject,'failed',short(err.message));return {sent:false};}}
+async function mail(env,to,subject,html,options={}){
+ const e=id();
+ if(!env.RESEND_API_KEY||!env.EMAIL_FROM){
+  await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status,error) VALUES(?,?,?,?,?)',
+   e,to,subject,'not_configured','Resend API key or sender not configured');
+  return {sent:false,error:'Resend API key or sender not configured',status:0};
+ }
+ try{
+  const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{
+   'Authorization':`Bearer ${env.RESEND_API_KEY}`,'Content-Type':'application/json'
+  },body:JSON.stringify({from:env.EMAIL_FROM,to:[to],subject,html,
+   ...(options.replyTo?{reply_to:options.replyTo}:{})})});
+  if(!r.ok){
+   let detail='';
+   try{const response=await r.json();detail=String(response?.message||response?.error||'').slice(0,180);}catch{}
+   throw Object.assign(new Error('Provider returned '+r.status+(detail?': '+detail:'')),{status:r.status});
+  }
+  await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status) VALUES(?,?,?,?)',
+   e,to,subject,'sent');
+  return {sent:true,status:r.status};
+ }catch(err){
+  const message=short(err.message,280);
+  await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status,error) VALUES(?,?,?,?,?)',
+   e,to,subject,'failed',message);
+  return {sent:false,status:err.status||0,error:message};
+ }
+}
 
-
-// Deliver queued verified-family service notices in bounded batches. The
-// commit transaction inserts the queue first; sending can never roll back
-// enrolment or create a partial cohort. Cron retries transient failures.
-export async function dispatchLegacyMigrationNotices(env,maxCount=50){
+// Resend's standard API limit is commonly two requests per second.
+// Use a conservative sequential pace instead of bursts of five parallel
+// requests. Stop immediately on 429 so other notices stay queued for retry.
+// Keep each execution bounded to leave time for D1 writes in waitUntil.
+export async function dispatchLegacyMigrationNotices(env,maxCount=30){
  if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM)return 0;
  const db=env.DB;
  const notices=await all(db,`SELECT * FROM legacy_migration_notices
    WHERE attempts<4 AND
     (status IN ('pending','failed') OR
      (status='sending' AND updated_at<datetime('now','-15 minutes')))
-   ORDER BY created_at,id LIMIT ?`,maxCount);
+   ORDER BY created_at,id LIMIT ?`,Math.min(Math.max(1,maxCount),30));
  let sent=0;
- for(let offset=0;offset<notices.length;offset+=5){
-  const batch=notices.slice(offset,offset+5);
-  const statuses=await Promise.all(batch.map(async notice=>{
-   const claimed=await run(db,`UPDATE legacy_migration_notices SET status='sending',
-     attempts=attempts+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND attempts<4 AND
-     (status IN ('pending','failed') OR
-      (status='sending' AND updated_at<datetime('now','-15 minutes')))`,notice.id);
-   if(Number(claimed.meta?.changes??1)!==1)return false;
-   try{
-    let ids;
-    try{ids=JSON.parse(notice.student_ids_json);}catch{ids=[];}
-    if(!Array.isArray(ids)||ids.length<1||ids.length>100)throw Error('Invalid notice student list');
-    const children=await all(db,`SELECT id,student_no,first_name,last_name
-     FROM students WHERE id IN (${ids.map(()=>'?').join(',')}) ORDER BY last_name,first_name`,...ids);
-    if(children.length!==ids.length)throw Error('Some pupil records could not be located');
-    const html=legacyMigrationEmail({guardianName:notice.guardian_name,children});
-    const outcome=await mail(env,notice.guardian_email,LEGACY_MIGRATION_SUBJECT,html,
-      {replyTo:'admissions@attowfiqmasjid.org'});
-    if(!outcome.sent)throw Error('Email provider did not accept the message');
-    await run(db,`UPDATE legacy_migration_notices SET status='sent',sent_at=?,
-      last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=?`,iso(),notice.id);
-    return true;
-   }catch(err){
-    await run(db,`UPDATE legacy_migration_notices SET status='failed',
-      last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,short(err.message,280),notice.id);
-    return false;
+ for(const notice of notices){
+  const claimed=await run(db,`UPDATE legacy_migration_notices SET status='sending',
+   attempts=attempts+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND attempts<4 AND
+   (status IN ('pending','failed') OR
+    (status='sending' AND updated_at<datetime('now','-15 minutes')))`,notice.id);
+  if(Number(claimed.meta?.changes??1)!==1)continue;
+  let rateLimited=false;
+  try{
+   let ids;
+   try{ids=JSON.parse(notice.student_ids_json);}catch{ids=[];}
+   if(!Array.isArray(ids)||ids.length<1||ids.length>100)throw Error('Invalid notice student list');
+   const children=await all(db,`SELECT id,student_no,first_name,last_name
+    FROM students WHERE id IN (${ids.map(()=>'?').join(',')}) ORDER BY last_name,first_name`,...ids);
+   if(children.length!==ids.length)throw Error('Some pupil records could not be located');
+   const html=legacyMigrationEmail({guardianName:notice.guardian_name,children});
+   const outcome=await mail(env,notice.guardian_email,LEGACY_MIGRATION_SUBJECT,html,
+    {replyTo:'admissions@attowfiqmasjid.org'});
+   if(!outcome.sent){
+    rateLimited=outcome.status===429;
+    throw Error(outcome.error||'Email provider did not accept the message');
    }
-  }));
-  sent+=statuses.filter(Boolean).length;
+   await run(db,`UPDATE legacy_migration_notices SET status='sent',sent_at=?,
+    last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=?`,iso(),notice.id);
+   sent++;
+  }catch(err){
+   await run(db,`UPDATE legacy_migration_notices SET status='failed',
+    last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,short(err.message,280),notice.id);
+  }
+  if(rateLimited)break;
+  await new Promise(resolve=>setTimeout(resolve,650));
  }
  return sent;
 }
@@ -1636,7 +1663,7 @@ async function handle(req,env,ctx){
   // Immediate, bounded delivery continues after response; daily cron retries
   // remaining pending/failed notices without changing pupil registration.
   if(notices.size&&ctx?.waitUntil)
-   ctx.waitUntil(dispatchLegacyMigrationNotices(env,50).catch(err=>
+   ctx.waitUntil(dispatchLegacyMigrationNotices(env,30).catch(err=>
     console.error('Immediate legacy notification dispatch failed',err)));
   return json({ok:true,created:fresh.length,already_imported:checked.length-fresh.length,
    notices_queued:notices.size,first_registration_number:
@@ -2528,7 +2555,7 @@ export default {
  async scheduled(event,env,ctx){
   ctx.waitUntil(purgeOldDbsDocuments(env).catch(err=>console.error('DBS retention purge failed',err)));
   ctx.waitUntil(purgeExpiredInAppNotifications(env).catch(err=>console.error('Notification retention cleanup failed',err)));
-  ctx.waitUntil(dispatchLegacyMigrationNotices(env,50).catch(err=>console.error('Legacy notices dispatch failed',err)));
+  ctx.waitUntil(dispatchLegacyMigrationNotices(env,30).catch(err=>console.error('Legacy notices dispatch failed',err)));
   if(event.cron!=='0 8 * * 5')return;
   ctx.waitUntil((async()=>{if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM||env.EMAIL_FROM.includes('example.org'))return;const v=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_enabled'");if(v?.value!=='true')return;const m=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_message'");const people=await all(env.DB,"SELECT email FROM users WHERE active=1 AND role IN ('parent','teacher','staff')");for(const p of people){await mail(env,p.email,'Jumu’ah reminder — Madrasah At-Towfiq',`<div style="font-family:Arial,sans-serif"><h2>Madrasah At-Towfiq</h2><p>${escapeHtml(m?.value||'Assalamu alaikum. Jumu’ah Mubarak.')}</p></div>`);}})());
  },
