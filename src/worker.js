@@ -165,7 +165,7 @@ async function mail(env,to,subject,html,options={}){const e=id();if(!env.RESEND_
 // Deliver queued verified-family service notices in bounded batches. The
 // commit transaction inserts the queue first; sending can never roll back
 // enrolment or create a partial cohort. Cron retries transient failures.
-async function dispatchLegacyMigrationNotices(env,maxCount=50){
+export async function dispatchLegacyMigrationNotices(env,maxCount=50){
  if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM)return 0;
  const db=env.DB;
  const notices=await all(db,`SELECT * FROM legacy_migration_notices
