@@ -104,8 +104,8 @@
   const update=()=>{
    const selected=[...document.querySelectorAll('.legacy-select:checked')].map(el=>rows[Number(el.dataset.index)]);
    const chosen=selected.length;
-   const emailPattern=/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
-   const emails=new Set(selected.map(x=>String(x?.guardian_email||'').toLowerCase().trim()).filter(x=>emailPattern.test(x)));
+   const isValidAddress=x=>x.length<=254&&!x.includes(' ')&&x.includes('@')&&x.lastIndexOf('.')>x.indexOf('@')+1;
+   const emails=new Set(selected.map(x=>String(x?.guardian_email||'').toLowerCase().trim()).filter(isValidAddress));
    const notifying=sendNotices?.checked===true;
    if(guardianVerified)guardianVerified.disabled=!notifying;
    commit.disabled=!(response&&chosen>0&&confirm.value==='IMPORT LEGACY STUDENTS'&&
