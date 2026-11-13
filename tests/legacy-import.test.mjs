@@ -73,7 +73,7 @@ test('possible duplicate pupils and invalid source identity still block import',
 });
 test('historical class names not found in portal remain unassigned for later allocation',()=>{
  const headers='source_row,first_name,last_name,dob,gender,guardian_name,guardian_email,guardian_phone,address,class_name,review_note';
- const rows=parser.buildRows(headers+'\\n2,Example,Pupil,27/10/2008,,,,,,Previous Class,',[]);
+ const rows=parser.buildRows([headers,'2,Example,Pupil,27/10/2008,,,,,,Previous Class,'].join(String.fromCharCode(10)),[]);
  assert.equal(rows.length,1);
  assert.equal(rows[0].class_id,'');
  assert.ok(rows[0].review_note.includes('Unmatched old class'));
