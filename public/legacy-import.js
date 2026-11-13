@@ -38,8 +38,13 @@
    const className=String(obj.class_name||'').trim().toLocaleLowerCase('en-GB');
    if(className){
     const cls=classes.find(c=>c.name.trim().toLocaleLowerCase('en-GB')===className);
-    if(!cls)throw Error('Unknown class "'+obj.class_name+'" on row '+obj.source_row+'. Create the class first or leave class_name blank.');
-    obj.class_id=cls.id;
+    if(cls)obj.class_id=cls.id;
+    else{
+     // Legacy class labels need not match current classes. Keep the pupil
+     // enrolable and assign the correct class manually after import.
+     obj.class_id='';
+     obj.review_note=[obj.review_note,'Unmatched old class "'+obj.class_name+'": assign class after import'].filter(Boolean).join(' | ').slice(0,500);
+    }
    }else obj.class_id='';
    delete obj.class_name;
    if(seen.has(obj.source_row))throw Error('Source row '+obj.source_row+' is duplicated in the CSV');
@@ -71,7 +76,7 @@
     '</td><td class="legacy-issues">'+(issues.length?issues.map(q=>'<div>'+h(q)+'</div>').join(''):'<span class="muted">No issues</span>')+'</td></tr>';
   }).join('');
   return '<div class="legacy-preview-counts"><span>'+items.length+' rows</span>'+
-   '<span>'+items.filter(x=>x.errors.length).length+' blocked</span>'+
+   '<span>'+items.filter(x=>x.errors.length&&!x.already_imported).length+' blocked</span>'+
    '<span>'+items.filter(x=>x.missing_count).length+' incomplete</span>'+
    '<span>'+items.filter(x=>x.already_imported).length+' previously imported</span></div>'+
    '<div class="table-scroll"><table class="table legacy-preview-table"><thead><tr><th>Include</th><th>Student</th><th>Status</th><th>Missing details / notes</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
@@ -83,16 +88,39 @@
  function mount({api,post,toast,navigate,classes=[]}){
   const file=$('legacy-upload-file'),previewButton=$('legacy-preview-button'),
    templateButton=$('legacy-template-button'),list=$('legacy-preview-results'),
-   confirm=$('legacy-confirm-phrase'),commit=$('legacy-commit-button');
+   confirm=$('legacy-confirm-phrase'),commit=$('legacy-commit-button'),
+   sendNotices=$('legacy-send-notices'),guardianVerified=$('legacy-guardian-verified'),
+   restartNumbers=$('legacy-restart-numbers');
   if(!file||!previewButton||!list||!commit)return;
   let rows=[],response=null,hash='',filename='';
   templateButton?.addEventListener('click',downloadTemplate);
+  api('/legacy-students/notices').then(info=>{
+   const c=info.counts||{},total=Object.values(c).reduce((a,x)=>a+Number(x||0),0);
+   const stats=$('legacy-delivery-stats');
+   if(stats)stats.textContent=total?
+     'Migration notices — '+Number(c.sent||0)+' sent; '+Number(c.pending||0)+' queued; '+
+      Number(c.sending||0)+' sending; '+Number(c.failed||0)+' awaiting retry.':
+     'No migration notices have been queued yet.';
+  }).catch(()=>{const stats=$('legacy-delivery-stats');if(stats)stats.textContent='Notification delivery status unavailable';});
   const update=()=>{
-   const chosen=[...document.querySelectorAll('.legacy-select:checked')].length;
-   commit.disabled=!(response&&chosen>0&&confirm.value==='IMPORT LEGACY STUDENTS');
+   const selected=[...document.querySelectorAll('.legacy-select:checked')].map(el=>rows[Number(el.dataset.index)]);
+   const chosen=selected.length;
+   const isValidAddress=x=>x.length<=254&&!x.includes(' ')&&x.includes('@')&&x.lastIndexOf('.')>x.indexOf('@')+1;
+   const emails=new Set(selected.map(x=>String(x?.guardian_email||'').toLowerCase().trim()).filter(isValidAddress));
+   const notifying=sendNotices?.checked===true;
+   if(guardianVerified)guardianVerified.disabled=!notifying;
+   commit.disabled=!(response&&chosen>0&&confirm.value==='IMPORT LEGACY STUDENTS'&&
+     (!notifying||guardianVerified?.checked===true));
    $('legacy-selected-count').textContent=chosen+' student'+(chosen===1?'':'s')+' selected for import';
+   const line=$('legacy-mail-queue-status');
+   if(line)line.textContent=notifying?
+     emails.size+' unique eligible guardian address'+(emails.size===1?'':'es')+
+      ' in selected rows. Confirm addresses are verified to enable automatic notices.':
+     'Guardian notices are disabled for this import.';
   };
   confirm.addEventListener('input',update);
+  sendNotices?.addEventListener('change',()=>{if(!sendNotices.checked&&guardianVerified)guardianVerified.checked=false;update();});
+  guardianVerified?.addEventListener('change',update);
   list.addEventListener('change',event=>{if(event.target.classList.contains('legacy-select'))update();});
   previewButton.addEventListener('click',async()=>{
    const chosen=file.files?.[0];if(!chosen){toast('Select a CSV import file first',true);return;}
@@ -107,7 +135,7 @@
     response=await post('/legacy-students/preview',{source_hash:hash,filename,items:rows});
     list.innerHTML=previewTable(response.items);
     $('legacy-confirm-panel').hidden=false;
-    $('legacy-file-status').textContent='Preview complete. Inspect blocked rows before confirming; no database changes have been made.';
+    $('legacy-file-status').textContent='Preview complete. Unknown or invalid DOBs are left blank and flagged for later correction. Check any genuinely blocked identities/duplicates before confirming; nothing has been imported yet.';
     update();
    }catch(e){
     rows=[];response=null;list.textContent='';
@@ -123,9 +151,16 @@
    commit.disabled=true;previewButton.disabled=true;
    try{
     const outcome=await post('/legacy-students/commit',{
-     source_hash:hash,filename,items:selected,confirmation:'IMPORT LEGACY STUDENTS'});
-    $('legacy-file-status').textContent=outcome.created+' student(s) imported successfully; '+outcome.already_imported+' previously imported. No parent invitations were sent.';
-    toast('Imported '+outcome.created+' legacy students');
+     source_hash:hash,filename,items:selected,confirmation:'IMPORT LEGACY STUDENTS',
+     notify_guardians:sendNotices?.checked===true,
+     guardian_contacts_verified:guardianVerified?.checked===true,
+     start_first_cohort_at_one:restartNumbers?.checked===true});
+    $('legacy-file-status').textContent=outcome.created+' student(s) imported successfully; '+
+     outcome.already_imported+' previously imported. '+Number(outcome.notices_queued||0)+
+     ' guardian migration notification(s) queued for delivery. No parent invitations were sent.';
+    toast('Imported '+outcome.created+' legacy students. First registration: '+
+     (outcome.first_registration_number||'allocated automatically')+
+     '. Queued '+Number(outcome.notices_queued||0)+' family notice(s)');
     rows=[];response=null;confirm.value='';file.value='';list.textContent='';
     $('legacy-confirm-panel').hidden=true;
     await navigate('legacy');

@@ -1,7 +1,7 @@
 /* Self-contained API smoke test using Node 22's experimental node:sqlite; does not require internet or Wrangler. */
 import fs from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
-import worker from '../src/worker.js';
+import worker,{dispatchLegacyMigrationNotices} from '../src/worker.js';
 import assert from 'node:assert/strict';
 import {pbkdf2Sync,randomBytes} from 'node:crypto';
 const sqlite=new DatabaseSync(':memory:');sqlite.exec(fs.readFileSync(new URL('../migrations/0001_initial.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0002_expanded_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0003_safeguarding_declarations.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0004_enrol_accepted_admissions.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0005_student_registration_numbers.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0006_fix_decimal_student_year.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0007_attendance_family_alerts.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0008_pupil_progress_reports.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0009_compliance_communications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0010_staff_dbs_review.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0011_dbs_evidence_received.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0012_in_app_notifications.sql',import.meta.url),'utf8'));sqlite.exec(fs.readFileSync(new URL('../migrations/0013_academic_calendar_communication_preferences.sql',import.meta.url),'utf8'));
@@ -10,6 +10,7 @@ sqlite.exec(fs.readFileSync(new URL('../migrations/0015_student_leave_requests.s
 sqlite.exec(fs.readFileSync(new URL('../migrations/0016_family_applications.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0017_masjid_contact_enquiries.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0018_legacy_student_import_records.sql',import.meta.url),'utf8'));
+sqlite.exec(fs.readFileSync(new URL('../migrations/0019_legacy_migration_notices.sql',import.meta.url),'utf8'));
 
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
@@ -1696,10 +1697,17 @@ let legacyAttempt=await req('/legacy-students/commit',{source_hash:legacyHash,fi
  confirmation:'not confirmed'});
 assert.equal(legacyAttempt.status,400,'Import requires explicit typed confirmation');
 assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM students').get().n,legacyBeforeCount);
-const invalidLegacyRow={...legacyRows[0],source_row:4,guardian_email:'bad email'};
+const pendingLegacyRow={...legacyRows[0],source_row:4,dob:'2027-10-23',guardian_email:'bad email'};
+const pendingPreview=await req('/legacy-students/preview',{source_hash:'c'.repeat(64),
+ filename:'needs-review.csv',items:[pendingLegacyRow]});
+assert.equal(pendingPreview.status,200);
+assert.equal(pendingPreview.data.summary.ready,1,'Unverified optional fields must not block an existing pupil');
+assert.equal(pendingPreview.data.summary.blocked,0);
+assert.ok(pendingPreview.data.items[0].warnings.some(x=>x.includes('Unverified DOB')));
+const invalidLegacyRow={...legacyRows[0],source_row:4,first_name:''};
 legacyAttempt=await req('/legacy-students/commit',{source_hash:'b'.repeat(64),filename:'bad-test.csv',
  items:[invalidLegacyRow],confirmation:'IMPORT LEGACY STUDENTS'});
-assert.equal(legacyAttempt.status,409,'Invalid data cannot be imported');
+assert.equal(legacyAttempt.status,409,'Missing essential identity cannot be imported');
 assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM students').get().n,legacyBeforeCount);
 const usersBeforeLegacy=sqlite.prepare('SELECT COUNT(*) AS n FROM users').get().n;
 let legacyCommit=await req('/legacy-students/commit',{
@@ -1716,6 +1724,8 @@ assert.equal(imported.length,2);
 assert.equal(imported[0].dob,null,'Missing DOB stays null');
 assert.equal(imported[0].gender,'','Missing gender stays blank');
 assert.equal(imported[0].parent_id,null,'Unverified parent must never be linked automatically');
+const editUnassigned=await req('/students',{id:imported[0].id,class_id:''},'PATCH');
+assert.equal(editUnassigned.status,200,'Admin can edit a pupil while first class assignment remains pending');
 assert.equal(imported[0].phone,'07500000123','UK phone format restored safely');
 assert.match(imported[0].student_no,/^MATT-\d{4}-\d{4}$/);
 assert.notEqual(imported[0].student_no,imported[1].student_no);
@@ -1780,3 +1790,110 @@ assert.equal(parentLegacy.status,403,'Parents cannot replace an existing explici
 parentLegacy=await req('/legacy-students/profile',{student_id:imported[0].id,allergies:'Changed after saving'},'PATCH');
 assert.equal(parentLegacy.status,403,'Previously recorded health details require office correction');
 cookie=legacyBeforeCookie;csrf=legacyBeforeCsrf;
+
+
+// Automatic guardian migration notices: explicit admin review is mandatory,
+// siblings share one notice, and retries do not re-email a sent household.
+const migrationAdmin=await req('/auth/login',{email:'admin@example.test',
+ password:'new-super-secure-test-password'},'POST',false);
+assert.equal(migrationAdmin.status,200);
+cookie=migrationAdmin.response.headers.get('set-cookie').split(';')[0];
+csrf=migrationAdmin.data.csrf;
+const notifyHash='d'.repeat(64);
+const noticeRows=[
+ {source_row:51,first_name:'Samira',last_name:'Example',dob:'2017-01-09',gender:'',
+  guardian_name:'Fatima Example',guardian_email:'verified.family@example.test',
+  guardian_phone:'',address:'',class_id:'',review_note:''},
+ {source_row:52,first_name:'Yusuf',last_name:'Example',dob:'future date',gender:'',
+  guardian_name:'Fatima Example',guardian_email:'verified.family@example.test',
+  guardian_phone:'',address:'',class_id:'',review_note:''},
+ {source_row:53,first_name:'Amina',last_name:'Sample',dob:'2016-01-01',gender:'',
+  guardian_name:'Unknown',guardian_email:'not-an-email',
+  guardian_phone:'',address:'',class_id:'',review_note:''}
+];
+let emailImport=await req('/legacy-students/commit',{
+ source_hash:notifyHash,filename:'verified-families.csv',items:noticeRows,
+ confirmation:'IMPORT LEGACY STUDENTS',notify_guardians:true
+});
+assert.equal(emailImport.status,400,'Unverified guardian email addresses must not trigger notifications');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM legacy_migration_notices').get().n,0);
+emailImport=await req('/legacy-students/commit',{
+ source_hash:notifyHash,filename:'verified-families.csv',items:noticeRows,
+ confirmation:'IMPORT LEGACY STUDENTS',notify_guardians:true,guardian_contacts_verified:true
+});
+assert.equal(emailImport.status,200,JSON.stringify(emailImport.data));
+assert.equal(emailImport.data.created,3);
+assert.equal(emailImport.data.notices_queued,1,'Siblings receive one combined family notice');
+let notices=sqlite.prepare('SELECT * FROM legacy_migration_notices').all();
+assert.equal(notices.length,1);
+assert.equal(notices[0].status,'pending');
+assert.equal(JSON.parse(notices[0].student_ids_json).length,2);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM users').get().n,usersBeforeLegacy,
+ 'Migration notices must not grant family access');
+const oldFetchForMigration=globalThis.fetch,oldMigrationToken=env.RESEND_API_KEY,oldMigrationFrom=env.EMAIL_FROM;
+const deliveredMigrationMessages=[];
+env.RESEND_API_KEY='integration-test-notification-key';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+globalThis.fetch=async(url,options)=>{
+ assert.equal(String(url),'https://api.resend.com/emails');
+ deliveredMigrationMessages.push(JSON.parse(options.body));
+ return new Response(JSON.stringify({id:'simulated-delivery'}),{status:200,
+  headers:{'Content-Type':'application/json'}});
+};
+try{
+ const delivered=await dispatchLegacyMigrationNotices(env,10);
+ assert.equal(delivered,1);
+ assert.equal(deliveredMigrationMessages.length,1);
+ assert.deepEqual(deliveredMigrationMessages[0].to,['verified.family@example.test']);
+ assert.match(deliveredMigrationMessages[0].html,/Samira Example/);
+ assert.match(deliveredMigrationMessages[0].html,/Yusuf Example/);
+ assert.match(deliveredMigrationMessages[0].html,/MATT-\d{4}-\d{4}/);
+ assert.match(deliveredMigrationMessages[0].html,/new family portal/);
+ assert.doesNotMatch(deliveredMigrationMessages[0].html,/Your password is/);
+ assert.equal(await dispatchLegacyMigrationNotices(env,10),0,'A sent email is not sent twice');
+ assert.equal(deliveredMigrationMessages.length,1);
+}finally{
+ globalThis.fetch=oldFetchForMigration;
+ env.RESEND_API_KEY=oldMigrationToken;
+ env.EMAIL_FROM=oldMigrationFrom;
+}
+notices=sqlite.prepare('SELECT * FROM legacy_migration_notices').all();
+assert.equal(notices[0].status,'sent');
+emailImport=await req('/legacy-students/commit',{
+ source_hash:notifyHash,filename:'verified-families.csv',items:noticeRows,
+ confirmation:'IMPORT LEGACY STUDENTS',notify_guardians:true,guardian_contacts_verified:true
+});
+assert.equal(emailImport.status,200);
+assert.equal(emailImport.data.created,0);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM legacy_migration_notices').get().n,1,
+ 'Retrying an imported file does not queue a duplicate notification');
+const noticeStatus=await req('/legacy-students/notices');
+assert.equal(noticeStatus.status,200);
+assert.ok(Number(noticeStatus.data.counts.sent)>=1);
+
+
+// One-time first-live-cohort numbering after all development records are
+// cleared. The 4-digit MATT sequence must begin at 0001, but must never
+// restart when a real pupil is already present.
+sqlite.exec('DELETE FROM admissions; DELETE FROM students;');
+sqlite.prepare(`INSERT INTO student_number_sequences(enrollment_year,last_number)
+ VALUES (?,10) ON CONFLICT(enrollment_year) DO UPDATE SET last_number=10`)
+ .run(new Date().getUTCFullYear());
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM legacy_student_import_records').get().n,0);
+const firstCohort=await req('/legacy-students/commit',{
+ source_hash:'e'.repeat(64),filename:'first-live-cohort.csv',
+ items:[{source_row:2,first_name:'First',last_name:'Cohort',dob:'',gender:'',
+   guardian_name:'',guardian_email:'',guardian_phone:'',class_id:'',address:'',review_note:''}],
+ confirmation:'IMPORT LEGACY STUDENTS',start_first_cohort_at_one:true,notify_guardians:false
+});
+assert.equal(firstCohort.status,200,JSON.stringify(firstCohort.data));
+assert.equal(firstCohort.data.first_registration_number,'MATT-'+new Date().getUTCFullYear()+'-0001');
+assert.equal(sqlite.prepare('SELECT student_no FROM students').get().student_no,
+ 'MATT-'+new Date().getUTCFullYear()+'-0001');
+const blockedRestart=await req('/legacy-students/commit',{
+ source_hash:'f'.repeat(64),filename:'another-cohort.csv',
+ items:[{source_row:3,first_name:'Second',last_name:'Cohort',dob:'',gender:'',
+   guardian_name:'',guardian_email:'',guardian_phone:'',class_id:'',address:'',review_note:''}],
+ confirmation:'IMPORT LEGACY STUDENTS',start_first_cohort_at_one:true,notify_guardians:false
+});
+assert.equal(blockedRestart.status,409,'Never recycle student numbers while enrolments exist');

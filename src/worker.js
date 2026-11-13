@@ -1,5 +1,6 @@
 import {loadCommunity,saveCommunity,validateCommunityEntry,publicCommunity,COMMUNITY_LIMIT} from './masjid-community.mjs';
 import {validateLegacyBatch,matchExistingLegacy,validLegacyDate,normalizeLegacyPhone} from './legacy-students.mjs';
+import {legacyMigrationEmail,LEGACY_MIGRATION_SUBJECT} from './legacy-migration-email.mjs';
 const ROLES = ['admin','staff','teacher','parent'];
 
 const QURAN_SURAHS='Al-Fatihah|Al-Baqarah|Aal-Imran|An-Nisa|Al-Maidah|Al-Anam|Al-Araf|Al-Anfal|At-Tawbah|Yunus|Hud|Yusuf|Ar-Rad|Ibrahim|Al-Hijr|An-Nahl|Al-Isra|Al-Kahf|Maryam|Ta-Ha|Al-Anbiya|Al-Hajj|Al-Muminun|An-Nur|Al-Furqan|Ash-Shuara|An-Naml|Al-Qasas|Al-Ankabut|Ar-Rum|Luqman|As-Sajdah|Al-Ahzab|Saba|Fatir|Ya-Sin|As-Saffat|Sad|Az-Zumar|Ghafir|Fussilat|Ash-Shura|Az-Zukhruf|Ad-Dukhan|Al-Jathiyah|Al-Ahqaf|Muhammad|Al-Fath|Al-Hujurat|Qaf|Adh-Dhariyat|At-Tur|An-Najm|Al-Qamar|Ar-Rahman|Al-Waqiah|Al-Hadid|Al-Mujadilah|Al-Hashr|Al-Mumtahanah|As-Saff|Al-Jumuah|Al-Munafiqun|At-Taghabun|At-Talaq|At-Tahrim|Al-Mulk|Al-Qalam|Al-Haqqah|Al-Maarij|Nuh|Al-Jinn|Al-Muzzammil|Al-Muddaththir|Al-Qiyamah|Al-Insan|Al-Mursalat|An-Naba|An-Naziat|Abasa|At-Takwir|Al-Infitar|Al-Mutaffifin|Al-Inshiqaq|Al-Buruj|At-Tariq|Al-Ala|Al-Ghashiyah|Al-Fajr|Al-Balad|Ash-Shams|Al-Layl|Ad-Duha|Ash-Sharh|At-Tin|Al-Alaq|Al-Qadr|Al-Bayyinah|Az-Zalzalah|Al-Adiyat|Al-Qariah|At-Takathur|Al-Asr|Al-Humazah|Al-Fil|Quraysh|Al-Maun|Al-Kawthar|Al-Kafirun|An-Nasr|Al-Masad|Al-Ikhlas|Al-Falaq|An-Nas'.split('|');
@@ -159,6 +160,52 @@ const CATALOG=[
  ['punctual','Arriving on time',1],['equipment','Bringing all books and equipment',1],['homework','Completing homework',1],['manners','Showing excellent manners',1],['following','Following instructions promptly',1],['participation','Participating positively in class',1],['helping','Helping another student',2],['respect','Showing exceptional respect to teachers',2],['hifdh-effort','Excellent effort in Qur’an memorisation',2],['leadership','Demonstrating leadership and responsibility',2],['resolution','Helping resolve a disagreement peacefully',3],['improvement','Outstanding improvement in behaviour',3],['kindness','Exceptional act of kindness or character',3]
 ].map(([code,label,points])=>({code,label,points,category:points>0?'positive':'concern'}));
 async function mail(env,to,subject,html,options={}){const e=id();if(!env.RESEND_API_KEY||!env.EMAIL_FROM){await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status,error) VALUES(?,?,?,?,?)',e,to,subject,'not_configured','Resend API key or sender not configured');return {sent:false};}try{const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{'Authorization':`Bearer ${env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:env.EMAIL_FROM,to:[to],subject,html,...(options.replyTo?{reply_to:options.replyTo}:{})})});if(!r.ok)throw new Error(`Provider returned ${r.status}`);await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status) VALUES(?,?,?,?)',e,to,subject,'sent');return {sent:true};}catch(err){await run(env.DB,'INSERT INTO email_log(id,recipient,subject,status,error) VALUES(?,?,?,?,?)',e,to,subject,'failed',short(err.message));return {sent:false};}}
+
+
+// Deliver queued verified-family service notices in bounded batches. The
+// commit transaction inserts the queue first; sending can never roll back
+// enrolment or create a partial cohort. Cron retries transient failures.
+export async function dispatchLegacyMigrationNotices(env,maxCount=50){
+ if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM)return 0;
+ const db=env.DB;
+ const notices=await all(db,`SELECT * FROM legacy_migration_notices
+   WHERE attempts<4 AND
+    (status IN ('pending','failed') OR
+     (status='sending' AND updated_at<datetime('now','-15 minutes')))
+   ORDER BY created_at,id LIMIT ?`,maxCount);
+ let sent=0;
+ for(let offset=0;offset<notices.length;offset+=5){
+  const batch=notices.slice(offset,offset+5);
+  const statuses=await Promise.all(batch.map(async notice=>{
+   const claimed=await run(db,`UPDATE legacy_migration_notices SET status='sending',
+     attempts=attempts+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND attempts<4 AND
+     (status IN ('pending','failed') OR
+      (status='sending' AND updated_at<datetime('now','-15 minutes')))`,notice.id);
+   if(Number(claimed.meta?.changes??1)!==1)return false;
+   try{
+    let ids;
+    try{ids=JSON.parse(notice.student_ids_json);}catch{ids=[];}
+    if(!Array.isArray(ids)||ids.length<1||ids.length>100)throw Error('Invalid notice student list');
+    const children=await all(db,`SELECT id,student_no,first_name,last_name
+     FROM students WHERE id IN (${ids.map(()=>'?').join(',')}) ORDER BY last_name,first_name`,...ids);
+    if(children.length!==ids.length)throw Error('Some pupil records could not be located');
+    const html=legacyMigrationEmail({guardianName:notice.guardian_name,children});
+    const outcome=await mail(env,notice.guardian_email,LEGACY_MIGRATION_SUBJECT,html,
+      {replyTo:'admissions@attowfiqmasjid.org'});
+    if(!outcome.sent)throw Error('Email provider did not accept the message');
+    await run(db,`UPDATE legacy_migration_notices SET status='sent',sent_at=?,
+      last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=?`,iso(),notice.id);
+    return true;
+   }catch(err){
+    await run(db,`UPDATE legacy_migration_notices SET status='failed',
+      last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,short(err.message,280),notice.id);
+    return false;
+   }
+  }));
+  sent+=statuses.filter(Boolean).length;
+ }
+ return sent;
+}
 
 function passwordResetEmailHtml(accountName,resetUrl,contactAddress){
  const person=escapeHtml(short(accountName||'Portal user',100));
@@ -794,7 +841,7 @@ function familyApplicationReceiptHtml({guardianName,reference,applications,admis
 }
 
 const escapeHtml=x=>String(x||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-async function handle(req,env){
+async function handle(req,env,ctx){
  const u=new URL(req.url), path=u.pathname,method=req.method,db=env.DB;
  if(!db)error('Cloudflare D1 binding missing. Configure wrangler.jsonc and run migrations.',503);
  if(method!=='GET'&&!['/api/public/admissions','/api/public/masjid-enquiries'].includes(path)) consented(req);
@@ -1463,6 +1510,13 @@ async function handle(req,env){
     LEFT JOIN classes c ON c.id=s.class_id
     ORDER BY li.imported_at DESC,li.source_row ASC LIMIT 500`)});
  }
+ if(path==='/api/legacy-students/notices'&&method==='GET'){
+  requireRole(user,'admin');
+  const counts=await all(db,`SELECT status,COUNT(*) AS count FROM legacy_migration_notices GROUP BY status`);
+  return json({counts:Object.fromEntries(counts.map(x=>[x.status,Number(x.count)])),
+   items:await all(db,`SELECT guardian_email,status,attempts,last_error,sent_at,created_at
+    FROM legacy_migration_notices ORDER BY created_at DESC LIMIT 120`)});
+ }
  if(path==='/api/legacy-students/preview'||path==='/api/legacy-students/commit'){
   requireRole(user,'admin');
   if(method!=='POST')error('Method not allowed',405);
@@ -1512,19 +1566,42 @@ async function handle(req,env){
   }
   if(payload.confirmation!=='IMPORT LEGACY STUDENTS')
    error('Type IMPORT LEGACY STUDENTS to confirm the reviewed import',400);
+  const notifyGuardians=payload.notify_guardians===true;
+  if(notifyGuardians&&payload.guardian_contacts_verified!==true)
+   error('Confirm guardian email addresses have been reviewed before emailing families',400);
   if(blocking.length)error('Fix or deselect '+blocking.length+' blocked rows before importing',409);
   if(!fresh.length)return json({ok:true,created:0,already_imported:checked.length});
+  // Once the ten deleted development pupils are gone, an administrator can
+  // explicitly start the first live cohort at 0001. Never recycle numbers
+  // while even one pupil, admission or previous legacy import still exists.
+  const resetFirstCohort=payload.start_first_cohort_at_one===true;
+  if(resetFirstCohort){
+   const n=await first(db,`SELECT (SELECT COUNT(*) FROM admissions) AS admissions,
+    (SELECT COUNT(*) FROM legacy_student_import_records) AS legacy_imports`);
+   if(existing.length||Number(n.admissions)||Number(n.legacy_imports))
+    error('Starting the first live cohort from 0001 requires an empty student, admissions and legacy import directory',409);
+  }
   const year=Number(schoolLocalDate().slice(0,4));
   const sequence=await first(db,'SELECT last_number FROM student_number_sequences WHERE enrollment_year=?',year);
-  if(Number(sequence?.last_number||0)+fresh.length>9999)
+  if((resetFirstCohort?0:Number(sequence?.last_number||0))+fresh.length>9999)
    error('The student registration number allocation limit has been reached',409);
-  const ops=[
-   db.prepare(`INSERT INTO student_number_sequences(enrollment_year,last_number) VALUES(?,?)
+  const ops=[];
+  if(resetFirstCohort&&sequence)
+   ops.push(db.prepare(`UPDATE student_number_sequences SET last_number=0
+    WHERE enrollment_year=? AND NOT EXISTS(SELECT 1 FROM students)
+     AND NOT EXISTS(SELECT 1 FROM admissions)
+     AND NOT EXISTS(SELECT 1 FROM legacy_student_import_records)`).bind(year));
+  ops.push(db.prepare(`INSERT INTO student_number_sequences(enrollment_year,last_number) VALUES(?,?)
      ON CONFLICT(enrollment_year) DO UPDATE SET last_number=last_number+?
-     WHERE last_number+?<=9999`).bind(year,fresh.length,fresh.length,fresh.length)
-  ];
+     WHERE last_number+?<=9999`).bind(year,fresh.length,fresh.length,fresh.length));
+  const batchId=id(),notices=new Map();
   for(let index=0;index<fresh.length;index++){
    const {student}=fresh[index],sid=id();
+   if(notifyGuardians&&student.guardian_email){
+    if(!notices.has(student.guardian_email))
+     notices.set(student.guardian_email,{name:student.guardian_name,ids:[]});
+    notices.get(student.guardian_email).ids.push(sid);
+   }
    ops.push(db.prepare(`INSERT INTO students
       (id,student_no,first_name,last_name,dob,gender,class_id,parent_id,phone,address,status)
      SELECT ?,'MATT-'||printf('%04d',?)||'-'||printf('%04d',last_number-?+?),
@@ -1546,12 +1623,24 @@ async function handle(req,env){
      (id,source_hash,source_filename,source_row,student_id,imported_by,review_note)
      VALUES(?,?,?,?,?,?,?)`).bind(id(),sourceHash,filename,student.source_row,sid,user.id,student.review_note));
   }
+  for(const [recipient,family] of notices){
+   ops.push(db.prepare(`INSERT INTO legacy_migration_notices
+     (id,source_hash,batch_id,guardian_email,guardian_name,student_ids_json)
+     VALUES(?,?,?,?,?,?)`).bind(id(),sourceHash,batchId,recipient,family.name,JSON.stringify(family.ids)));
+  }
   // D1 batches are a transaction: all student registrations, historical
   // admissions and import references commit together or all roll back.
   await db.batch(ops);
   try{await audit(db,user,'legacy_bulk_import','students',sourceHash.slice(0,16),
     'Created '+fresh.length+' enrolled legacy pupils without automatic family invitations');}catch(err){console.error('Legacy import audit unavailable',err);}
-  return json({ok:true,created:fresh.length,already_imported:checked.length-fresh.length});
+  // Immediate, bounded delivery continues after response; daily cron retries
+  // remaining pending/failed notices without changing pupil registration.
+  if(notices.size&&ctx?.waitUntil)
+   ctx.waitUntil(dispatchLegacyMigrationNotices(env,50).catch(err=>
+    console.error('Immediate legacy notification dispatch failed',err)));
+  return json({ok:true,created:fresh.length,already_imported:checked.length-fresh.length,
+   notices_queued:notices.size,first_registration_number:
+    'MATT-'+year+'-'+String((resetFirstCohort?0:Number(sequence?.last_number||0))+1).padStart(4,'0')});
  }
  if(path==='/api/legacy-students/profile'){
   if(!['PATCH','GET'].includes(method))error('Method not allowed',405);
@@ -1644,7 +1733,7 @@ async function handle(req,env){
   requireRole(user,'admin','staff');const b=await input(req);
   if(method==='POST')error('New pupils must be enrolled through an accepted admission application',403);
   if(method==='PATCH'){if(!b.id)error('Student ID required');const existing=await first(db,'SELECT * FROM students WHERE id=?',b.id);if(!existing)error('Student not found',404);const obj={...existing};for(const k of FIELDS_STUDENT)if(b[k]!==undefined)obj[k]=b[k];
-   if(b.class_id!==undefined && !b.class_id && existing.status==='active')error('Active pupils must have a class. Reassign to another class instead.',400);
+   if(b.class_id!==undefined && !b.class_id && existing.class_id && existing.status==='active')error('Active pupils with an assigned class must be reassigned rather than unassigned.',400);
    if(b.class_id!==undefined && b.class_id!==existing.class_id && b.class_id){
     if(existing.status!=='active')error('Only active pupils can be newly assigned to a class',409);
     const target=await first(db,'SELECT id,capacity FROM classes WHERE id=?',b.class_id);
@@ -1652,7 +1741,7 @@ async function handle(req,env){
     const count=await first(db,'SELECT COUNT(*) AS total FROM students WHERE class_id=? AND id<>?',b.class_id,b.id);
     if(Number(count.total)>=Number(target.capacity))error('Selected class is full. Choose another class or increase its capacity.',409);
    }
-   await run(db,'UPDATE students SET first_name=?,last_name=?,dob=?,gender=?,class_id=?,parent_id=?,phone=?,address=?,medical_notes=?,status=? WHERE id=?',...FIELDS_STUDENT.map(k=>obj[k]===null?null:short(obj[k],k==='medical_notes'?600:250)),b.id);await audit(db,user,'update','student',b.id);return json({ok:true});}
+   await run(db,'UPDATE students SET first_name=?,last_name=?,dob=?,gender=?,class_id=?,parent_id=?,phone=?,address=?,medical_notes=?,status=? WHERE id=?',...FIELDS_STUDENT.map(k=>(obj[k]===null||(['class_id','parent_id'].includes(k)&&!obj[k]))?null:short(obj[k],k==='medical_notes'?600:250)),b.id);await audit(db,user,'update','student',b.id);return json({ok:true});}
   if(method==='DELETE'){if(!b.id)error('Student ID required');await run(db,'DELETE FROM students WHERE id=?',b.id);await audit(db,user,'delete','student',b.id,'Hard deleted student and linked records');return json({ok:true});}
  }
  // Full paper-form-equivalent admissions. Records are restricted to office roles.
@@ -2439,10 +2528,11 @@ export default {
  async scheduled(event,env,ctx){
   ctx.waitUntil(purgeOldDbsDocuments(env).catch(err=>console.error('DBS retention purge failed',err)));
   ctx.waitUntil(purgeExpiredInAppNotifications(env).catch(err=>console.error('Notification retention cleanup failed',err)));
+  ctx.waitUntil(dispatchLegacyMigrationNotices(env,50).catch(err=>console.error('Legacy notices dispatch failed',err)));
   if(event.cron!=='0 8 * * 5')return;
   ctx.waitUntil((async()=>{if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM||env.EMAIL_FROM.includes('example.org'))return;const v=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_enabled'");if(v?.value!=='true')return;const m=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_message'");const people=await all(env.DB,"SELECT email FROM users WHERE active=1 AND role IN ('parent','teacher','staff')");for(const p of people){await mail(env,p.email,'Jumu’ah reminder — Madrasah At-Towfiq',`<div style="font-family:Arial,sans-serif"><h2>Madrasah At-Towfiq</h2><p>${escapeHtml(m?.value||'Assalamu alaikum. Jumu’ah Mubarak.')}</p></div>`);}})());
  },
- async fetch(req,env){
+ async fetch(req,env,ctx){
   const url=new URL(req.url);
   if(!url.pathname.startsWith('/api/'))return env.ASSETS.fetch(req);
   const isPublicAdmission=url.pathname==='/api/public/admissions';
@@ -2451,7 +2541,7 @@ export default {
   if((isPublicAdmission||isPublicMasjidContact)&&req.method==='OPTIONS')
    return origin?new Response(null,{status:204,headers:{...publicAdmissionCors(origin),'X-Robots-Tag':'noindex'}}):new Response(null,{status:403,headers:{'X-Robots-Tag':'noindex'}});
   try{
-   const result=await handle(req,env);
+   const result=await handle(req,env,ctx);
    if(origin)for(const [k,v] of Object.entries(publicAdmissionCors(origin)))result.headers.set(k,v);
    result.headers.set('X-Robots-Tag','noindex, nofollow');
    return result;
