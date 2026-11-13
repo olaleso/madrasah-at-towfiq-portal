@@ -1644,7 +1644,7 @@ async function handle(req,env){
   requireRole(user,'admin','staff');const b=await input(req);
   if(method==='POST')error('New pupils must be enrolled through an accepted admission application',403);
   if(method==='PATCH'){if(!b.id)error('Student ID required');const existing=await first(db,'SELECT * FROM students WHERE id=?',b.id);if(!existing)error('Student not found',404);const obj={...existing};for(const k of FIELDS_STUDENT)if(b[k]!==undefined)obj[k]=b[k];
-   if(b.class_id!==undefined && !b.class_id && existing.status==='active')error('Active pupils must have a class. Reassign to another class instead.',400);
+   if(b.class_id!==undefined && !b.class_id && existing.class_id && existing.status==='active')error('Active pupils with an assigned class must be reassigned rather than unassigned.',400);
    if(b.class_id!==undefined && b.class_id!==existing.class_id && b.class_id){
     if(existing.status!=='active')error('Only active pupils can be newly assigned to a class',409);
     const target=await first(db,'SELECT id,capacity FROM classes WHERE id=?',b.class_id);
