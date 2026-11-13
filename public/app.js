@@ -262,6 +262,19 @@ function legacyPage(){
    <div id="legacy-preview-results">${blank('No preview yet','Choose the CSV and select Preview to see all rows and missing information.')}</div>
    <div class="legacy-confirm-panel" id="legacy-confirm-panel" hidden>
     <p class="small">Confirm that these are already-enrolled legacy pupils and that you have permission to process the roster. Verify guardianship separately before linking parent access.</p>
+    <div class="legacy-warning" style="margin-bottom:16px">
+      <strong>${ico('mail',16)} Notify parents about their migrated pupils</strong>
+      <p>One beautifully formatted service email will be queued per verified guardian address. Siblings imported together receive one email listing their registration numbers. This is not an account invitation or permission to access a child’s records.</p>
+      <label style="display:flex;align-items:flex-start;gap:8px;margin:9px 0">
+        <input type="checkbox" id="legacy-send-notices" checked style="margin-top:3px">
+        <span>Automatically notify guardians with a valid email address</span>
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:8px;margin:9px 0">
+        <input type="checkbox" id="legacy-guardian-verified" style="margin-top:3px">
+        <span>I have reviewed the selected records and verified that the listed email addresses belong to the children’s authorised guardians.</span>
+      </label>
+      <p id="legacy-mail-queue-status" class="tiny muted">Please verify email addresses before activating family notifications.</p>
+    </div>
     <label for="legacy-confirm-phrase">Type <strong>IMPORT LEGACY STUDENTS</strong> to approve this import</label>
     <input id="legacy-confirm-phrase" type="text" autocomplete="off" placeholder="IMPORT LEGACY STUDENTS">
     <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:12px"><span id="legacy-selected-count" class="muted small">0 selected</span>
@@ -273,6 +286,7 @@ function legacyPage(){
  <td>${x.class_name?h(x.class_name):tag('Unassigned','amber')}</td><td><span class="small">${h(missing(x).join(', ')||'Complete')}</span>${x.review_note?`<div class="cell-sub">${h(x.review_note.slice(0,140))}</div>`:''}</td>
  <td>${x.parent_id?tag('Linked','green'):tag('Verify & link','amber')}</td>
  <td><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn smol outline" data-action="legacy-complete" data-id="${h(x.student_id)}">Complete details</button><button class="btn smol white" data-action="guardian-student" data-id="${h(x.student_id)}">View profile</button></div></td></tr>`).join('')}</tbody></table></div>`:`${blank('No legacy pupils imported','Your validated historic pupil records will appear here after an approved import.')}`}
+ <div id="legacy-delivery-stats" class="small muted" style="margin-top:12px">Migration notices: checking delivery status…</div>
  </section>`;
 }
 
