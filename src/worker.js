@@ -1537,6 +1537,21 @@ async function handle(req,env,ctx){
     LEFT JOIN classes c ON c.id=s.class_id
     ORDER BY li.imported_at DESC,li.source_row ASC LIMIT 500`)});
  }
+ if(path==='/api/legacy-students/notices/retry'&&method==='POST'){
+  requireRole(user,'admin');
+  const payload=await input(req);
+  if(payload.confirmation!=='RETRY FAILED NOTICES')error('Confirm the retry action',400);
+  const before=await all(db,`SELECT status,COUNT(*) AS total FROM legacy_migration_notices GROUP BY status`);
+  const eligible=await first(db,`SELECT COUNT(*) AS total FROM legacy_migration_notices
+   WHERE status='failed' AND attempts<4`);
+  if(!Number(eligible?.total||0))return json({ok:true,eligible:0,accepted:0,
+   message:'No failed notices are eligible for retry.',before});
+  const accepted=await dispatchLegacyMigrationNotices(env,30);
+  const after=await all(db,`SELECT status,COUNT(*) AS total FROM legacy_migration_notices GROUP BY status`);
+  try{await audit(db,user,'legacy_notice_manual_retry','legacy_migration_notices','',
+   'Requested retry of '+eligible.total+' eligible failed notices; provider accepted '+accepted);}catch(err){console.error('Notice retry audit failed',err);}
+  return json({ok:true,eligible:Number(eligible.total),accepted,before,after});
+ }
  if(path==='/api/legacy-students/notices'&&method==='GET'){
   requireRole(user,'admin');
   const counts=await all(db,`SELECT status,COUNT(*) AS count FROM legacy_migration_notices GROUP BY status`);
