@@ -1870,3 +1870,30 @@ assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM legacy_migration_notices'
 const noticeStatus=await req('/legacy-students/notices');
 assert.equal(noticeStatus.status,200);
 assert.ok(Number(noticeStatus.data.counts.sent)>=1);
+
+
+// One-time first-live-cohort numbering after all development records are
+// cleared. The 4-digit MATT sequence must begin at 0001, but must never
+// restart when a real pupil is already present.
+sqlite.exec('DELETE FROM admissions; DELETE FROM students;');
+sqlite.prepare(`INSERT INTO student_number_sequences(enrollment_year,last_number)
+ VALUES (?,10) ON CONFLICT(enrollment_year) DO UPDATE SET last_number=10`)
+ .run(new Date().getUTCFullYear());
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM legacy_student_import_records').get().n,0);
+const firstCohort=await req('/legacy-students/commit',{
+ source_hash:'e'.repeat(64),filename:'first-live-cohort.csv',
+ items:[{source_row:2,first_name:'First',last_name:'Cohort',dob:'',gender:'',
+   guardian_name:'',guardian_email:'',guardian_phone:'',class_id:'',address:'',review_note:''}],
+ confirmation:'IMPORT LEGACY STUDENTS',start_first_cohort_at_one:true,notify_guardians:false
+});
+assert.equal(firstCohort.status,200,JSON.stringify(firstCohort.data));
+assert.equal(firstCohort.data.first_registration_number,'MATT-'+new Date().getUTCFullYear()+'-0001');
+assert.equal(sqlite.prepare('SELECT student_no FROM students').get().student_no,
+ 'MATT-'+new Date().getUTCFullYear()+'-0001');
+const blockedRestart=await req('/legacy-students/commit',{
+ source_hash:'f'.repeat(64),filename:'another-cohort.csv',
+ items:[{source_row:3,first_name:'Second',last_name:'Cohort',dob:'',gender:'',
+   guardian_name:'',guardian_email:'',guardian_phone:'',class_id:'',address:'',review_note:''}],
+ confirmation:'IMPORT LEGACY STUDENTS',start_first_cohort_at_one:true,notify_guardians:false
+});
+assert.equal(blockedRestart.status,409,'Never recycle student numbers while enrolments exist');
