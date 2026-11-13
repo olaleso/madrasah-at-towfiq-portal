@@ -1583,7 +1583,7 @@ async function handle(req,env,ctx){
   const batchId=id(),notices=new Map();
   for(let index=0;index<fresh.length;index++){
    const {student}=fresh[index],sid=id();
-   if(notifyGuardians&&/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(student.guardian_email)){
+   if(notifyGuardians&&student.guardian_email){
     if(!notices.has(student.guardian_email))
      notices.set(student.guardian_email,{name:student.guardian_name,ids:[]});
     notices.get(student.guardian_email).ids.push(sid);
