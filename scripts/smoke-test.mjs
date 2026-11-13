@@ -1696,10 +1696,17 @@ let legacyAttempt=await req('/legacy-students/commit',{source_hash:legacyHash,fi
  confirmation:'not confirmed'});
 assert.equal(legacyAttempt.status,400,'Import requires explicit typed confirmation');
 assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM students').get().n,legacyBeforeCount);
-const invalidLegacyRow={...legacyRows[0],source_row:4,guardian_email:'bad email'};
+const pendingLegacyRow={...legacyRows[0],source_row:4,dob:'2027-10-23',guardian_email:'bad email'};
+const pendingPreview=await req('/legacy-students/preview',{source_hash:'c'.repeat(64),
+ filename:'needs-review.csv',items:[pendingLegacyRow]});
+assert.equal(pendingPreview.status,200);
+assert.equal(pendingPreview.data.summary.ready,1,'Unverified optional fields must not block an existing pupil');
+assert.equal(pendingPreview.data.summary.blocked,0);
+assert.ok(pendingPreview.data.items[0].warnings.some(x=>x.includes('Unverified DOB')));
+const invalidLegacyRow={...legacyRows[0],source_row:4,first_name:''};
 legacyAttempt=await req('/legacy-students/commit',{source_hash:'b'.repeat(64),filename:'bad-test.csv',
  items:[invalidLegacyRow],confirmation:'IMPORT LEGACY STUDENTS'});
-assert.equal(legacyAttempt.status,409,'Invalid data cannot be imported');
+assert.equal(legacyAttempt.status,409,'Missing essential identity cannot be imported');
 assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM students').get().n,legacyBeforeCount);
 const usersBeforeLegacy=sqlite.prepare('SELECT COUNT(*) AS n FROM users').get().n;
 let legacyCommit=await req('/legacy-students/commit',{
@@ -1716,6 +1723,8 @@ assert.equal(imported.length,2);
 assert.equal(imported[0].dob,null,'Missing DOB stays null');
 assert.equal(imported[0].gender,'','Missing gender stays blank');
 assert.equal(imported[0].parent_id,null,'Unverified parent must never be linked automatically');
+const editUnassigned=await req('/students',{id:imported[0].id,class_id:''},'PATCH');
+assert.equal(editUnassigned.status,200,'Admin can edit a pupil while first class assignment remains pending');
 assert.equal(imported[0].phone,'07500000123','UK phone format restored safely');
 assert.match(imported[0].student_no,/^MATT-\d{4}-\d{4}$/);
 assert.notEqual(imported[0].student_no,imported[1].student_no);
