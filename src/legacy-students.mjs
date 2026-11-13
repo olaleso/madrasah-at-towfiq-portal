@@ -16,13 +16,13 @@ export function normalizeLegacyDob(value){
  const raw=clean(value,80);
  if(!raw)return {dob:'',warning:''};
  let iso=raw;
- const uk=raw.match(/^(\\d{1,2})[\\/.-](\\d{1,2})[\\/.-](\\d{4})$/);
+ const uk=raw.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/);
  if(uk)iso=uk[3]+'-'+uk[2].padStart(2,'0')+'-'+uk[1].padStart(2,'0');
- else if(/^\\d{5}$/.test(raw)){
+ else if(/^\d{5}$/.test(raw)){
   const serial=Number(raw);
   if(serial>=1&&serial<=80000)
    iso=new Date(Date.UTC(1899,11,30)+serial*86400000).toISOString().slice(0,10);
- }else if(/^\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}/.test(raw))
+ }else if(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(raw))
   iso=raw.slice(0,10);
  if(!validLegacyDate(iso))
   return {dob:'',warning:'Unverified DOB "'+raw.slice(0,60)+'" left blank; confirm with parent or school office'};
@@ -62,7 +62,7 @@ export function validateLegacyRow(raw){
    warnings.push(note);correctionNotes.push(note);student.gender='';
   }
  }
- if(student.guardian_email&&!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(student.guardian_email)){
+ if(student.guardian_email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(student.guardian_email)){
   const note='Unverified guardian email "'+student.guardian_email+'" left blank';
   warnings.push(note);correctionNotes.push(note);student.guardian_email='';
  }
