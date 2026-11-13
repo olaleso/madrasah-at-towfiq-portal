@@ -89,7 +89,8 @@
   const file=$('legacy-upload-file'),previewButton=$('legacy-preview-button'),
    templateButton=$('legacy-template-button'),list=$('legacy-preview-results'),
    confirm=$('legacy-confirm-phrase'),commit=$('legacy-commit-button'),
-   sendNotices=$('legacy-send-notices'),guardianVerified=$('legacy-guardian-verified');
+   sendNotices=$('legacy-send-notices'),guardianVerified=$('legacy-guardian-verified'),
+   restartNumbers=$('legacy-restart-numbers');
   if(!file||!previewButton||!list||!commit)return;
   let rows=[],response=null,hash='',filename='';
   templateButton?.addEventListener('click',downloadTemplate);
@@ -152,11 +153,14 @@
     const outcome=await post('/legacy-students/commit',{
      source_hash:hash,filename,items:selected,confirmation:'IMPORT LEGACY STUDENTS',
      notify_guardians:sendNotices?.checked===true,
-     guardian_contacts_verified:guardianVerified?.checked===true});
+     guardian_contacts_verified:guardianVerified?.checked===true,
+     start_first_cohort_at_one:restartNumbers?.checked===true});
     $('legacy-file-status').textContent=outcome.created+' student(s) imported successfully; '+
      outcome.already_imported+' previously imported. '+Number(outcome.notices_queued||0)+
      ' guardian migration notification(s) queued for delivery. No parent invitations were sent.';
-    toast('Imported '+outcome.created+' legacy students; queued '+Number(outcome.notices_queued||0)+' family notice(s)');
+    toast('Imported '+outcome.created+' legacy students. First registration: '+
+     (outcome.first_registration_number||'allocated automatically')+
+     '. Queued '+Number(outcome.notices_queued||0)+' family notice(s)');
     rows=[];response=null;confirm.value='';file.value='';list.textContent='';
     $('legacy-confirm-panel').hidden=true;
     await navigate('legacy');
