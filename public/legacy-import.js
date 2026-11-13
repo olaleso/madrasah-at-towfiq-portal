@@ -38,8 +38,13 @@
    const className=String(obj.class_name||'').trim().toLocaleLowerCase('en-GB');
    if(className){
     const cls=classes.find(c=>c.name.trim().toLocaleLowerCase('en-GB')===className);
-    if(!cls)throw Error('Unknown class "'+obj.class_name+'" on row '+obj.source_row+'. Create the class first or leave class_name blank.');
-    obj.class_id=cls.id;
+    if(cls)obj.class_id=cls.id;
+    else{
+     // Legacy class labels need not match current classes. Keep the pupil
+     // enrolable and assign the correct class manually after import.
+     obj.class_id='';
+     obj.review_note=[obj.review_note,'Unmatched old class "'+obj.class_name+'": assign class after import'].filter(Boolean).join(' | ').slice(0,500);
+    }
    }else obj.class_id='';
    delete obj.class_name;
    if(seen.has(obj.source_row))throw Error('Source row '+obj.source_row+' is duplicated in the CSV');
@@ -71,7 +76,7 @@
     '</td><td class="legacy-issues">'+(issues.length?issues.map(q=>'<div>'+h(q)+'</div>').join(''):'<span class="muted">No issues</span>')+'</td></tr>';
   }).join('');
   return '<div class="legacy-preview-counts"><span>'+items.length+' rows</span>'+
-   '<span>'+items.filter(x=>x.errors.length).length+' blocked</span>'+
+   '<span>'+items.filter(x=>x.errors.length&&!x.already_imported).length+' blocked</span>'+
    '<span>'+items.filter(x=>x.missing_count).length+' incomplete</span>'+
    '<span>'+items.filter(x=>x.already_imported).length+' previously imported</span></div>'+
    '<div class="table-scroll"><table class="table legacy-preview-table"><thead><tr><th>Include</th><th>Student</th><th>Status</th><th>Missing details / notes</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
@@ -107,7 +112,7 @@
     response=await post('/legacy-students/preview',{source_hash:hash,filename,items:rows});
     list.innerHTML=previewTable(response.items);
     $('legacy-confirm-panel').hidden=false;
-    $('legacy-file-status').textContent='Preview complete. Inspect blocked rows before confirming; no database changes have been made.';
+    $('legacy-file-status').textContent='Preview complete. Unknown or invalid DOBs are left blank and flagged for later correction. Check any genuinely blocked identities/duplicates before confirming; nothing has been imported yet.';
     update();
    }catch(e){
     rows=[];response=null;list.textContent='';
