@@ -1571,15 +1571,29 @@ async function handle(req,env,ctx){
    error('Confirm guardian email addresses have been reviewed before emailing families',400);
   if(blocking.length)error('Fix or deselect '+blocking.length+' blocked rows before importing',409);
   if(!fresh.length)return json({ok:true,created:0,already_imported:checked.length});
+  // Once the ten deleted development pupils are gone, an administrator can
+  // explicitly start the first live cohort at 0001. Never recycle numbers
+  // while even one pupil, admission or previous legacy import still exists.
+  const resetFirstCohort=payload.start_first_cohort_at_one===true;
+  if(resetFirstCohort){
+   const n=await first(db,`SELECT (SELECT COUNT(*) FROM admissions) AS admissions,
+    (SELECT COUNT(*) FROM legacy_student_import_records) AS legacy_imports`);
+   if(existing.length||Number(n.admissions)||Number(n.legacy_imports))
+    error('Starting the first live cohort from 0001 requires an empty student, admissions and legacy import directory',409);
+  }
   const year=Number(schoolLocalDate().slice(0,4));
   const sequence=await first(db,'SELECT last_number FROM student_number_sequences WHERE enrollment_year=?',year);
-  if(Number(sequence?.last_number||0)+fresh.length>9999)
+  if((resetFirstCohort?0:Number(sequence?.last_number||0))+fresh.length>9999)
    error('The student registration number allocation limit has been reached',409);
-  const ops=[
-   db.prepare(`INSERT INTO student_number_sequences(enrollment_year,last_number) VALUES(?,?)
+  const ops=[];
+  if(resetFirstCohort&&sequence)
+   ops.push(db.prepare(`UPDATE student_number_sequences SET last_number=0
+    WHERE enrollment_year=? AND NOT EXISTS(SELECT 1 FROM students)
+     AND NOT EXISTS(SELECT 1 FROM admissions)
+     AND NOT EXISTS(SELECT 1 FROM legacy_student_import_records)`).bind(year));
+  ops.push(db.prepare(`INSERT INTO student_number_sequences(enrollment_year,last_number) VALUES(?,?)
      ON CONFLICT(enrollment_year) DO UPDATE SET last_number=last_number+?
-     WHERE last_number+?<=9999`).bind(year,fresh.length,fresh.length,fresh.length)
-  ];
+     WHERE last_number+?<=9999`).bind(year,fresh.length,fresh.length,fresh.length));
   const batchId=id(),notices=new Map();
   for(let index=0;index<fresh.length;index++){
    const {student}=fresh[index],sid=id();
@@ -1625,7 +1639,8 @@ async function handle(req,env,ctx){
    ctx.waitUntil(dispatchLegacyMigrationNotices(env,50).catch(err=>
     console.error('Immediate legacy notification dispatch failed',err)));
   return json({ok:true,created:fresh.length,already_imported:checked.length-fresh.length,
-   notices_queued:notices.size});
+   notices_queued:notices.size,first_registration_number:
+    'MATT-'+year+'-'+String((resetFirstCohort?0:Number(sequence?.last_number||0))+1).padStart(4,'0')});
  }
  if(path==='/api/legacy-students/profile'){
   if(!['PATCH','GET'].includes(method))error('Method not allowed',405);
