@@ -1794,6 +1794,11 @@ cookie=legacyBeforeCookie;csrf=legacyBeforeCsrf;
 
 // Automatic guardian migration notices: explicit admin review is mandatory,
 // siblings share one notice, and retries do not re-email a sent household.
+const migrationAdmin=await req('/auth/login',{email:'admin@example.test',
+ password:'new-super-secure-test-password'},'POST',false);
+assert.equal(migrationAdmin.status,200);
+cookie=migrationAdmin.response.headers.get('set-cookie').split(';')[0];
+csrf=migrationAdmin.data.csrf;
 const notifyHash='d'.repeat(64);
 const noticeRows=[
  {source_row:51,first_name:'Samira',last_name:'Example',dob:'2017-01-09',gender:'',
