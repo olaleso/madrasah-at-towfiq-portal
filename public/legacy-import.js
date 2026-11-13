@@ -88,16 +88,38 @@
  function mount({api,post,toast,navigate,classes=[]}){
   const file=$('legacy-upload-file'),previewButton=$('legacy-preview-button'),
    templateButton=$('legacy-template-button'),list=$('legacy-preview-results'),
-   confirm=$('legacy-confirm-phrase'),commit=$('legacy-commit-button');
+   confirm=$('legacy-confirm-phrase'),commit=$('legacy-commit-button'),
+   sendNotices=$('legacy-send-notices'),guardianVerified=$('legacy-guardian-verified');
   if(!file||!previewButton||!list||!commit)return;
   let rows=[],response=null,hash='',filename='';
   templateButton?.addEventListener('click',downloadTemplate);
+  api('/legacy-students/notices').then(info=>{
+   const c=info.counts||{},total=Object.values(c).reduce((a,x)=>a+Number(x||0),0);
+   const stats=$('legacy-delivery-stats');
+   if(stats)stats.textContent=total?
+     'Migration notices — '+Number(c.sent||0)+' sent; '+Number(c.pending||0)+' queued; '+
+      Number(c.sending||0)+' sending; '+Number(c.failed||0)+' awaiting retry.':
+     'No migration notices have been queued yet.';
+  }).catch(()=>{const stats=$('legacy-delivery-stats');if(stats)stats.textContent='Notification delivery status unavailable';});
   const update=()=>{
-   const chosen=[...document.querySelectorAll('.legacy-select:checked')].length;
-   commit.disabled=!(response&&chosen>0&&confirm.value==='IMPORT LEGACY STUDENTS');
+   const selected=[...document.querySelectorAll('.legacy-select:checked')].map(el=>rows[Number(el.dataset.index)]);
+   const chosen=selected.length;
+   const emailPattern=/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
+   const emails=new Set(selected.map(x=>String(x?.guardian_email||'').toLowerCase().trim()).filter(x=>emailPattern.test(x)));
+   const notifying=sendNotices?.checked===true;
+   if(guardianVerified)guardianVerified.disabled=!notifying;
+   commit.disabled=!(response&&chosen>0&&confirm.value==='IMPORT LEGACY STUDENTS'&&
+     (!notifying||guardianVerified?.checked===true));
    $('legacy-selected-count').textContent=chosen+' student'+(chosen===1?'':'s')+' selected for import';
+   const line=$('legacy-mail-queue-status');
+   if(line)line.textContent=notifying?
+     emails.size+' unique eligible guardian address'+(emails.size===1?'':'es')+
+      ' in selected rows. Confirm addresses are verified to enable automatic notices.':
+     'Guardian notices are disabled for this import.';
   };
   confirm.addEventListener('input',update);
+  sendNotices?.addEventListener('change',()=>{if(!sendNotices.checked&&guardianVerified)guardianVerified.checked=false;update();});
+  guardianVerified?.addEventListener('change',update);
   list.addEventListener('change',event=>{if(event.target.classList.contains('legacy-select'))update();});
   previewButton.addEventListener('click',async()=>{
    const chosen=file.files?.[0];if(!chosen){toast('Select a CSV import file first',true);return;}
@@ -128,9 +150,13 @@
    commit.disabled=true;previewButton.disabled=true;
    try{
     const outcome=await post('/legacy-students/commit',{
-     source_hash:hash,filename,items:selected,confirmation:'IMPORT LEGACY STUDENTS'});
-    $('legacy-file-status').textContent=outcome.created+' student(s) imported successfully; '+outcome.already_imported+' previously imported. No parent invitations were sent.';
-    toast('Imported '+outcome.created+' legacy students');
+     source_hash:hash,filename,items:selected,confirmation:'IMPORT LEGACY STUDENTS',
+     notify_guardians:sendNotices?.checked===true,
+     guardian_contacts_verified:guardianVerified?.checked===true});
+    $('legacy-file-status').textContent=outcome.created+' student(s) imported successfully; '+
+     outcome.already_imported+' previously imported. '+Number(outcome.notices_queued||0)+
+     ' guardian migration notification(s) queued for delivery. No parent invitations were sent.';
+    toast('Imported '+outcome.created+' legacy students; queued '+Number(outcome.notices_queued||0)+' family notice(s)');
     rows=[];response=null;confirm.value='';file.value='';list.textContent='';
     $('legacy-confirm-panel').hidden=true;
     await navigate('legacy');
