@@ -181,6 +181,7 @@
 .class-allocation-hint p{margin:6px 0 0;line-height:1.7;font-size:12px;color:#617a9d}
 .class-manage-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:19px}
 .class-manage-actions .btn{min-width:0;padding-left:7px;padding-right:7px}
+.class-manage-actions .btn:last-child{grid-column:1/-1}
 .class-row-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .class-allocation-summary,.class-roster-intro{display:flex;align-items:center;gap:14px;margin-bottom:20px;background:#f4f8fe;border:1px solid #e2eaf7;border-radius:14px;padding:17px}
 .class-allocation-summary strong,.class-roster-intro strong{display:block;color:#243e67;font-size:15px}
