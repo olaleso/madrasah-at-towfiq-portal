@@ -127,12 +127,14 @@
       kids.some(x=>x.has_password&& !x.account_active);
     const queued=Boolean(kids[0].onboarding_status);
     const eligible=!conflict&&!queued&&!linked;
+    const recoveryAllowed=linked&&kids[0].onboarding_status==='sent'&&Boolean(kids[0].account_active&&kids[0].has_password);
     const status=conflict?'Manual review':queued?'Follow-up '+kids[0].onboarding_status:
       linked?'Already linked':'Ready for verification';
     const children=kids.map(x=>h(x.first_name+' '+x.last_name+' ('+x.student_no+')')).join(', ');
     return '<tr><td><input type="checkbox" class="legacy-family-select" data-email="'+h(address)+
        '" '+(eligible?'':'disabled')+'></td><td><strong>'+h(kids[0].guardian_name||'Guardian name missing')+
-       '</strong><small>'+h(address)+'</small></td><td>'+children+'</td><td>'+h(status)+'</td></tr>';
+       '</strong><small>'+h(address)+'</small></td><td>'+children+'</td><td>'+h(status)+
+       (recoveryAllowed?' <button type="button" class="btn smol white legacy-access-email" data-email="'+h(address)+'">Send password link</button>':'')+'</td></tr>';
    }).join('');
    familyReview.innerHTML='<p class="small muted">'+groups.size+' guardian groups · '+withoutEmail+
      ' pupils missing guardian email. Confirm any group marked manual review before proceeding.</p>'+
@@ -150,6 +152,19 @@
    if(familyLink)familyLink.disabled=!(familyVerified?.checked&&
      familyReview?.querySelector('.legacy-family-select:checked'));
   };
+  familyReview?.addEventListener('click',async event=>{
+   const button=event.target.closest('.legacy-access-email');
+   if(!button)return;
+   const address=button.dataset.email;
+   if(!await confirmDialog({title:'Send account access email?',message:'Send a secure password-reset link to '+address+'?',details:'This sends a continuation of the migration email to a previously onboarded guardian. The link expires after 30 minutes. It does not create another account or change a password.',actionLabel:'Send secure password link',tone:'warning'}))return;
+   button.disabled=true;
+   try{
+    const result=await post('/legacy-students/families/access-email',{email:address,confirmation:'SEND ACCESS RECOVERY'});
+    familyStatus.textContent=result.accepted?'Account access email accepted for '+address+'.':('Email was not accepted: '+result.error);
+    toast(result.accepted?'Access email sent to provider':'Email delivery failed',!result.accepted);
+   }catch(e){toast(e.message,true);}
+   finally{button.disabled=false;}
+  });
   familyReview?.addEventListener('change',updateFamilySelection);
   familyVerified?.addEventListener('change',updateFamilySelection);
   familyLink?.addEventListener('click',async()=>{
