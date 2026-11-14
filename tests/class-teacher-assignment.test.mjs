@@ -26,14 +26,19 @@ test('teacher assignment checks permissions, account status and class timetable'
  assert.match(worker,/assign_class_teacher/);
 });
 
-test('staff directory exposes deletion for inactive teachers only with typed confirmation',()=>{
- assert.match(app,/u\.role==='teacher'&&!u\.active/);
- assert.match(app,/data-action="delete-teacher"/);
+test('staff directory requires confirmation and protects linked school records',()=>{
+ assert.match(app,/\['teacher','staff'\]\.includes\(u\.role\)&&!u\.active/);
+ assert.match(app,/data-action="delete-staff-account"/);
  assert.match(app,/requiredText:target\.email/);
- assert.match(app,/confirmation:'DELETE TEACHER'/);
- assert.match(worker,/if\(method==='DELETE'\)\{\s*const b=await input\(req\)/);
- assert.match(worker,/target\.role!=='teacher'/);
- assert.match(worker,/Number\(target\.active\)!==0/);
- assert.match(worker,/PRAGMA foreign_key_list/);
- assert.match(worker,/DELETE FROM users WHERE id=\? AND role='teacher' AND active=0/);
+ assert.match(app,/confirmation:target\.role==='teacher'\?'DELETE TEACHER':'DELETE STAFF'/);
+ const users=worker.slice(worker.indexOf("if(path==='/api/users')"));
+ const deletion=users.slice(users.indexOf("if(method==='DELETE')"),users.indexOf("if(method==='PATCH')"));
+ assert.match(deletion,/\['teacher','staff'\]\.includes\(target\.role\)/);
+ assert.match(deletion,/Number\(target\.active\)!==0/);
+ assert.match(deletion,/const phrase=target\.role==='teacher'\?'DELETE TEACHER':'DELETE STAFF'/);
+ assert.match(deletion,/SELECT 1 AS linked FROM/);
+ assert.match(deletion,/staff_dbs_checks/);
+ assert.match(deletion,/audit_log/);
+ assert.doesNotMatch(deletion,/PRAGMA foreign_key_list/);
+ assert.match(deletion,/DELETE FROM users WHERE id=\? AND role=\? AND active=0/);
 });
