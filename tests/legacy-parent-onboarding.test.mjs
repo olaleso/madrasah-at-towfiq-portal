@@ -66,3 +66,12 @@ test('parent completion banner ignores unassigned class while admin still tracks
  assert.match(app,/legacyPending=children\.filter\(s=>s\.legacy_imported&&s\.legacy_parent_incomplete\)/);
  assert.match(app,/userCan\('parent'\)\?s\.legacy_parent_incomplete:s\.legacy_incomplete/);
 });
+
+test('existing-account follow-up puts password recovery above portal sign-in',()=>{
+ const html=legacyOnboardingHtml('Maryam',children,'',false,
+  'https://portal.attowfiqmasjid.org/?reset=example');
+ const reset=html.indexOf('>Set or reset my password</a>');
+ const portal=html.indexOf('>Open my family portal</a>');
+ assert.ok(reset>=0&&portal>=0&&reset<portal,
+  'Password recovery should appear before portal sign-in');
+});
