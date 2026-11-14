@@ -87,3 +87,26 @@ test('preliminary migration notice is opt-in for subsequent imports',async()=>{
  assert.match(app,/id="legacy-send-notices" style="margin-top:3px"/);
  assert.match(app,/first-time welcome email/);
 });
+
+test('guardian email correction requires verification and blocks active accounts',async()=>{
+ const {readFileSync}=await import('node:fs');
+ const {fileURLToPath}=await import('node:url');
+ const {resolve,dirname}=await import('node:path');
+ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+ const worker=readFileSync(resolve(root,'src/worker.js'),'utf8');
+ const ui=readFileSync(resolve(root,'public/legacy-import.js'),'utf8');
+ const start=worker.indexOf("if(path==='/api/legacy-students/families/correct-email'");
+ const end=worker.indexOf("if(path==='/api/legacy-students/families/access-email'",start);
+ assert.ok(start>=0&&end>start);
+ const handler=worker.slice(start,end);
+ assert.match(handler,/requireRole\(user,'admin'\)/);
+ assert.match(handler,/guardian_verified!==true/);
+ assert.match(handler,/account\.active\|\|account\.password_hash/);
+ assert.match(handler,/SELECT id FROM users WHERE email=\?/);
+ assert.match(handler,/DELETE FROM auth_tokens/);
+ assert.match(handler,/DELETE FROM sessions/);
+ assert.match(handler,/status='pending',attempts=0/);
+ assert.match(handler,/legacy_migration_notices/);
+ assert.match(ui,/legacy-correct-email/);
+ assert.match(ui,/guardian_verified:true/);
+});
