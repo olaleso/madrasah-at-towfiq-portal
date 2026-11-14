@@ -18,7 +18,7 @@ test('follow-up explicitly continues the migration notice and lists siblings',()
 });
 test('existing accounts receive sign-in instructions, not activation links',()=>{
  const html=legacyOnboardingHtml('Maryam',children,'',true);
- assert.match(html,/existing credentials/);
+ assert.match(html,/existing password/);
  assert.match(html,/Family view/);
  assert.match(html,/Open my family portal/);
  assert.doesNotMatch(html,/invite=/);
