@@ -53,3 +53,17 @@ test('legacy profile save closes its modal before refreshing student details',as
  assert.match(branch[1],/await post\('\/legacy-students\/profile',raw,'PATCH'\);/);
  assert.match(branch[1],/close\(\);\s*await navigate\(/);
 });
+
+test('parent completion banner ignores unassigned class while admin still tracks it',async()=>{
+ const {readFileSync}=await import('node:fs');
+ const {fileURLToPath}=await import('node:url');
+ const {resolve,dirname}=await import('node:path');
+ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+ const worker=readFileSync(resolve(root,'src/worker.js'),'utf8');
+ const app=readFileSync(resolve(root,'public/app.js'),'utf8');
+ const parentFlag=worker.match(/CASE WHEN li\.student_id IS NOT NULL AND \(([^)]*(?:\)[^)]*)*)\) THEN 1 ELSE 0 END AS legacy_parent_incomplete/);
+ assert.match(worker,/AS legacy_parent_incomplete/);
+ assert.match(worker,/s\.class_id IS NULL OR s\.parent_id IS NULL/);
+ assert.match(app,/legacyPending=children\.filter\(s=>s\.legacy_imported&&s\.legacy_parent_incomplete\)/);
+ assert.match(app,/userCan\('parent'\)\?s\.legacy_parent_incomplete:s\.legacy_incomplete/);
+});
