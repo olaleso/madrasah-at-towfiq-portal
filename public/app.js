@@ -885,8 +885,8 @@ function staffPage(){
  return `${pagehead('Staff & administration','Manage administrator, teacher and office accounts.',`<button class="btn primary" data-action="modal" data-value="invite">${ico('plus',16)} Invite staff</button>`)}
  <div class="surface"><div class="surface-head"><h3>Staff directory</h3>${tag(`${users.length} people`,'blue')}</div>
  <div class="table-scroll"><table class="table"><thead><tr><th>Name</th><th>Role</th><th>Email</th><th>State</th><th>Manage</th></tr></thead><tbody>
- ${users.map(u=>`<tr><td class="cell-name">${h(u.name)}</td><td>${tag(cap(u.role),'blue')}</td><td>${h(u.email)}</td><td>${statusTag(u.active?'active':'inactive')}</td><td><div class="row" style="gap:7px"><button class="btn smol outline" data-action="modal" data-value="edit-user" data-id="${h(u.id)}">${ico('edit',14)} Edit</button>${u.id!==S.user.id?`<button class="btn smol outline" data-action="toggle-user" data-id="${h(u.id)}" data-active="${u.active?0:1}">${u.active?'Deactivate':'Activate'}</button>${u.role==='teacher'&&!u.active?`<button class="btn smol outline" data-action="delete-teacher" data-id="${h(u.id)}" title="Permanently delete unused teacher account">${ico('trash',14)} Delete</button>`:''}`:tag('Your account','green')}</div></td></tr>`).join('')}
- </tbody></table></div></div><div class="notice" style="margin-top:15px">Parent and guardian accounts are managed from School management → Parents & guardians. Changing another staff member’s email revokes their old sessions and requires a new one-time activation. To permanently delete an unused teacher, deactivate the account first. Teachers with class assignments or school history must remain deactivated.</div>`;
+ ${users.map(u=>`<tr><td class="cell-name">${h(u.name)}</td><td>${tag(cap(u.role),'blue')}</td><td>${h(u.email)}</td><td>${statusTag(u.active?'active':'inactive')}</td><td><div class="row" style="gap:7px"><button class="btn smol outline" data-action="modal" data-value="edit-user" data-id="${h(u.id)}">${ico('edit',14)} Edit</button>${u.id!==S.user.id?`<button class="btn smol outline" data-action="toggle-user" data-id="${h(u.id)}" data-active="${u.active?0:1}">${u.active?'Deactivate':'Activate'}</button>${['teacher','staff'].includes(u.role)&&!u.active?`<button class="btn smol outline" data-action="delete-staff-account" data-id="${h(u.id)}" title="Permanently delete unused staff account">${ico('trash',14)} Delete</button>`:''}`:tag('Your account','green')}</div></td></tr>`).join('')}
+ </tbody></table></div></div><div class="notice" style="margin-top:15px">Parent and guardian accounts are managed from School management → Parents & guardians. Changing another staff member’s email revokes their old sessions and requires a new one-time activation. To permanently delete an unused teacher or office staff account, deactivate it first. Accounts with teaching, DBS, audit or other school history must remain deactivated.</div>`;
 }
 function guardiansPage(){
  const rows=get('guardians');
@@ -1461,20 +1461,21 @@ async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
   await Promise.all(unread.map(m=>post('/messages',{id:m.id},'PATCH')));
   await load(['messages']);renderPage();return;
  }
- if(a==='delete-teacher'){
+ if(a==='delete-staff-account'){
   if(!userCan('admin'))return;
-  const target=get('users').find(u=>u.id===selectedId&&u.role==='teacher');
+  const target=get('users').find(u=>u.id===selectedId&&['teacher','staff'].includes(u.role));
   if(!target)return;
-  if(target.active)throw Error('Deactivate the teacher first to delete the account.');
+  if(target.active)throw Error('Deactivate this account before permanent deletion.');
   const confirmed=await confirmDialog({
-   title:'Permanently delete teacher account?',
+   title:'Permanently delete staff account?',
    message:'Delete '+target.name+' ('+target.email+') from Staff & administration?',
-   details:'Only an inactive account without classes, safeguarding records, teaching activity or other school history can be deleted. Historical records must be retained; use Deactivate instead. This cannot be undone.',
-   actionLabel:'Permanently delete teacher',tone:'danger',requiredText:target.email
+   details:'Only an inactive account without class assignments, safeguarding, DBS, audit or other school records can be permanently removed. Otherwise leave it deactivated. This cannot be undone.',
+   actionLabel:'Permanently delete account',tone:'danger',requiredText:target.email
   });
   if(!confirmed)return;
-  await post('/users',{id:target.id,email:target.email,confirmation:'DELETE TEACHER'},'DELETE');
-  toast('Unused teacher account deleted successfully');
+  await post('/users',{id:target.id,email:target.email,
+   confirmation:target.role==='teacher'?'DELETE TEACHER':'DELETE STAFF'},'DELETE');
+  toast('Unused staff account deleted successfully');
   await navigate('staff');return;
  }
  if(a==='classroom-profile'){await navigate('students');if(!get('students').some(x=>x.id===selectedId))return;S.studentId=selectedId;S.studentTab='overview';renderPage();return;}
