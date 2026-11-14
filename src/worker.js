@@ -1544,38 +1544,59 @@ async function handle(req,env,ctx){
     await audit(db,user,'invite','users',uid);return json({ok:true,id:uid,invitation_url:mailed.sent?null:link,emailed:mailed.sent});}
   if(method==='DELETE'){
    const b=await input(req);
-   const target=await first(db,'SELECT id,name,email,role,active FROM users WHERE id=?',String(b.id||''));
-   if(!target)error('Account not found',404);
-   if(target.role!=='teacher')error('Only teacher accounts can be deleted here',403);
+   const target=await first(db,'SELECT id,name,email,role,active FROM users WHERE id=?',short(b.id,100));
+   if(!target)error('Staff account not found',404);
+   if(!['teacher','staff'].includes(target.role))error('Only teacher and office staff accounts can be deleted here',403);
    if(target.id===user.id)error('You cannot delete your own account',403);
-   if(Number(target.active)!==0)error('Deactivate the teacher account before permanently deleting it',409);
-   if(b.confirmation!=='DELETE TEACHER'||email(b.email)!==target.email)
-    error('Confirm the exact teacher email and deletion action',400);
-   // Refuse deletion when any educational, safeguarding, DBS, messaging or
-   // audit history references this user. Never let ON DELETE CASCADE remove
-   // teaching records; only ephemeral login tokens and sessions are expendable.
-   const tables=await all(db,"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
-   for(const table of tables){
-    const tableName=String(table.name||'');
-    if(!/^[a-z_][a-z_0-9]*$/i.test(tableName)||['sessions','auth_tokens'].includes(tableName))continue;
-    const foreignKeys=await all(db,'PRAGMA foreign_key_list("'+tableName+'")');
-    for(const fk of foreignKeys){
-     if(fk.table!=='users')continue;
-     const column=String(fk.from||'');
-     if(!/^[a-z_][a-z_0-9]*$/i.test(column))error('Unsafe account reference. Contact the administrator.',409);
-     const referenced=await first(db,'SELECT 1 AS used FROM "'+tableName+'" WHERE "'+column+'"=? LIMIT 1',target.id);
-     if(referenced)error('This teacher has linked class, safeguarding or activity records. Keep the account deactivated to preserve school history.',409);
-    }
+   if(Number(target.active)!==0)error('Deactivate this account before requesting permanent deletion',409);
+   const phrase=target.role==='teacher'?'DELETE TEACHER':'DELETE STAFF';
+   if(b.confirmation!==phrase||email(b.email)!==email(target.email))
+    error('Enter the exact account email and confirm permanent deletion',400);
+
+   // Do not rely on per-table PRAGMA introspection at request time. On D1,
+   // schema introspection failures surfaced as opaque 500 errors. An explicit
+   // allowlisted map is safer and avoids database-specific PRAGMA behaviour.
+   // Any school record referencing this user blocks physical deletion.
+   // In particular, never cascade DBS, messages, notifications, or audit.
+   const protectedReferences=[
+    ['classes','teacher_id'],['students','parent_id'],
+    ['attendance','recorded_by'],['homework','assigned_by'],
+    ['behaviour','recorded_by'],['payments','recorded_by'],
+    ['announcements','created_by'],['messages','created_by'],
+    ['messages','recipient_id'],['quiz_attempts','user_id'],
+    ['audit_log','actor_id'],['pupil_progress_reports','author_id'],
+    ['compliance_policies','created_by'],['compliance_concerns','reported_by'],
+    ['staff_dbs_checks','user_id'],['staff_dbs_checks','updated_by'],
+    ['portal_notifications','recipient_id'],['academic_terms','created_by'],
+    ['academic_calendar_entries','created_by'],
+    ['guardian_communication_preferences','user_id'],
+    ['guardian_communication_preference_audit','user_id'],
+    ['guardian_communication_preference_audit','changed_by'],
+    ['class_timetable_sessions','created_by'],
+    ['student_leave_requests','submitted_by'],
+    ['student_leave_requests','reviewed_by'],
+    ['masjid_contact_enquiries','reviewed_by'],
+    ['legacy_student_import_records','imported_by'],
+    ['legacy_parent_onboarding','user_id']
+   ];
+   for(const [table,column] of protectedReferences){
+    const referenced=await first(db,'SELECT 1 AS linked FROM "'+table+'" WHERE "'+column+'"=? LIMIT 1',target.id);
+    if(referenced)error('This account has linked school records ('+table+'). Keep it deactivated to preserve the records.',409);
    }
-   // This queue records user_id without a foreign key in migration 0020.
-   const onboarding=await first(db,'SELECT id FROM legacy_parent_onboarding WHERE user_id=? LIMIT 1',target.id);
-   if(onboarding)error('This account is linked to a family onboarding record. It cannot be deleted.',409);
-   await db.batch([
-    db.prepare('DELETE FROM sessions WHERE user_id=?').bind(target.id),
-    db.prepare('DELETE FROM auth_tokens WHERE user_id=?').bind(target.id),
-    db.prepare("DELETE FROM users WHERE id=? AND role='teacher' AND active=0").bind(target.id)
-   ]);
-   await audit(db,user,'delete_unused_teacher','users',target.id,'Unused inactive teacher account permanently removed');
+   try{
+    await db.batch([
+     db.prepare('DELETE FROM sessions WHERE user_id=?').bind(target.id),
+     db.prepare('DELETE FROM auth_tokens WHERE user_id=?').bind(target.id),
+     db.prepare("DELETE FROM users WHERE id=? AND role=? AND active=0").bind(target.id,target.role)
+    ]);
+   }catch(err){
+    // If the schema gained additional foreign keys, fail safely rather than
+    // exposing a raw D1 error or removing any linked education records.
+    console.error('Staff deletion blocked by database',err);
+    error('Account deletion is blocked by related records. Keep the account deactivated and contact the administrator.',409);
+   }
+   await audit(db,user,'delete_unused_staff_account','users',target.id,
+    'Unused inactive '+target.role+' account permanently removed');
    return json({ok:true});
   }
   if(method==='PATCH'){
