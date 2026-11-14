@@ -110,6 +110,19 @@
   const familySend=$('legacy-send-followups');
   const familyStatus=$('legacy-family-status');
   let families=[];
+  let familyQuery='';
+  const filterFamilies=()=>{
+   const entries=[...familyReview.querySelectorAll('tbody tr')];
+   let visible=0;
+   for(const row of entries){
+    const matched=row.textContent.toLocaleLowerCase().includes(familyQuery);
+    row.hidden=!matched;
+    row.style.display=matched?'':'none';
+    if(matched)visible++;
+   }
+   const count=familyReview.querySelector('#legacy-family-search-count');
+   if(count)count.textContent=visible+' of '+entries.length+' groups shown';
+  };
   const redrawFamilies=()=>{
    if(!familyReview)return;
    const groups=new Map();
@@ -140,8 +153,12 @@
    }).join('');
    familyReview.innerHTML='<p class="small muted">'+groups.size+' guardian groups · '+withoutEmail+
      ' pupils missing guardian email. Confirm any group marked manual review before proceeding.</p>'+
+     '<div class="toolbar" style="margin:12px 0;gap:12px;flex-wrap:wrap"><div class="searchbox" style="flex:1;min-width:230px"><input id="legacy-family-search" type="search" autocomplete="off" aria-label="Search family onboarding" placeholder="Search guardian, student, email or registration number"></div><span class="tag blue" id="legacy-family-search-count"></span></div>'+
      '<div class="table-scroll"><table class="table"><thead><tr><th>Select</th><th>Guardian</th><th>Imported children</th><th>Status</th></tr></thead><tbody>'+
       rows+'</tbody></table></div>';
+   const search=familyReview.querySelector('#legacy-family-search');
+   if(search)search.value=familyQuery;
+   filterFamilies();
    if(familyLink)familyLink.disabled=true;
    if(familyVerified)familyVerified.checked=false;
   };
@@ -210,6 +227,11 @@
     toast(result.accepted?'Access email sent to provider':'Email delivery failed',!result.accepted);
    }catch(e){toast(e.message,true);}
    finally{button.disabled=false;}
+  });
+  familyReview?.addEventListener('input',event=>{
+   if(event.target.id!=='legacy-family-search')return;
+   familyQuery=event.target.value.trim().toLocaleLowerCase();
+   filterFamilies();
   });
   familyReview?.addEventListener('change',updateFamilySelection);
   familyVerified?.addEventListener('change',updateFamilySelection);
