@@ -95,6 +95,21 @@ assert.equal(teacherDelete.status,200,JSON.stringify(teacherDelete.data));
 assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM users WHERE id=?').get('teacher-unused').n,0);
 teacherDelete=await req('/users',{id:'teacher-fixture',email:'teacher.a@example.test',confirmation:'DELETE TEACHER'},'DELETE');
 assert.equal(teacherDelete.status,409,'Active teachers must be deactivated before deletion');
+sqlite.prepare("INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,?)")
+ .run('staff-unused','Unused Office Staff','unused.staff@example.test','staff',0);
+let staffDelete=await req('/users',{id:'staff-unused',email:'unused.staff@example.test',confirmation:'DELETE TEACHER'},'DELETE');
+assert.equal(staffDelete.status,400,'Staff deletion cannot use teacher confirmation');
+staffDelete=await req('/users',{id:'staff-unused',email:'unused.staff@example.test',confirmation:'DELETE STAFF'},'DELETE');
+assert.equal(staffDelete.status,200,JSON.stringify(staffDelete.data));
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM users WHERE id=?').get('staff-unused').n,0);
+sqlite.prepare("INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,?)")
+ .run('staff-linked','Office Staff With DBS','staff.dbs@example.test','staff',0);
+sqlite.prepare("INSERT INTO staff_dbs_checks(id,user_id,issued_on,review_due) VALUES(?,?,?,?)")
+ .run('dbs-staff-linked','staff-linked','2025-08-01','2028-08-01');
+staffDelete=await req('/users',{id:'staff-linked',email:'staff.dbs@example.test',confirmation:'DELETE STAFF'},'DELETE');
+assert.equal(staffDelete.status,409,'Staff DBS records must not be deleted through account deletion');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM staff_dbs_checks WHERE id=?').get('dbs-staff-linked').n,1);
+
 z=await req('/classes',{name:'Foundation',stage:'Foundation',capacity:20});assert.equal(z.status,200,JSON.stringify(z.data));const class_id=z.data.id;
 // v1.9.0: Weekly timetable is private, editable by office staff and validated
 // against same-class, teacher and physical-room scheduling conflicts.
