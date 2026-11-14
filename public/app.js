@@ -887,7 +887,8 @@ function guardiansPage(){
  return `${pagehead('Parents & guardians','Family contacts are managed with their enrolled pupils.',`<button class="btn white" data-action="nav" data-value="students">${ico('students',16)} Student directory</button>`)}
  <div class="surface"><div class="surface-head"><h3>Guardian relationships</h3>${tag(`${rows.length} enrolled pupils`,'blue')}</div>
  <p class="small muted" style="margin:0 0 18px">When an application is accepted, its pupil is linked to the recorded guardian account and an email is automatically attempted. New accounts need email activation before sign-in. Staff members who are guardians can switch to Family view without losing their staff access.</p>
- ${rows.length?`<div class="table-scroll"><table class="table"><thead><tr><th>Student</th><th>Parent / guardian</th><th>Contact</th><th>Account</th><th>Action</th></tr></thead><tbody>
+ <div class="toolbar" style="margin-bottom:12px;gap:12px;flex-wrap:wrap"><div class="searchbox" style="flex:1;min-width:230px">${ico('search',17)}<input id="guardian-table-search" type="search" autocomplete="off" placeholder="Search student, guardian, email or registration number" aria-label="Search guardian relationships"></div><span class="tag blue" id="guardian-table-count">${rows.length} shown</span></div>
+ ${rows.length?`<div class="table-scroll"><table class="table" id="guardian-relationships-table"><thead><tr><th>Student</th><th>Parent / guardian</th><th>Contact</th><th>Account</th><th>Action</th></tr></thead><tbody>
  ${rows.map(r=>`<tr><td><strong>${h(r.first_name)} ${h(r.last_name)}</strong><div class="cell-sub">${h(r.student_no)}</div></td>
  <td>${h(r.guardian_name||'Not recorded')}</td><td>${h(r.guardian_email||'—')}<div class="cell-sub">${h(r.guardian_phone||'')}</div></td>
  <td>${tag(badge(r),r.link_status==='linked'?'green':r.activated?'blue':'amber')}</td>
@@ -1795,7 +1796,21 @@ else if(formId==='attendance-form'){
 }
 document.addEventListener('click',async e=>{const el=e.target.closest('[data-action]');if(!el)return;const a=el.dataset.action;try{if(a==='copy-invite'){const v=$('#invitation-url');await navigator.clipboard.writeText(v.value);toast('Invitation link copied');return;}await action(a,el);}catch(err){toast(err.message,true);console.error(err);}});
 document.addEventListener('submit',async e=>{const form=e.target;if(!['auth-form','student-form','homework-form','grade-homework-form','behaviour-form','class-form','class-assignment-form','class-roster-form','admission-form','invoice-form','payment-form','announcement-form','message-form','reply-message-form','dbs-record-form','dbs-upload-form','policy-record-form','compliance-concern-form','event-form','quiz-form','invite-form','guardian-invite-form','edit-user-form','password-form','attendance-form','progress-report-form','settings-form','automation-form','academic-term-form','academic-entry-form','timetable-form','communication-preferences-form','website-video-form','website-photo-form','website-community-form','leave-request-form','legacy-completion-form'].includes(form.getAttribute('id')))return;e.preventDefault();const button=form.querySelector('button[type=submit]');if(button?.disabled)return;if(button)button.disabled=true;try{await submitForm(form);}catch(err){toast(err.message,true);console.error(err);}finally{if(button)button.disabled=false;}});
-document.addEventListener('input',e=>{if(e.target.closest('#homework-form')&&['verse_from','verse_to'].includes(e.target.name))updateSurahVerseLimits();if(e.target.name==='greeting_name'&&e.target.closest('#guardian-invite-form')){const preview=$('#guardian-invite-preview');if(preview)preview.textContent='Dear '+(e.target.value.trim()||'Parent')+',';}});
+document.addEventListener('input',e=>{
+ if(e.target.id==='guardian-table-search'){
+  const query=e.target.value.trim().toLocaleLowerCase();
+  const rows=[...document.querySelectorAll('#guardian-relationships-table tbody tr')];
+  let visible=0;
+  for(const row of rows){
+   const match=row.textContent.toLocaleLowerCase().includes(query);
+   row.hidden=!match;
+   row.style.display=match?'':'none';
+   if(match)visible++;
+  }
+  const count=document.getElementById('guardian-table-count');
+  if(count)count.textContent=visible+' of '+rows.length+' shown';
+ }
+if(e.target.closest('#homework-form')&&['verse_from','verse_to'].includes(e.target.name))updateSurahVerseLimits();if(e.target.name==='greeting_name'&&e.target.closest('#guardian-invite-form')){const preview=$('#guardian-invite-preview');if(preview)preview.textContent='Dear '+(e.target.value.trim()||'Parent')+',';}});
 function updateDbsCertificateRequirement(){
  const form=document.querySelector('#dbs-record-form');
  if(!form)return;
