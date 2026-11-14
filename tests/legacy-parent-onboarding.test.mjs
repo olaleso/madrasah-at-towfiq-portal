@@ -6,9 +6,11 @@ const children=[
  {first_name:'Amina',last_name:'Sample',student_no:'MATT-2026-0001'},
  {first_name:'Musa',last_name:'Sample',student_no:'MATT-2026-0002'}
 ];
-test('follow-up explicitly continues the migration notice and lists siblings',()=>{
+test('first-time welcome mentions onboarding without assuming a prior notice and lists siblings',()=>{
  const html=legacyOnboardingHtml('Maryam Sample',children,'https://portal.attowfiqmasjid.org/?invite=sample-token');
- assert.match(html,/Following our earlier email confirming the transfer of existing student records/);
+ assert.match(html,/We are pleased to welcome you to the Madrasah At-Towfiq family portal/);
+ assert.doesNotMatch(html,/Following our earlier email/);
+ assert.doesNotMatch(html,/FOLLOW-UP TO OUR STUDENT MIGRATION NOTICE/);
  assert.match(html,/MATT-2026-0001/);
  assert.match(html,/MATT-2026-0002/);
  assert.match(html,/Activate my parent account/);
@@ -23,7 +25,7 @@ test('existing accounts receive sign-in instructions, not activation links',()=>
  assert.match(html,/Open my family portal/);
  assert.doesNotMatch(html,/invite=/);
 });
-test('follow-up escapes guardian and child names',()=>{
+test('welcome email escapes guardian and child names',()=>{
  const html=legacyOnboardingHtml('<script>',[
  {first_name:'<img>',last_name:'Sample',student_no:'MATT-2026-0003'}]);
  assert.doesNotMatch(html,/<script>/);
@@ -67,11 +69,21 @@ test('parent completion banner ignores unassigned class while admin still tracks
  assert.match(app,/userCan\('parent'\)\?s\.legacy_parent_incomplete:s\.legacy_incomplete/);
 });
 
-test('existing-account follow-up puts password recovery above portal sign-in',()=>{
+test('existing-account welcome puts password recovery above portal sign-in',()=>{
  const html=legacyOnboardingHtml('Maryam',children,'',false,
   'https://portal.attowfiqmasjid.org/?reset=example');
  const reset=html.indexOf('>Set or reset my password</a>');
  const portal=html.indexOf('>Open my family portal</a>');
  assert.ok(reset>=0&&portal>=0&&reset<portal,
   'Password recovery should appear before portal sign-in');
+});
+
+test('preliminary migration notice is opt-in for subsequent imports',async()=>{
+ const {readFileSync}=await import('node:fs');
+ const {fileURLToPath}=await import('node:url');
+ const {resolve,dirname}=await import('node:path');
+ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+ const app=readFileSync(resolve(root,'public/app.js'),'utf8');
+ assert.match(app,/id="legacy-send-notices" style="margin-top:3px"/);
+ assert.match(app,/first-time welcome email/);
 });
