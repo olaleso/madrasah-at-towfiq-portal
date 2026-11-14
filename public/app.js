@@ -269,11 +269,11 @@ function legacyPage(){
       <span><strong>First live intake:</strong> Start registration numbers at <code>MATT-${new Date().getFullYear()}-0001</code>. Previous test numbers are reused only because the student and admissions directories have been cleared. The server verifies this again at import.</span>
     </label>`:'<p class="small muted">Existing pupil numbers are preserved; the next available MATT registration number will be allocated automatically.</p>'}
     <div class="legacy-warning" style="margin-bottom:16px">
-      <strong>${ico('mail',16)} Notify parents about their migrated pupils</strong>
-      <p>One beautifully formatted service email will be queued per verified guardian address. Siblings imported together receive one email listing their registration numbers. This is not an account invitation or permission to access a child’s records.</p>
+      <strong>${ico('mail',16)} Optional preliminary migration notice</strong>
+      <p>For new uploads, leave this disabled so each verified family receives one first-time welcome email with a secure activation or password-reset link after Family onboarding. Enable this option only if you want to send an earlier, information-only notice before the account invitation.</p>
       <label style="display:flex;align-items:flex-start;gap:8px;margin:9px 0">
-        <input type="checkbox" id="legacy-send-notices" checked style="margin-top:3px">
-        <span>Automatically notify guardians with a valid email address</span>
+        <input type="checkbox" id="legacy-send-notices" style="margin-top:3px">
+        <span>Send a separate preliminary migration notice (no login or activation link)</span>
       </label>
       <label style="display:flex;align-items:flex-start;gap:8px;margin:9px 0">
         <input type="checkbox" id="legacy-guardian-verified" style="margin-top:3px">
