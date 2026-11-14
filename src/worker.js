@@ -2694,8 +2694,12 @@ export default {
  async scheduled(event,env,ctx){
   ctx.waitUntil(purgeOldDbsDocuments(env).catch(err=>console.error('DBS retention purge failed',err)));
   ctx.waitUntil(purgeExpiredInAppNotifications(env).catch(err=>console.error('Notification retention cleanup failed',err)));
-  ctx.waitUntil(dispatchLegacyMigrationNotices(env,30).catch(err=>console.error('Legacy notices dispatch failed',err)));
-  ctx.waitUntil(dispatchLegacyParentOnboarding(env,10).catch(err=>console.error('Legacy parent onboarding dispatch failed',err)));
+  ctx.waitUntil((async()=>{
+   try{await dispatchLegacyMigrationNotices(env,30);}
+   catch(err){console.error('Legacy notices dispatch failed',err);}
+   try{await dispatchLegacyParentOnboarding(env,10);}
+   catch(err){console.error('Legacy parent onboarding dispatch failed',err);}
+  })());
   if(event.cron!=='0 8 * * 5')return;
   ctx.waitUntil((async()=>{if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM||env.EMAIL_FROM.includes('example.org'))return;const v=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_enabled'");if(v?.value!=='true')return;const m=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_message'");const people=await all(env.DB,"SELECT email FROM users WHERE active=1 AND role IN ('parent','teacher','staff')");for(const p of people){await mail(env,p.email,'Jumu’ah reminder — Madrasah At-Towfiq',`<div style="font-family:Arial,sans-serif"><h2>Madrasah At-Towfiq</h2><p>${escapeHtml(m?.value||'Assalamu alaikum. Jumu’ah Mubarak.')}</p></div>`);}})());
  },
