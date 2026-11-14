@@ -1542,6 +1542,42 @@ async function handle(req,env,ctx){
   if(method==='POST'){const b=await input(req);if(!b.name||!String(b.email||'').includes('@')||!ROLES.includes(b.role))error('Name, valid email and role required');const uid=id();await run(db,'INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,1)',uid,short(b.name,100),email(b.email),b.role);
     const t=random(32);await run(db,"INSERT INTO auth_tokens(token_hash,user_id,purpose,expires_at) VALUES(?,?,?,?)",await sha(t),uid,'invite',nextIso(7*DAY));const link=new URL('/?invite='+encodeURIComponent(t),req.url).href;const mailed=await mail(env,email(b.email),'You are invited to Madrasah At-Towfiq',`<p>Welcome to Madrasah At-Towfiq.</p><p><a href="${escapeHtml(link)}">Activate your account</a></p><p>This link expires in seven days.</p>`);
     await audit(db,user,'invite','users',uid);return json({ok:true,id:uid,invitation_url:mailed.sent?null:link,emailed:mailed.sent});}
+  if(method==='DELETE'){
+   const b=await input(req);
+   const target=await first(db,'SELECT id,name,email,role,active FROM users WHERE id=?',String(b.id||''));
+   if(!target)error('Account not found',404);
+   if(target.role!=='teacher')error('Only teacher accounts can be deleted here',403);
+   if(target.id===user.id)error('You cannot delete your own account',403);
+   if(Number(target.active)!==0)error('Deactivate the teacher account before permanently deleting it',409);
+   if(b.confirmation!=='DELETE TEACHER'||email(b.email)!==target.email)
+    error('Confirm the exact teacher email and deletion action',400);
+   // Refuse deletion when any educational, safeguarding, DBS, messaging or
+   // audit history references this user. Never let ON DELETE CASCADE remove
+   // teaching records; only ephemeral login tokens and sessions are expendable.
+   const tables=await all(db,"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+   for(const table of tables){
+    const tableName=String(table.name||'');
+    if(!/^[a-z_][a-z_0-9]*$/i.test(tableName)||['sessions','auth_tokens'].includes(tableName))continue;
+    const foreignKeys=await all(db,'PRAGMA foreign_key_list("'+tableName+'")');
+    for(const fk of foreignKeys){
+     if(fk.table!=='users')continue;
+     const column=String(fk.from||'');
+     if(!/^[a-z_][a-z_0-9]*$/i.test(column))error('Unsafe account reference. Contact the administrator.',409);
+     const referenced=await first(db,'SELECT 1 AS used FROM "'+tableName+'" WHERE "'+column+'"=? LIMIT 1',target.id);
+     if(referenced)error('This teacher has linked class, safeguarding or activity records. Keep the account deactivated to preserve school history.',409);
+    }
+   }
+   // This queue records user_id without a foreign key in migration 0020.
+   const onboarding=await first(db,'SELECT id FROM legacy_parent_onboarding WHERE user_id=? LIMIT 1',target.id);
+   if(onboarding)error('This account is linked to a family onboarding record. It cannot be deleted.',409);
+   await db.batch([
+    db.prepare('DELETE FROM sessions WHERE user_id=?').bind(target.id),
+    db.prepare('DELETE FROM auth_tokens WHERE user_id=?').bind(target.id),
+    db.prepare("DELETE FROM users WHERE id=? AND role='teacher' AND active=0").bind(target.id)
+   ]);
+   await audit(db,user,'delete_unused_teacher','users',target.id,'Unused inactive teacher account permanently removed');
+   return json({ok:true});
+  }
   if(method==='PATCH'){
    const b=await input(req);
    const original=await first(db,'SELECT id,name,email,role,active,password_hash,password_salt FROM users WHERE id=?',b.id);
