@@ -11,6 +11,8 @@ sqlite.exec(fs.readFileSync(new URL('../migrations/0016_family_applications.sql'
 sqlite.exec(fs.readFileSync(new URL('../migrations/0017_masjid_contact_enquiries.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0018_legacy_student_import_records.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0019_legacy_migration_notices.sql',import.meta.url),'utf8'));
+sqlite.exec(fs.readFileSync(new URL('../migrations/0020_legacy_parent_onboarding.sql',import.meta.url),'utf8'));
+
 
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
 const oldDb=new DatabaseSync(':memory:');
@@ -82,6 +84,17 @@ let teacherChoices=await req('/classes/teachers');
 assert.equal(teacherChoices.status,200);
 assert.ok(teacherChoices.data.items.some(x=>x.id==='teacher-fixture'));
 assert.ok(!teacherChoices.data.items.some(x=>x.id==='teacher-inactive'));
+// Teacher deletion is permitted only for unused, inactive teacher accounts.
+// A linked class or other reference must never be destroyed by deletion.
+sqlite.prepare("INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,?)")
+ .run('teacher-unused','Unused Teacher','unused.teacher@example.test','teacher',0);
+let teacherDelete=await req('/users',{id:'teacher-unused',email:'wrong@example.test',confirmation:'DELETE TEACHER'},'DELETE');
+assert.equal(teacherDelete.status,400,'Teacher deletion requires matching email confirmation');
+teacherDelete=await req('/users',{id:'teacher-unused',email:'unused.teacher@example.test',confirmation:'DELETE TEACHER'},'DELETE');
+assert.equal(teacherDelete.status,200,JSON.stringify(teacherDelete.data));
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM users WHERE id=?').get('teacher-unused').n,0);
+teacherDelete=await req('/users',{id:'teacher-fixture',email:'teacher.a@example.test',confirmation:'DELETE TEACHER'},'DELETE');
+assert.equal(teacherDelete.status,409,'Active teachers must be deactivated before deletion');
 z=await req('/classes',{name:'Foundation',stage:'Foundation',capacity:20});assert.equal(z.status,200,JSON.stringify(z.data));const class_id=z.data.id;
 // v1.9.0: Weekly timetable is private, editable by office staff and validated
 // against same-class, teacher and physical-room scheduling conflicts.
@@ -124,6 +137,11 @@ assert.equal(teacherAssign.status,200,'Office can unassign a teacher');
 assert.equal(sqlite.prepare('SELECT teacher_id FROM classes WHERE id=?').get(timetableClassB).teacher_id,null);
 teacherAssign=await req('/classes/teacher',{class_id:timetableClassB,teacher_id:'teacher-fixture'},'PATCH');
 assert.equal(teacherAssign.status,200);
+sqlite.prepare('UPDATE users SET active=0 WHERE id=?').run('teacher-fixture');
+teacherDelete=await req('/users',{id:'teacher-fixture',email:'teacher.a@example.test',confirmation:'DELETE TEACHER'},'DELETE');
+assert.equal(teacherDelete.status,409,'Assigned inactive teachers must not be permanently deleted');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM users WHERE id=?').get('teacher-fixture').n,1);
+sqlite.prepare('UPDATE users SET active=1 WHERE id=?').run('teacher-fixture');
 z=await req('/timetable',{...timetableRow,class_id:timetableClassB,starts_at:'11:30',ends_at:'13:00',subject:'Qur’an revision',room:'Room C'});
 assert.equal(z.status,200,'Teacher can start another class as soon as the preceding session ends');
 const alternateId=z.data.id;
