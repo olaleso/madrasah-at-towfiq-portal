@@ -234,6 +234,65 @@ export async function dispatchLegacyMigrationNotices(env,maxCount=30){
  return sent;
 }
 
+
+const LEGACY_ONBOARD_SUBJECT='Next step: Activate your Madrasah At-Towfiq family portal';
+function legacyOnboardingHtml(name,children,activationUrl='',existingStaff=false){
+ const guardian=escapeHtml(short(name||'Parent / Guardian',100));
+ const rows=children.map(x=>'<tr><td style="padding:10px;border-bottom:1px solid #e3eaf4">'+escapeHtml(x.first_name+' '+x.last_name)+'</td><td style="padding:10px;border-bottom:1px solid #e3eaf4">'+escapeHtml(x.student_no)+'</td></tr>').join('');
+ const activated=Boolean(activationUrl);
+ const link=escapeHtml(activationUrl||'https://portal.attowfiqmasjid.org/');
+ return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#edf2f8;font-family:Arial,sans-serif;color:#263e60"><table width="100%" role="presentation" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:30px 12px"><table role="presentation" cellpadding="0" cellspacing="0" width="590" style="max-width:100%;background:white;border-radius:14px;overflow:hidden"><tr><td style="background:#112d58;padding:27px;text-align:center;color:white"><img src="https://portal.attowfiqmasjid.org/assets/at-towfiq-madrasah-logo.png" width="165" alt="Madrasah At-Towfiq" style="background:white;padding:7px;border-radius:8px"><p style="color:#dfc28c;font-size:12px;letter-spacing:2px">MADRASAH AT-TOWFIQ · BOLTON</p><p lang="ar" dir="rtl" style="font-size:22px">السَّلَامُ عَلَيْكُمْ وَرَحْمَةُ اللَّهِ وَبَرَكَاتُهُ</p></td></tr><tr><td style="padding:32px"><p style="font-size:12px;color:#987338;font-weight:bold">FOLLOW-UP TO OUR STUDENT MIGRATION NOTICE</p><h1 style="font:normal 28px Georgia,serif;color:#15315a">Your family portal is ready for the next step</h1><p>Assalāmu ʿalaykum, <strong>${guardian}</strong>,</p><p style="line-height:1.7">Following our earlier email confirming the transfer of existing student records to the new Madrasah At-Towfiq portal, we are writing with the next step for your family.</p><p>Your verified family records have now been linked to your portal account:</p><table width="100%" style="border-collapse:collapse;color:#304968"><tr><th align="left">Student</th><th align="left">Registration number</th></tr>${rows}</table><p style="line-height:1.7">${activated?'Please activate your parent account using the secure, one-time link below and choose your own password. Once activated, you can view your children’s learning progress, homework, attendance and school communications.':`You already have an active portal account, so you do not need another invitation or password. Sign in using your existing credentials${existingStaff?' and select Family view':''} to view your linked children.`}</p><p style="margin:27px 0"><a href="${link}" style="display:inline-block;background:#24559a;color:white;padding:15px 22px;border-radius:8px;text-decoration:none;font-weight:bold">${activated?'Activate my parent account':'Open my family portal'}</a></p>${activated?'<p style="font-size:13px;color:#60758e">Your secure activation link expires in 7 days and can be used only once. If expired, contact the madrasah for a new invitation.</p>':''}<p style="line-height:1.7">Please review the available details after signing in and contact the school to correct anything missing or inaccurate. Never email confidential medical or safeguarding details.</p><p>Jazākum Allāhu khayran,<br><strong>Madrasah At-Towfiq Administration</strong></p></td></tr><tr><td style="padding:23px;background:#f3f6fb;text-align:center;color:#61738e;font-size:12px">24 Punch Street, Bolton, BL3 5BJ, United Kingdom<br><a href="https://attowfiqmasjid.org">attowfiqmasjid.org</a> · <a href="mailto:admissions@attowfiqmasjid.org">admissions@attowfiqmasjid.org</a></td></tr></table></td></tr></table></body></html>`;
+}
+async function dispatchLegacyParentOnboarding(env,maxCount=10){
+ if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM)return 0;
+ const db=env.DB,rows=await all(db,`SELECT * FROM legacy_parent_onboarding
+  WHERE attempts<4 AND (status IN ('pending','failed') OR
+  (status='sending' AND updated_at<datetime('now','-15 minutes')))
+  ORDER BY created_at,id LIMIT ?`,Math.min(10,Math.max(1,maxCount)));
+ let accepted=0;
+ for(const item of rows){
+  const claim=await run(db,`UPDATE legacy_parent_onboarding SET status='sending',attempts=attempts+1,updated_at=CURRENT_TIMESTAMP
+   WHERE id=? AND attempts<4 AND (status IN ('pending','failed') OR
+   (status='sending' AND updated_at<datetime('now','-15 minutes')))`,item.id);
+  if(Number(claim.meta?.changes||0)!==1)continue;
+  let rateLimited=false;
+  try{
+   const uid=item.user_id;
+   const account=await first(db,'SELECT id,email,role,active,password_hash FROM users WHERE id=?',uid);
+   if(!account||email(account.email)!==item.guardian_email)throw Error('Guardian account requires manual review');
+   if(account.password_hash&&!account.active)throw Error('Deactivated account requires manual review');
+   const ids=JSON.parse(item.student_ids_json);
+   if(!Array.isArray(ids)||!ids.length||ids.length>100)throw Error('Invalid linked pupil list');
+   const children=await all(db,`SELECT id,student_no,first_name,last_name,parent_id FROM students
+    WHERE id IN (${ids.map(()=>'?').join(',')})`,...ids);
+   if(children.length!==ids.length||children.some(c=>c.parent_id!==uid))throw Error('Guardian link changed; manual review required');
+   let link='';
+   if(!account.active||!account.password_hash){
+    const token=random(32);
+    await db.batch([
+     db.prepare("DELETE FROM auth_tokens WHERE user_id=? AND purpose='invite'").bind(uid),
+     db.prepare('INSERT INTO auth_tokens(token_hash,user_id,purpose,expires_at) VALUES(?,?,?,?)')
+      .bind(await sha(token),uid,'invite',nextIso(7*DAY))
+    ]);
+    link='https://portal.attowfiqmasjid.org/?invite='+encodeURIComponent(token);
+   }
+   const html=legacyOnboardingHtml(item.guardian_name,children,link,account.role!=='parent');
+   const result=await mail(env,item.guardian_email,LEGACY_ONBOARD_SUBJECT,html,
+    {replyTo:'admissions@attowfiqmasjid.org'});
+   if(!result.sent){
+    rateLimited=result.status===429;
+    throw Error(result.error||'Provider rejected onboarding email');
+   }
+   await run(db,`UPDATE legacy_parent_onboarding SET status='sent',sent_at=?,last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=?`,iso(),item.id);
+   accepted++;
+  }catch(err){
+   await run(db,`UPDATE legacy_parent_onboarding SET status='failed',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,short(err.message,280),item.id);
+  }
+  if(rateLimited)break;
+  await new Promise(resolve=>setTimeout(resolve,650));
+ }
+ return accepted;
+}
 function passwordResetEmailHtml(accountName,resetUrl,contactAddress){
  const person=escapeHtml(short(accountName||'Portal user',100));
  const link=escapeHtml(resetUrl);
@@ -1537,6 +1596,71 @@ async function handle(req,env,ctx){
     LEFT JOIN classes c ON c.id=s.class_id
     ORDER BY li.imported_at DESC,li.source_row ASC LIMIT 500`)});
  }
+
+ if(path==='/api/legacy-students/families'&&method==='GET'){
+  requireRole(user,'admin');
+  const data=await all(db,`SELECT s.id AS student_id,s.student_no,s.first_name,s.last_name,s.parent_id,
+    lower(trim(a.guardian_email)) AS guardian_email,trim(a.guardian_name) AS guardian_name,
+    u.id AS account_id,u.role AS account_role,u.active AS account_active,
+    CASE WHEN u.password_hash IS NULL THEN 0 ELSE 1 END AS has_password,
+    q.status AS onboarding_status,q.attempts AS onboarding_attempts
+    FROM legacy_student_import_records li JOIN students s ON s.id=li.student_id
+    JOIN admissions a ON a.student_id=s.id
+    LEFT JOIN users u ON u.email=lower(trim(a.guardian_email))
+    LEFT JOIN legacy_parent_onboarding q ON q.guardian_email=lower(trim(a.guardian_email))
+    ORDER BY a.guardian_email,s.last_name,s.first_name`);
+  return json({items:data});
+ }
+ if(path==='/api/legacy-students/families/onboard'&&method==='POST'){
+  requireRole(user,'admin');
+  const b=await input(req);
+  if(b.confirmation!=='LINK VERIFIED GUARDIANS'||!Array.isArray(b.emails)||b.emails.length<1||b.emails.length>30)
+   error('Select verified guardians and confirm onboarding',400);
+  if(b.guardians_verified!==true)error('Verify guardian identity and email ownership before linking student records',400);
+  const emails=[...new Set(b.emails.map(email))];
+  if(emails.length!==b.emails.length)error('Duplicate guardian address',400);
+  const results=[];
+  for(const addr of emails){
+   if(!/^\S+@\S+\.\S+$/.test(addr)){results.push({email:addr,status:'review',reason:'Invalid address'});continue;}
+   const children=await all(db,`SELECT s.id,s.parent_id,s.first_name,s.last_name,a.guardian_name
+     FROM legacy_student_import_records li JOIN students s ON s.id=li.student_id
+     JOIN admissions a ON a.student_id=s.id WHERE lower(trim(a.guardian_email))=?`,addr);
+   if(!children.length){results.push({email:addr,status:'review',reason:'No imported pupils'});continue;}
+   const names=[...new Set(children.map(x=>short(x.guardian_name,100).toLowerCase()).filter(Boolean))];
+   if(names.length!==1){results.push({email:addr,status:'review',reason:'Inconsistent or missing guardian names'});continue;}
+   const existing=await first(db,'SELECT id,role,active,password_hash FROM users WHERE email=?',addr);
+   if(existing?.password_hash&&!existing.active){results.push({email:addr,status:'review',reason:'Deactivated account'});continue;}
+   if(children.some(x=>x.parent_id&&x.parent_id!==existing?.id)){
+    results.push({email:addr,status:'review',reason:'Existing different guardian assignment'});continue;
+   }
+   const prior=await first(db,'SELECT id,status FROM legacy_parent_onboarding WHERE guardian_email=?',addr);
+   if(prior){results.push({email:addr,status:'already_queued',reason:prior.status});continue;}
+   const uid=existing?.id||id();
+   const ops=[];
+   if(!existing)ops.push(db.prepare('INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,0)')
+     .bind(uid,short(children[0].guardian_name,100),addr,'parent'));
+   for(const child of children)if(!child.parent_id)
+    ops.push(db.prepare('UPDATE students SET parent_id=? WHERE id=? AND parent_id IS NULL').bind(uid,child.id));
+   ops.push(db.prepare(`INSERT INTO legacy_parent_onboarding
+     (id,guardian_email,guardian_name,user_id,student_ids_json) VALUES(?,?,?,?,?)`)
+    .bind(id(),addr,short(children[0].guardian_name,100),uid,JSON.stringify(children.map(x=>x.id))));
+   try{
+    await db.batch(ops);
+    results.push({email:addr,status:'queued',children:children.length});
+    try{await audit(db,user,'legacy_guardian_onboard','users',uid,
+      'Verified guardian group linked and follow-up invitation queued');}catch{}
+   }catch(err){results.push({email:addr,status:'review',reason:'Could not link family; inspect existing records'});}
+  }
+  return json({ok:true,results});
+ }
+ if(path==='/api/legacy-students/families/send'&&method==='POST'){
+  requireRole(user,'admin');
+  const b=await input(req);
+  if(b.confirmation!=='SEND FAMILY FOLLOWUPS')error('Confirm sending follow-up invitations',400);
+  const accepted=await dispatchLegacyParentOnboarding(env,10);
+  const counts=await all(db,'SELECT status,COUNT(*) AS total FROM legacy_parent_onboarding GROUP BY status');
+  return json({ok:true,accepted,counts});
+ }
  if(path==='/api/legacy-students/notices/retry'&&method==='POST'){
   requireRole(user,'admin');
   const payload=await input(req);
@@ -2571,6 +2695,7 @@ export default {
   ctx.waitUntil(purgeOldDbsDocuments(env).catch(err=>console.error('DBS retention purge failed',err)));
   ctx.waitUntil(purgeExpiredInAppNotifications(env).catch(err=>console.error('Notification retention cleanup failed',err)));
   ctx.waitUntil(dispatchLegacyMigrationNotices(env,30).catch(err=>console.error('Legacy notices dispatch failed',err)));
+  ctx.waitUntil(dispatchLegacyParentOnboarding(env,10).catch(err=>console.error('Legacy parent onboarding dispatch failed',err)));
   if(event.cron!=='0 8 * * 5')return;
   ctx.waitUntil((async()=>{if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM||env.EMAIL_FROM.includes('example.org'))return;const v=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_enabled'");if(v?.value!=='true')return;const m=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_message'");const people=await all(env.DB,"SELECT email FROM users WHERE active=1 AND role IN ('parent','teacher','staff')");for(const p of people){await mail(env,p.email,'Jumu’ah reminder — Madrasah At-Towfiq',`<div style="font-family:Arial,sans-serif"><h2>Madrasah At-Towfiq</h2><p>${escapeHtml(m?.value||'Assalamu alaikum. Jumu’ah Mubarak.')}</p></div>`);}})());
  },
