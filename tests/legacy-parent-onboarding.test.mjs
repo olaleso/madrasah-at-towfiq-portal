@@ -31,3 +31,13 @@ test('follow-up escapes guardian and child names',()=>{
  assert.match(html,/&lt;script&gt;/);
  assert.match(html,/&lt;img&gt;/);
 });
+
+test('existing active guardian gets optional secure 30-minute reset link',()=>{
+ const html=legacyOnboardingHtml('Parent',children,'',false,
+ 'https://portal.attowfiqmasjid.org/?reset=test-token');
+ assert.match(html,/Set or reset my password/);
+ assert.match(html,/reset=test-token/);
+ assert.match(html,/30 minutes/);
+ assert.match(html,/existing password remains valid/);
+ assert.doesNotMatch(html,/invite=/);
+});
