@@ -69,3 +69,17 @@ npx wrangler d1 execute attowfiq_portal --remote --command "SELECT status,COUNT(
 A verified family account can exist without the guardian remembering its password. Onboarding follow-ups for active accounts therefore include a **Set or reset my password** link that uses the existing 30-minute, one-time password-reset mechanism, plus the normal sign-in link. Reset is optional: the existing password remains valid until changed. New inactive accounts continue to receive their seven-day activation links.
 
 For already-sent follow-ups, an administrator can use **School management → Legacy student import → Family onboarding → Send password link** on an already-linked, previously-onboarded active family. This sends a new continuation email to that single guardian only; it does not relink pupils, duplicate the existing account, or resend the original migration notice. The new recovery link expires after 30 minutes and the admin action is audited. Only previously accepted onboarding groups with unchanged verified pupil links are eligible.
+
+## Future student imports: first-time welcome (November 2026)
+
+The initial legacy cohort has already been onboarded and sent access/recovery emails. **Do not requeue or resend that cohort** when updating the template. These changes are forward-looking.
+
+For subsequent uploads, the preliminary migration notice checkbox is **off by default**. The intended sequence is:
+
+1. Import historical pupils without sending the optional information-only notice.
+2. Review and verify each guardian under **Family onboarding**.
+3. Link the verified family and send the first-time **Welcome to Madrasah At-Towfiq | Your family portal access** email. This no longer claims an earlier notice was sent.
+4. New/pending accounts get a one-time activation link (7 days); existing active accounts get a one-time password-reset link (30 minutes), followed by the normal portal sign-in button.
+5. Families with invalid or missing contact information require office review.
+
+If the school deliberately opts in to the **separate preliminary migration notice**, that notice still has no login link. The later first-time welcome email supplies access. The welcome template affects new outgoing emails only, never already delivered messages.
