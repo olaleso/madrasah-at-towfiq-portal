@@ -1587,7 +1587,10 @@ async function handle(req,env,ctx){
     await db.batch([
      db.prepare('DELETE FROM sessions WHERE user_id=?').bind(target.id),
      db.prepare('DELETE FROM auth_tokens WHERE user_id=?').bind(target.id),
-     db.prepare("DELETE FROM users WHERE id=? AND role=? AND active=0").bind(target.id,target.role)
+     db.prepare("DELETE FROM users WHERE id=? AND role=? AND active=0").bind(target.id,target.role),
+     db.prepare('INSERT INTO audit_log(id,actor_id,action,entity,entity_id,detail) VALUES(?,?,?,?,?,?)')
+      .bind(id(),user.id,'delete_unused_staff_account','users',target.id,
+       'Unused inactive '+target.role+' account permanently removed')
     ]);
    }catch(err){
     // If the schema gained additional foreign keys, fail safely rather than
@@ -1595,8 +1598,6 @@ async function handle(req,env,ctx){
     console.error('Staff deletion blocked by database',err);
     error('Account deletion is blocked by related records. Keep the account deactivated and contact the administrator.',409);
    }
-   await audit(db,user,'delete_unused_staff_account','users',target.id,
-    'Unused inactive '+target.role+' account permanently removed');
    return json({ok:true});
   }
   if(method==='PATCH'){
