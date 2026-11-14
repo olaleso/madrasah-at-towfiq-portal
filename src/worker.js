@@ -1663,6 +1663,61 @@ async function handle(req,env,ctx){
   }
   return json({ok:true,results});
  }
+ if(path==='/api/legacy-students/families/correct-email'&&method==='POST'){
+  requireRole(user,'admin');
+  const b=await input(req);
+  if(b.confirmation!=='CORRECT VERIFIED GUARDIAN EMAIL'||b.guardian_verified!==true)
+   error('Confirm the guardian identity and their correct email before proceeding',400);
+  const previous=email(b.old_email),replacement=email(b.new_email);
+  if(!/^\S+@\S+\.\S+$/.test(replacement)||!/^\S+@\S+\.\S+$/.test(previous)
+     ||previous===replacement)error('Supply two different, valid guardian addresses',400);
+  // This repair is deliberately limited to a pending account whose email has
+  // never been activated. Active accounts require manual safeguarding review.
+  const queue=await first(db,'SELECT * FROM legacy_parent_onboarding WHERE guardian_email=?',previous);
+  if(!queue)error('Legacy guardian onboarding record not found',404);
+  const account=await first(db,'SELECT id,email,active,password_hash,role FROM users WHERE id=?',queue.user_id);
+  if(!account||email(account.email)!==previous||account.active||account.password_hash)
+   error('This guardian account is active or has a password. Contact the school administrator for manual account review.',409);
+  const collision=await first(db,'SELECT id FROM users WHERE email=?',replacement);
+  if(collision)error('The corrected email is already associated with an account. Review the family relationship manually.',409);
+  const targetQueue=await first(db,'SELECT id FROM legacy_parent_onboarding WHERE guardian_email=?',replacement);
+  if(targetQueue)error('Another guardian onboarding record uses the corrected address',409);
+  const ids=JSON.parse(queue.student_ids_json);
+  if(!Array.isArray(ids)||!ids.length||ids.length>100||new Set(ids).size!==ids.length)
+   error('Invalid linked family records; manual review required',409);
+  const pupils=await all(db,`SELECT s.id,s.parent_id,lower(trim(a.guardian_email)) AS guardian_email
+    FROM students s JOIN admissions a ON a.student_id=s.id
+    JOIN legacy_student_import_records li ON li.student_id=s.id
+    WHERE s.id IN (${ids.map(()=>'?').join(',')})`,...ids);
+  if(pupils.length!==ids.length||pupils.some(p=>p.parent_id!==account.id||p.guardian_email!==previous))
+   error('Family records no longer match the original guardian; manual review required',409);
+  const other=await first(db,`SELECT id FROM students WHERE parent_id=? AND id NOT IN
+    (${ids.map(()=>'?').join(',')}) LIMIT 1`,account.id,...ids);
+  if(other)error('The guardian account has other linked pupils; manual review required',409);
+  const otherAdmissions=await first(db,`SELECT a.id FROM admissions a WHERE lower(trim(a.guardian_email))=?
+    AND a.student_id NOT IN (${ids.map(()=>'?').join(',')}) LIMIT 1`,previous,...ids);
+  if(otherAdmissions)error('The old address is used in other student records; manual review required',409);
+  // Do not allow an outstanding migration-only message to reach the wrong
+  // address after correcting the guardian and access invitation.
+  const updates=[
+    db.prepare('UPDATE users SET email=? WHERE id=? AND active=0 AND password_hash IS NULL').bind(replacement,account.id),
+    ...ids.map(sid=>db.prepare('UPDATE admissions SET guardian_email=?,updated_at=? WHERE student_id=? AND lower(trim(guardian_email))=?').bind(replacement,iso(),sid,previous)),
+    db.prepare(`UPDATE legacy_parent_onboarding SET guardian_email=?,status='pending',attempts=0,
+      sent_at=NULL,last_error='',updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(replacement,queue.id),
+    db.prepare("DELETE FROM auth_tokens WHERE user_id=? AND purpose IN ('invite','reset')").bind(account.id),
+    db.prepare('DELETE FROM sessions WHERE user_id=?').bind(account.id),
+    db.prepare(`UPDATE legacy_migration_notices SET status='failed',attempts=4,
+       last_error='Guardian email corrected; preliminary notice suppressed',updated_at=CURRENT_TIMESTAMP
+       WHERE guardian_email=? AND status IN ('pending','failed')`).bind(previous)
+  ];
+  await db.batch(updates);
+  try{await audit(db,user,'legacy_guardian_email_corrected','users',account.id,
+    'Verified legacy guardian email corrected; old tokens revoked; fresh welcome queued');}catch(e){
+    console.error('Guardian correction audit failed',e);
+  }
+  return json({ok:true,queued:true,students:ids.length,
+    message:'Guardian email corrected. A new welcome invitation is queued; send it from Family onboarding.'});
+ }
  if(path==='/api/legacy-students/families/access-email'&&method==='POST'){
   requireRole(user,'admin');
   const b=await input(req);
