@@ -1641,8 +1641,13 @@ async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.
   if(mode==='invite')history.replaceState({},'',location.pathname);S.user=r.user;S.staffRole=S.user?.role;S.familyMode=false;S.csrf=r.csrf;toast('Welcome to Madrasah At-Towfiq!');await navigate('dashboard');return;
  }
  if(formId==='legacy-completion-form'){
-  await post('/legacy-students/profile',raw,'PATCH');toast('Legacy student profile updated');
-  await navigate(S.page==='legacy'?'legacy':'students',{keepStudent:true});return;
+  await post('/legacy-students/profile',raw,'PATCH');
+  // The modal is outside the SPA shell and survives navigate(), so close it
+  // explicitly after a successful save. Leave it open when the request fails.
+  close();
+  await navigate(S.page==='legacy'?'legacy':'students',{keepStudent:true});
+  toast('Student details saved successfully');
+  return;
  }
  if(formId==='student-form'){let {id:studentId,...payload}=raw;for(const k of ['class_id','parent_id','dob'])if(payload[k]==='')payload[k]=null;if(!studentId)throw Error('New students must be enrolled from Admissions');await post('/students',{...payload,id:studentId},'PATCH');toast('Student profile updated');}
  else if(formId==='homework-form'){if(['hifdh','murajaa'].includes(raw.type))validateQuranVerses(raw);if(raw.type==='qaaidah'||raw.type==='islamic_studies'){raw.surah_from='';raw.surah_to='';raw.verse_from=null;raw.verse_to=null;}const result=await post('/homework',raw);toast(notificationResultMessage(result,'homework'),result.notification_status!=='sent');}
