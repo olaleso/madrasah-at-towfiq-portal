@@ -110,3 +110,19 @@ test('guardian email correction requires verification and blocks active accounts
  assert.match(ui,/legacy-correct-email/);
  assert.match(ui,/guardian_verified:true/);
 });
+
+test('guardian and family onboarding tables expose live searchable rows',async()=>{
+ const {readFileSync}=await import('node:fs');
+ const {fileURLToPath}=await import('node:url');
+ const {resolve,dirname}=await import('node:path');
+ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+ const app=readFileSync(resolve(root,'public/app.js'),'utf8');
+ const legacy=readFileSync(resolve(root,'public/legacy-import.js'),'utf8');
+ assert.match(app,/id="guardian-table-search"/);
+ assert.match(app,/id="guardian-relationships-table"/);
+ assert.match(app,/row\.textContent\.toLocaleLowerCase\(\)\.includes\(query\)/);
+ assert.match(legacy,/id="legacy-family-search"/);
+ assert.match(legacy,/row\.textContent\.toLocaleLowerCase\(\)\.includes\(familyQuery\)/);
+ assert.match(legacy,/familyQuery=event\.target\.value/);
+ assert.match(legacy,/filterFamilies\(\)/);
+});
