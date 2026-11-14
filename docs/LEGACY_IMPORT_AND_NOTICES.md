@@ -64,3 +64,8 @@ Read-only report:
 ```powershell
 npx wrangler d1 execute attowfiq_portal --remote --command "SELECT status,COUNT(*) AS total FROM legacy_parent_onboarding GROUP BY status;"
 ```
+
+## Existing-account password access follow-up (November 2026)
+A verified family account can exist without the guardian remembering its password. Onboarding follow-ups for active accounts therefore include a **Set or reset my password** link that uses the existing 30-minute, one-time password-reset mechanism, plus the normal sign-in link. Reset is optional: the existing password remains valid until changed. New inactive accounts continue to receive their seven-day activation links.
+
+For already-sent follow-ups, an administrator can use **School management → Legacy student import → Family onboarding → Send password link** on an already-linked, previously-onboarded active family. This sends a new continuation email to that single guardian only; it does not relink pupils, duplicate the existing account, or resend the original migration notice. The new recovery link expires after 30 minutes and the admin action is audited. Only previously accepted onboarding groups with unchanged verified pupil links are eligible.
