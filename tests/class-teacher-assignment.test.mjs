@@ -25,3 +25,15 @@ test('teacher assignment checks permissions, account status and class timetable'
  assert.match(worker,/other\.ends_at>mine\.starts_at/);
  assert.match(worker,/assign_class_teacher/);
 });
+
+test('staff directory exposes deletion for inactive teachers only with typed confirmation',()=>{
+ assert.match(app,/u\.role==='teacher'&&!u\.active/);
+ assert.match(app,/data-action="delete-teacher"/);
+ assert.match(app,/requiredText:target\.email/);
+ assert.match(app,/confirmation:'DELETE TEACHER'/);
+ assert.match(worker,/if\(method==='DELETE'\)\{\s*const b=await input\(req\)/);
+ assert.match(worker,/target\.role!=='teacher'/);
+ assert.match(worker,/Number\(target\.active\)!==0/);
+ assert.match(worker,/PRAGMA foreign_key_list/);
+ assert.match(worker,/DELETE FROM users WHERE id=\? AND role='teacher' AND active=0/);
+});
