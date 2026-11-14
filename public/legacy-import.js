@@ -85,7 +85,7 @@
   const value=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text));
   return Array.from(new Uint8Array(value),b=>b.toString(16).padStart(2,'0')).join('');
  }
- function mount({api,post,toast,navigate,classes=[]}){
+ function mount({api,post,toast,navigate,confirmDialog,classes=[]}){
   const file=$('legacy-upload-file'),previewButton=$('legacy-preview-button'),
    templateButton=$('legacy-template-button'),list=$('legacy-preview-results'),
    confirm=$('legacy-confirm-phrase'),commit=$('legacy-commit-button'),
@@ -155,7 +155,7 @@
   familyLink?.addEventListener('click',async()=>{
    const emails=[...familyReview.querySelectorAll('.legacy-family-select:checked')].map(x=>x.dataset.email);
    if(!emails.length||!familyVerified?.checked)return;
-   if(!window.confirm('Link '+emails.length+' verified guardian groups to their children and queue follow-up invitations? Only proceed if you have verified their identities and access rights.'))return;
+   if(!await confirmDialog({title:'Link verified parent accounts?',message:'Link '+emails.length+' guardian groups to their imported children?',details:'Only continue if you have verified each guardian’s identity and their authorization to access the listed pupils. Follow-up invitations are queued separately.',actionLabel:'Link verified families',tone:'warning'}))return;
    familyLink.disabled=true;
    try{
     const result=await post('/legacy-students/families/onboard',{
@@ -168,7 +168,7 @@
    }catch(e){toast(e.message,true);updateFamilySelection();}
   });
   familySend?.addEventListener('click',async()=>{
-   if(!window.confirm('Send up to 10 queued or eligible failed family follow-up invitations now? Previously accepted follow-ups will not be resent.'))return;
+   if(!await confirmDialog({title:'Send parent activation follow-ups?',message:'Send up to 10 queued or eligible failed parent emails now?',details:'Already accepted follow-ups are excluded. Guardian access becomes available after account activation.',actionLabel:'Send follow-up emails',tone:'warning'}))return;
    familySend.disabled=true;
    try{
     const result=await post('/legacy-students/families/send',{confirmation:'SEND FAMILY FOLLOWUPS'});
