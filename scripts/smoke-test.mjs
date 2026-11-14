@@ -109,6 +109,14 @@ sqlite.prepare("INSERT INTO staff_dbs_checks(id,user_id,issued_on,review_due) VA
 staffDelete=await req('/users',{id:'staff-linked',email:'staff.dbs@example.test',confirmation:'DELETE STAFF'},'DELETE');
 assert.equal(staffDelete.status,409,'Staff DBS records must not be deleted through account deletion');
 assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM staff_dbs_checks WHERE id=?').get('dbs-staff-linked').n,1);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM users WHERE id=?').get('staff-linked').n,1,
+ 'A blocked delete must retain the teacher/staff account');
+// Clean up this test-only fixture so later DBS tests begin with an empty register.
+// The cleanup never runs against the production D1 database.
+sqlite.prepare('DELETE FROM staff_dbs_checks WHERE id=?').run('dbs-staff-linked');
+sqlite.prepare('DELETE FROM users WHERE id=?').run('staff-linked');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM staff_dbs_checks').get().n,0,
+ 'Deletion-protection fixture must not contaminate later DBS tests');
 
 z=await req('/classes',{name:'Foundation',stage:'Foundation',capacity:20});assert.equal(z.status,200,JSON.stringify(z.data));const class_id=z.data.id;
 // v1.9.0: Weekly timetable is private, editable by office staff and validated
