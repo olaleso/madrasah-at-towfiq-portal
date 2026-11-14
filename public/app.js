@@ -885,7 +885,7 @@ function staffPage(){
  return `${pagehead('Staff & administration','Manage administrator, teacher and office accounts.',`<button class="btn primary" data-action="modal" data-value="invite">${ico('plus',16)} Invite staff</button>`)}
  <div class="surface"><div class="surface-head"><h3>Staff directory</h3>${tag(`${users.length} people`,'blue')}</div>
  <div class="table-scroll"><table class="table"><thead><tr><th>Name</th><th>Role</th><th>Email</th><th>State</th><th>Manage</th></tr></thead><tbody>
- ${users.map(u=>`<tr><td class="cell-name">${h(u.name)}</td><td>${tag(cap(u.role),'blue')}</td><td>${h(u.email)}</td><td>${statusTag(u.active?'active':'inactive')}</td><td><div class="row" style="gap:7px"><button class="btn smol outline" data-action="modal" data-value="edit-user" data-id="${h(u.id)}">${ico('edit',14)} Edit</button>${u.id!==S.user.id?`<button class="btn smol outline" data-action="toggle-user" data-id="${h(u.id)}" data-active="${u.active?0:1}">${u.active?'Deactivate':'Activate'}</button>`:tag('Your account','green')}</div></td></tr>`).join('')}
+ ${users.map(u=>`<tr><td class="cell-name">${h(u.name)}</td><td>${tag(cap(u.role),'blue')}</td><td>${h(u.email)}</td><td>${statusTag(u.active?'active':'inactive')}</td><td><div class="row" style="gap:7px"><button class="btn smol outline" data-action="modal" data-value="edit-user" data-id="${h(u.id)}">${ico('edit',14)} Edit</button>${u.id!==S.user.id?`<button class="btn smol outline" data-action="toggle-user" data-id="${h(u.id)}" data-active="${u.active?0:1}">${u.active?'Deactivate':'Activate'}</button>${u.role==='teacher'&&!u.active?`<button class="btn smol outline" data-action="delete-teacher" data-id="${h(u.id)}" title="Permanently delete unused teacher account">${ico('trash',14)} Delete</button>`:''}`:tag('Your account','green')}</div></td></tr>`).join('')}
  </tbody></table></div></div><div class="notice" style="margin-top:15px">Parent and guardian accounts are managed from School management → Parents & guardians. Changing another staff member’s email revokes their old sessions and requires a new one-time activation.</div>`;
 }
 function guardiansPage(){
@@ -1460,6 +1460,22 @@ async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
   const unread=get('messages').filter(m=>(m.conversation_id||m.thread_root_id||m.id)===selectedId&&m.recipient_id===S.user.id&&!m.read_at);
   await Promise.all(unread.map(m=>post('/messages',{id:m.id},'PATCH')));
   await load(['messages']);renderPage();return;
+ }
+ if(a==='delete-teacher'){
+  if(!userCan('admin'))return;
+  const target=get('users').find(u=>u.id===selectedId&&u.role==='teacher');
+  if(!target)return;
+  if(target.active)throw Error('Deactivate the teacher first to delete the account.');
+  const confirmed=await confirmDialog({
+   title:'Permanently delete teacher account?',
+   message:'Delete '+target.name+' ('+target.email+') from Staff & administration?',
+   details:'Only an inactive account without classes, safeguarding records, teaching activity or other school history can be deleted. Historical records must be retained; use Deactivate instead. This cannot be undone.',
+   actionLabel:'Permanently delete teacher',tone:'danger',requiredText:target.email
+  });
+  if(!confirmed)return;
+  await post('/users',{id:target.id,email:target.email,confirmation:'DELETE TEACHER'},'DELETE');
+  toast('Unused teacher account deleted successfully');
+  await navigate('staff');return;
  }
  if(a==='classroom-profile'){await navigate('students');if(!get('students').some(x=>x.id===selectedId))return;S.studentId=selectedId;S.studentTab='overview';renderPage();return;}
  if(a==='nav'){
