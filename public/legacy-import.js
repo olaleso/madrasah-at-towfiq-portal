@@ -102,6 +102,82 @@
       Number(c.sending||0)+' sending; '+Number(c.failed||0)+' awaiting retry.':
      'No migration notices have been queued yet.';
   }).catch(()=>{const stats=$('legacy-delivery-stats');if(stats)stats.textContent='Notification delivery status unavailable';});
+  // Family onboarding is deliberately separate from the historical import.
+  // No child is linked merely because an email address is present in the CSV.
+  const familyReview=$('legacy-family-review');
+  const familyVerified=$('legacy-family-verified');
+  const familyLink=$('legacy-link-families');
+  const familySend=$('legacy-send-followups');
+  const familyStatus=$('legacy-family-status');
+  let families=[];
+  const redrawFamilies=()=>{
+   if(!familyReview)return;
+   const groups=new Map();
+   let withoutEmail=0;
+   for(const item of families){
+    const address=String(item.guardian_email||'').trim();
+    if(!address){withoutEmail++;continue;}
+    if(!groups.has(address))groups.set(address,[]);
+    groups.get(address).push(item);
+   }
+   const rows=[...groups.entries()].map(([address,kids])=>{
+    const names=[...new Set(kids.map(x=>String(x.guardian_name||'').trim().toLowerCase()).filter(Boolean))];
+    const linked=kids.every(x=>x.parent_id&&x.parent_id===(x.account_id||''));
+    const conflict=names.length!==1||kids.some(x=>x.parent_id&&x.parent_id!==x.account_id)||
+      kids.some(x=>x.has_password&& !x.account_active);
+    const queued=Boolean(kids[0].onboarding_status);
+    const eligible=!conflict&&!queued&&!linked;
+    const status=conflict?'Manual review':queued?'Follow-up '+kids[0].onboarding_status:
+      linked?'Already linked':'Ready for verification';
+    const children=kids.map(x=>h(x.first_name+' '+x.last_name+' ('+x.student_no+')')).join(', ');
+    return '<tr><td><input type="checkbox" class="legacy-family-select" data-email="'+h(address)+
+       '" '+(eligible?'':'disabled')+'></td><td><strong>'+h(kids[0].guardian_name||'Guardian name missing')+
+       '</strong><small>'+h(address)+'</small></td><td>'+children+'</td><td>'+h(status)+'</td></tr>';
+   }).join('');
+   familyReview.innerHTML='<p class="small muted">'+groups.size+' guardian groups · '+withoutEmail+
+     ' pupils missing guardian email. Confirm any group marked manual review before proceeding.</p>'+
+     '<div class="table-scroll"><table class="table"><thead><tr><th>Select</th><th>Guardian</th><th>Imported children</th><th>Status</th></tr></thead><tbody>'+
+      rows+'</tbody></table></div>';
+   if(familyLink)familyLink.disabled=true;
+   if(familyVerified)familyVerified.checked=false;
+  };
+  const loadFamilies=async()=>{
+   if(!familyReview)return;
+   try{const result=await api('/legacy-students/families');families=result.items||[];redrawFamilies();}
+   catch(e){familyReview.textContent='Could not load family groups: '+e.message;}
+  };
+  const updateFamilySelection=()=>{
+   if(familyLink)familyLink.disabled=!(familyVerified?.checked&&
+     familyReview?.querySelector('.legacy-family-select:checked'));
+  };
+  familyReview?.addEventListener('change',updateFamilySelection);
+  familyVerified?.addEventListener('change',updateFamilySelection);
+  familyLink?.addEventListener('click',async()=>{
+   const emails=[...familyReview.querySelectorAll('.legacy-family-select:checked')].map(x=>x.dataset.email);
+   if(!emails.length||!familyVerified?.checked)return;
+   if(!window.confirm('Link '+emails.length+' verified guardian groups to their children and queue follow-up invitations? Only proceed if you have verified their identities and access rights.'))return;
+   familyLink.disabled=true;
+   try{
+    const result=await post('/legacy-students/families/onboard',{
+     emails,guardians_verified:true,confirmation:'LINK VERIFIED GUARDIANS'});
+    const queued=result.results.filter(x=>x.status==='queued').length;
+    const review=result.results.filter(x=>x.status==='review').length;
+    familyStatus.textContent=queued+' family groups linked and queued; '+review+
+     ' require manual review. Click Send queued follow-up invitations when ready.';
+    await loadFamilies();
+   }catch(e){toast(e.message,true);updateFamilySelection();}
+  });
+  familySend?.addEventListener('click',async()=>{
+   if(!window.confirm('Send up to 10 queued or eligible failed family follow-up invitations now? Previously accepted follow-ups will not be resent.'))return;
+   familySend.disabled=true;
+   try{
+    const result=await post('/legacy-students/families/send',{confirmation:'SEND FAMILY FOLLOWUPS'});
+    familyStatus.textContent=result.accepted+' follow-up messages accepted by the email provider this run. More will be sent by the scheduled queue.';
+    await loadFamilies();
+   }catch(e){toast(e.message,true);}
+   finally{familySend.disabled=false;}
+  });
+  loadFamilies();
   const update=()=>{
    const selected=[...document.querySelectorAll('.legacy-select:checked')].map(el=>rows[Number(el.dataset.index)]);
    const chosen=selected.length;
