@@ -236,7 +236,7 @@ export async function dispatchLegacyMigrationNotices(env,maxCount=30){
 
 
 const LEGACY_ONBOARD_SUBJECT='Next step: Activate your Madrasah At-Towfiq family portal';
-function legacyOnboardingHtml(name,children,activationUrl='',existingStaff=false){
+export function legacyOnboardingHtml(name,children,activationUrl='',existingStaff=false){
  const guardian=escapeHtml(short(name||'Parent / Guardian',100));
  const rows=children.map(x=>'<tr><td style="padding:10px;border-bottom:1px solid #e3eaf4">'+escapeHtml(x.first_name+' '+x.last_name)+'</td><td style="padding:10px;border-bottom:1px solid #e3eaf4">'+escapeHtml(x.student_no)+'</td></tr>').join('');
  const activated=Boolean(activationUrl);
