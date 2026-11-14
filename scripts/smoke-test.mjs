@@ -74,6 +74,14 @@ const legacyDigest=pbkdf2Sync('legacy-password-123',Buffer.from(legacySalt,'base
 sqlite.prepare("INSERT INTO users(id,name,email,role,password_hash,password_salt) VALUES(?,?,?,?,?,?)").run('legacy-fixture','Local Legacy','legacy@example.test','staff',legacyDigest,legacySalt);
 const legacyLogin=await req('/auth/login',{email:'legacy@example.test',password:'legacy-password-123'},'POST',false);
 assert.equal(legacyLogin.status,200,JSON.stringify(legacyLogin.data));
+// Teacher assignments use active Teacher accounts, not office Staff roles.
+sqlite.prepare("INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,?)").run('teacher-fixture','Teacher A','teacher.a@example.test','teacher',1);
+sqlite.prepare("INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,?)").run('teacher-backup','Teacher B','teacher.b@example.test','teacher',1);
+sqlite.prepare("INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,?)").run('teacher-inactive','Inactive Teacher','teacher.inactive@example.test','teacher',0);
+let teacherChoices=await req('/classes/teachers');
+assert.equal(teacherChoices.status,200);
+assert.ok(teacherChoices.data.items.some(x=>x.id==='teacher-fixture'));
+assert.ok(!teacherChoices.data.items.some(x=>x.id==='teacher-inactive'));
 z=await req('/classes',{name:'Foundation',stage:'Foundation',capacity:20});assert.equal(z.status,200,JSON.stringify(z.data));const class_id=z.data.id;
 // v1.9.0: Weekly timetable is private, editable by office staff and validated
 // against same-class, teacher and physical-room scheduling conflicts.
@@ -91,18 +99,35 @@ z=await req('/timetable',{...timetableRow,weekday:0});assert.equal(z.status,400,
 z=await req('/timetable',{...timetableRow,starts_at:'24:00'});assert.equal(z.status,400,'24:00 is not a valid wall clock time');
 z=await req('/timetable',{...timetableRow,starts_at:'12:00',ends_at:'11:00'});assert.equal(z.status,400,'End cannot precede start');
 z=await req('/timetable',{...timetableRow,class_id:'unknown-class'});assert.equal(z.status,404,'Class must exist');
-z=await req('/classes',{name:'Timetable Studio A',stage:'Hifdh',capacity:16,teacher_id:'legacy-fixture'});assert.equal(z.status,200);const timetableClassA=z.data.id;
-z=await req('/classes',{name:'Timetable Studio B',stage:'Qaaidah',capacity:16,teacher_id:'legacy-fixture'});assert.equal(z.status,200);const timetableClassB=z.data.id;
+z=await req('/classes',{name:'Timetable Studio A',stage:'Hifdh',capacity:16,teacher_id:'teacher-fixture'});assert.equal(z.status,200);const timetableClassA=z.data.id;
+z=await req('/classes',{name:'Timetable Studio B',stage:'Qaaidah',capacity:16,teacher_id:'teacher-fixture'});assert.equal(z.status,200);const timetableClassB=z.data.id;
 z=await req('/timetable',{...timetableRow,class_id:timetableClassA,starts_at:'10:30',ends_at:'11:30',subject:'Hifdh',room:'room a'});
 assert.equal(z.status,409,'Rooms are case-insensitive and cannot overlap');
 z=await req('/timetable',{...timetableRow,class_id:timetableClassA,starts_at:'10:30',ends_at:'11:30',subject:'Hifdh',room:'Room B'});
 assert.equal(z.status,200);const teacherSessionId=z.data.id;
 z=await req('/timetable',{...timetableRow,class_id:timetableClassB,starts_at:'10:45',ends_at:'11:45',subject:'Qur’an revision',room:'Room C'});
 assert.equal(z.status,409,'A teacher cannot be scheduled to different classes simultaneously');
+// Admin and staff can select an active teacher; inactive users and other roles are blocked.
+let teacherAssign=await req('/classes/teacher',{class_id:timetableClassB,teacher_id:'teacher-inactive'},'PATCH');
+assert.equal(teacherAssign.status,400,'Inactive teachers must not be assignable');
+teacherAssign=await req('/classes/teacher',{class_id:timetableClassB,teacher_id:'legacy-fixture'},'PATCH');
+assert.equal(teacherAssign.status,400,'Staff accounts must not be silently treated as teachers');
+teacherAssign=await req('/classes/teacher',{class_id:timetableClassB,teacher_id:'teacher-backup'},'PATCH');
+assert.equal(teacherAssign.status,200,JSON.stringify(teacherAssign.data));
+assert.equal(sqlite.prepare('SELECT teacher_id FROM classes WHERE id=?').get(timetableClassB).teacher_id,'teacher-backup');
+teacherAssign=await req('/classes/teacher',{class_id:timetableClassB,teacher_id:'teacher-fixture'},'PATCH');
+assert.equal(teacherAssign.status,200,'Class teacher can be changed back');
+teacherAssign=await req('/classes/teacher',{class_id,teacher_id:'teacher-fixture'},'PATCH');
+assert.equal(teacherAssign.status,409,'A teacher must not be assigned to overlapping class lessons');
+teacherAssign=await req('/classes/teacher',{class_id:timetableClassB,teacher_id:''},'PATCH');
+assert.equal(teacherAssign.status,200,'Office can unassign a teacher');
+assert.equal(sqlite.prepare('SELECT teacher_id FROM classes WHERE id=?').get(timetableClassB).teacher_id,null);
+teacherAssign=await req('/classes/teacher',{class_id:timetableClassB,teacher_id:'teacher-fixture'},'PATCH');
+assert.equal(teacherAssign.status,200);
 z=await req('/timetable',{...timetableRow,class_id:timetableClassB,starts_at:'11:30',ends_at:'13:00',subject:'Qur’an revision',room:'Room C'});
 assert.equal(z.status,200,'Teacher can start another class as soon as the preceding session ends');
 const alternateId=z.data.id;
-z=await req('/classes',{id:timetableClassB,name:'Timetable Studio B',stage:'Qaaidah',capacity:16,teacher_id:'legacy-fixture',schedule:''},'PATCH');
+z=await req('/classes',{id:timetableClassB,name:'Timetable Studio B',stage:'Qaaidah',capacity:16,teacher_id:'teacher-fixture',schedule:''},'PATCH');
 assert.equal(z.status,200);
 z=await req('/timetable',{id:timetableId,...timetableRow,weekday:5,starts_at:'09:30',ends_at:'11:00'},'PATCH');
 assert.equal(z.status,200,'Admin can move a timetable session');
