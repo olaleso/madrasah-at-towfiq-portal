@@ -128,13 +128,15 @@
     const queued=Boolean(kids[0].onboarding_status);
     const eligible=!conflict&&!queued&&!linked;
     const recoveryAllowed=linked&&kids[0].onboarding_status==='sent'&&Boolean(kids[0].account_active&&kids[0].has_password);
+    const canCorrect=queued&&!kids.some(x=>x.account_active||x.has_password)&&!conflict;
     const status=conflict?'Manual review':queued?'Follow-up '+kids[0].onboarding_status:
       linked?'Already linked':'Ready for verification';
     const children=kids.map(x=>h(x.first_name+' '+x.last_name+' ('+x.student_no+')')).join(', ');
     return '<tr><td><input type="checkbox" class="legacy-family-select" data-email="'+h(address)+
        '" '+(eligible?'':'disabled')+'></td><td><strong>'+h(kids[0].guardian_name||'Guardian name missing')+
        '</strong><small>'+h(address)+'</small></td><td>'+children+'</td><td>'+h(status)+
-       (recoveryAllowed?' <button type="button" class="btn smol white legacy-access-email" data-email="'+h(address)+'">Send password link</button>':'')+'</td></tr>';
+       (recoveryAllowed?' <button type="button" class="btn smol white legacy-access-email" data-email="'+h(address)+'">Send password link</button>':'')+
+       (canCorrect?' <button type="button" class="btn smol white legacy-correct-email" data-email="'+h(address)+'">Correct email</button>':'')+'</td></tr>';
    }).join('');
    familyReview.innerHTML='<p class="small muted">'+groups.size+' guardian groups · '+withoutEmail+
      ' pupils missing guardian email. Confirm any group marked manual review before proceeding.</p>'+
@@ -152,6 +154,50 @@
    if(familyLink)familyLink.disabled=!(familyVerified?.checked&&
      familyReview?.querySelector('.legacy-family-select:checked'));
   };
+  familyReview?.addEventListener('click',async event=>{
+   const button=event.target.closest('.legacy-correct-email');
+   if(!button)return;
+   const current=button.dataset.email;
+   const row=button.closest('tr');
+   const existing=row.querySelector('.legacy-email-correction');
+   if(existing){existing.remove();return;}
+   const area=document.createElement('div');
+   area.className='legacy-email-correction';
+   area.style.marginTop='10px';
+   const label=document.createElement('label');
+   label.textContent='Correct guardian email';
+   label.className='small';
+   const entry=document.createElement('input');
+   entry.type='email';entry.required=true;entry.autocomplete='off';
+   entry.placeholder='verified.guardian@example.com';
+   entry.style.width='min(100%,310px)';
+   entry.style.display='block';
+   const save=document.createElement('button');
+   save.type='button';save.className='btn smol primary';
+   save.textContent='Verify and update';
+   area.append(label,entry,save);
+   row.lastElementChild.append(area);
+   entry.focus();
+   save.addEventListener('click',async()=>{
+    const replacement=entry.value.trim().toLowerCase();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(replacement)||replacement===current){
+     toast('Enter a valid, different guardian email address',true);return;
+    }
+    const ok=await confirmDialog({title:'Verify corrected guardian email',message:'Change the guardian email from '+current+' to '+replacement+'?',details:'Confirm the address belongs to the authorised guardian. Old activation links will be revoked and a new welcome invitation queued. Active accounts and conflicting families are blocked.',actionLabel:'Correct verified email',tone:'warning'});
+    if(!ok)return;
+    save.disabled=true;
+    try{
+     const result=await post('/legacy-students/families/correct-email',{
+      old_email:current,new_email:replacement,guardian_verified:true,
+      confirmation:'CORRECT VERIFIED GUARDIAN EMAIL'
+     });
+     familyStatus.textContent=result.message;
+     toast('Email corrected for '+result.students+' pupil(s). Now send the queued welcome invitation.');
+     await loadFamilies();
+    }catch(err){toast(err.message,true);save.disabled=false;}
+   });
+   return;
+  });
   familyReview?.addEventListener('click',async event=>{
    const button=event.target.closest('.legacy-access-email');
    if(!button)return;
