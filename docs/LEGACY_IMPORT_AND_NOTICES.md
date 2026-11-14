@@ -45,3 +45,22 @@ Run a read-only count query:
 npx wrangler@latest d1 execute attowfiq_portal --remote --command "SELECT (SELECT COUNT(*) FROM students) AS students, (SELECT COUNT(*) FROM legacy_student_import_records) AS legacy_imports, (SELECT COUNT(*) FROM legacy_migration_notices WHERE status='sent') AS notices_sent, (SELECT COUNT(*) FROM legacy_migration_notices WHERE status IN ('pending','sending','failed')) AS notices_outstanding;"
 ```
 Then use Student Directory to assign classes manually. The Legacy student import screen shows outstanding details and notice status. Do not assume every guardian email was delivered simply because the pupils imported successfully.
+
+
+## Legacy parent onboarding — follow-up to the original migration notice
+Migration notices merely confirm that existing pupil records have moved. They are **not** account invitations. Parent onboarding requires separate, explicit administrator review.
+
+1. Apply `0020_legacy_parent_onboarding.sql`, then deploy the latest Worker and portal assets.
+2. Open **School management → Legacy student import → Link and invite imported families**.
+3. Review guardian groups and the children assigned to each email. Missing addresses, differing guardian names, deactivated accounts and conflicting links require manual correction.
+4. Select only the groups whose identities, email ownership and authorization to access each child have been verified. Confirm **Link verified families**.
+5. This creates/reuses one guardian account per verified address, links its imported children and queues one separate follow-up email per family. The historical student import is not repeated.
+6. Choose **Send queued follow-up invitations** to send up to 10 eligible queued emails, respecting rate limits. The daily scheduler processes more queue entries, in bounded serial batches.
+7. New accounts get a single-use, seven-day activation link; existing active accounts get sign-in instructions. The HTML says explicitly that it is a **follow-up to the earlier migration notice**. It includes all linked children and their registration numbers. Already-accepted onboarding emails are not resent by the normal queue.
+
+The onboarding queue is `legacy_parent_onboarding`, separate from `legacy_migration_notices`. Both have retry state and capped attempts; accepted by Resend is not guaranteed inbox delivery. The admin must confirm guardian identity before authorizing access. No parent should be linked merely because an email exists in an old spreadsheet.
+
+Read-only report:
+```powershell
+npx wrangler d1 execute attowfiq_portal --remote --command "SELECT status,COUNT(*) AS total FROM legacy_parent_onboarding GROUP BY status;"
+```
