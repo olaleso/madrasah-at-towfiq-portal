@@ -41,3 +41,15 @@ test('existing active guardian gets optional secure 30-minute reset link',()=>{
  assert.match(html,/existing password remains valid/);
  assert.doesNotMatch(html,/invite=/);
 });
+
+test('legacy profile save closes its modal before refreshing student details',async()=>{
+ const {readFileSync}=await import('node:fs');
+ const {fileURLToPath}=await import('node:url');
+ const {resolve,dirname}=await import('node:path');
+ const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+ const source=readFileSync(resolve(root,'public/app.js'),'utf8');
+ const branch=source.match(/if\(formId==='legacy-completion-form'\)\{([\s\S]*?)\n \}/);
+ assert.ok(branch,'legacy completion handler exists');
+ assert.match(branch[1],/await post\('\/legacy-students\/profile',raw,'PATCH'\);/);
+ assert.match(branch[1],/close\(\);\s*await navigate\(/);
+});
