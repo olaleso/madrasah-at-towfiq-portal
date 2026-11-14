@@ -1470,6 +1470,40 @@ async function handle(req,env,ctx){
   await audit(db,user,method==='POST'?'create':'update','class_timetable',timetableId);
   return json({ok:true,id:timetableId});
  }
+ // Only active teacher accounts may be assigned to a learning class.
+ async function checkedClassTeacher(teacherId,classId=''){
+  const tid=short(teacherId,100);
+  if(!tid)return null;
+  const candidate=await first(db,"SELECT id FROM users WHERE id=? AND role='teacher' AND active=1",tid);
+  if(!candidate)error('Select an active teacher account from the list',400);
+  if(classId){
+   const conflict=await first(db,`SELECT other.id FROM class_timetable_sessions mine
+    JOIN class_timetable_sessions other ON other.weekday=mine.weekday
+     AND other.class_id<>mine.class_id AND other.starts_at<mine.ends_at
+     AND other.ends_at>mine.starts_at
+    JOIN classes linked ON linked.id=other.class_id
+    WHERE mine.class_id=? AND linked.teacher_id=? LIMIT 1`,classId,tid);
+   if(conflict)error('This teacher is already teaching another class at an overlapping timetable time',409);
+  }
+  return tid;
+ }
+ if(path==='/api/classes/teachers'&&method==='GET'){
+  requireRole(user,'admin','staff');
+  return json({items:await all(db,"SELECT id,name FROM users WHERE role='teacher' AND active=1 ORDER BY name")});
+ }
+ if(path==='/api/classes/teacher'&&method==='PATCH'){
+  requireRole(user,'admin','staff');
+  const b=await input(req);
+  const classId=short(b.class_id,100);
+  if(!classId||typeof b.teacher_id!=='string')error('Class and teacher selection are required',400);
+  const current=await first(db,'SELECT id,name,teacher_id FROM classes WHERE id=?',classId);
+  if(!current)error('Class not found',404);
+  const teacherId=await checkedClassTeacher(b.teacher_id,classId);
+  await run(db,'UPDATE classes SET teacher_id=? WHERE id=?',teacherId,classId);
+  await audit(db,user,'assign_class_teacher','classes',classId,
+   'Teacher assignment updated for '+current.name);
+  return json({ok:true,teacher_id:teacherId});
+ }
  if(path==='/api/classes'){
   if(method==='GET'){
    const base='SELECT c.*,u.name AS teacher_name,(SELECT COUNT(*) FROM students s WHERE s.class_id=c.id) AS enrolled FROM classes c LEFT JOIN users u ON u.id=c.teacher_id';
@@ -1486,7 +1520,8 @@ async function handle(req,env,ctx){
    if(!short(b.name,100))error('Class name required');
    const capacity=b.capacity===undefined?25:Number(b.capacity);
    if(!Number.isInteger(capacity)||capacity<1||capacity>1000)error('Class capacity must be between 1 and 1000',400);
-   const cid=id();await run(db,'INSERT INTO classes(id,name,stage,teacher_id,capacity,schedule) VALUES(?,?,?,?,?,?)',cid,short(b.name,100),short(b.stage,60)||'Foundation',b.teacher_id||null,capacity,short(b.schedule,200));
+   const teacherId=await checkedClassTeacher(b.teacher_id||'');
+   const cid=id();await run(db,'INSERT INTO classes(id,name,stage,teacher_id,capacity,schedule) VALUES(?,?,?,?,?,?)',cid,short(b.name,100),short(b.stage,60)||'Foundation',teacherId,capacity,short(b.schedule,200));
    await audit(db,user,'create','class',cid);return json({ok:true,id:cid});
   }
   if(method==='PATCH'){
@@ -1497,17 +1532,8 @@ async function handle(req,env,ctx){
    if(!Number.isInteger(capacity)||capacity<1||capacity>1000)error('Class capacity must be between 1 and 1000',400);
    const total=await first(db,'SELECT COUNT(*) AS total FROM students WHERE class_id=?',b.id);
    if(Number(total?.total||0)>capacity)error('Class already has '+total.total+' pupils. Increase capacity or reallocate pupils first.',409);
-   const newTeacher=short(b.teacher_id,100);
-   if(newTeacher){
-    const conflict=await first(db,`SELECT other.id FROM class_timetable_sessions mine
-      JOIN class_timetable_sessions other ON other.weekday=mine.weekday
-        AND other.class_id<>mine.class_id AND other.starts_at<mine.ends_at
-        AND other.ends_at>mine.starts_at
-      JOIN classes linked ON linked.id=other.class_id
-      WHERE mine.class_id=? AND linked.teacher_id=? LIMIT 1`,b.id,newTeacher);
-    if(conflict)error('This teacher already has an overlapping weekly timetable session in another class',409);
-   }
-   await run(db,'UPDATE classes SET name=?,stage=?,teacher_id=?,capacity=?,schedule=? WHERE id=?',short(b.name,100),short(b.stage,60),b.teacher_id||null,capacity,short(b.schedule,200),b.id);
+   const teacherId=await checkedClassTeacher(b.teacher_id||'',b.id);
+   await run(db,'UPDATE classes SET name=?,stage=?,teacher_id=?,capacity=?,schedule=? WHERE id=?',short(b.name,100),short(b.stage,60),teacherId,capacity,short(b.schedule,200),b.id);
    await audit(db,user,'update','class',b.id);return json({ok:true});
   }
  }
