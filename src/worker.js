@@ -1663,6 +1663,37 @@ async function handle(req,env,ctx){
   }
   return json({ok:true,results});
  }
+ if(path==='/api/legacy-students/families/access-email'&&method==='POST'){
+  requireRole(user,'admin');
+  const b=await input(req);
+  if(b.confirmation!=='SEND ACCESS RECOVERY')error('Confirm sending access recovery',400);
+  const address=email(b.email);
+  const record=await first(db,'SELECT * FROM legacy_parent_onboarding WHERE guardian_email=?',address);
+  if(!record||record.status!=='sent')error('Family must have a previously accepted onboarding invitation',409);
+  const account=await first(db,'SELECT id,email,role,active,password_hash FROM users WHERE id=?',record.user_id);
+  if(!account||email(account.email)!==address||!account.active||!account.password_hash)
+   error('Family account is not active or requires manual review',409);
+  const ids=JSON.parse(record.student_ids_json);
+  if(!Array.isArray(ids)||!ids.length||ids.length>100)error('Invalid family group',409);
+  const children=await all(db,`SELECT id,student_no,first_name,last_name,parent_id FROM students WHERE id IN (${ids.map(()=>'?').join(',')})`,...ids);
+  if(children.length!==ids.length||children.some(child=>child.parent_id!==account.id))
+   error('Family links have changed; review before sending',409);
+  const previous=await first(db,"SELECT created_at FROM auth_tokens WHERE user_id=? AND purpose='reset' ORDER BY created_at DESC LIMIT 1",account.id);
+  if(previous&&Date.now()-Date.parse(previous.created_at+'Z')<60000)error('Please wait one minute before sending another reset link',429);
+  const token=random(32);
+  await db.batch([
+   db.prepare("DELETE FROM auth_tokens WHERE user_id=? AND purpose='reset'").bind(account.id),
+   db.prepare('INSERT INTO auth_tokens(token_hash,user_id,purpose,expires_at) VALUES(?,?,?,?)')
+    .bind(await sha(token),account.id,'reset',nextIso(1800))
+  ]);
+  const link='https://portal.attowfiqmasjid.org/?reset='+encodeURIComponent(token);
+  const html=legacyOnboardingHtml(record.guardian_name,children,'',account.role!=='parent',link);
+  const outcome=await mail(env,address,LEGACY_ONBOARD_SUBJECT,html,
+   {replyTo:'admissions@attowfiqmasjid.org'});
+  try{await audit(db,user,'legacy_family_access_recovery','users',account.id,
+   outcome.sent?'recovery_email_accepted':'recovery_email_failed');}catch{}
+  return json({ok:true,accepted:outcome.sent,error:outcome.sent?'':outcome.error||'Email provider rejected message'});
+ }
  if(path==='/api/legacy-students/families/send'&&method==='POST'){
   requireRole(user,'admin');
   const b=await input(req);
