@@ -3,7 +3,7 @@
    no third-party PDF service receives student or family data. */
 (()=>{
  'use strict';
- const W=1240,H=1754,ROWS_PER_PAGE=9;
+ const W=1240,H=1754,ROWS_PER_PAGE=8;
  const navy='#142e58',blue='#2b66ba',gold='#cda95e';
  const pounds=p=>'£'+(Number(p||0)/100).toFixed(2);
  const label=s=>String(s??'').slice(0,160);
