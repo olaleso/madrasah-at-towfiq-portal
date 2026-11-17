@@ -1812,7 +1812,9 @@ async function handle(req,env,ctx){
     ['student_leave_requests','reviewed_by'],
     ['masjid_contact_enquiries','reviewed_by'],
     ['legacy_student_import_records','imported_by'],
-    ['legacy_parent_onboarding','user_id']
+    ['legacy_parent_onboarding','user_id'],
+    ['family_invoices','guardian_id'],['family_invoices','created_by'],
+    ['family_payment_batches','recorded_by']
    ];
    for(const [table,column] of protectedReferences){
     const referenced=await first(db,'SELECT 1 AS linked FROM "'+table+'" WHERE "'+column+'"=? LIMIT 1',target.id);
@@ -2323,7 +2325,15 @@ async function handle(req,env,ctx){
     if(Number(count.total)>=Number(target.capacity))error('Selected class is full. Choose another class or increase its capacity.',409);
    }
    await run(db,'UPDATE students SET first_name=?,last_name=?,dob=?,gender=?,class_id=?,parent_id=?,phone=?,address=?,medical_notes=?,status=? WHERE id=?',...FIELDS_STUDENT.map(k=>(obj[k]===null||(['class_id','parent_id'].includes(k)&&!obj[k]))?null:short(obj[k],k==='medical_notes'?600:250)),b.id);await audit(db,user,'update','student',b.id);return json({ok:true});}
-  if(method==='DELETE'){if(!b.id)error('Student ID required');await run(db,'DELETE FROM students WHERE id=?',b.id);await audit(db,user,'delete','student',b.id,'Hard deleted student and linked records');return json({ok:true});}
+  if(method==='DELETE'){
+   if(!b.id)error('Student ID required');
+   const billed=await first(db,`SELECT fil.invoice_id FROM family_invoice_lines fil
+     JOIN fee_invoices f ON f.id=fil.invoice_id WHERE f.student_id=? LIMIT 1`,b.id);
+   if(billed)error('This pupil has an issued family invoice. Retain the accounting history and mark the pupil inactive instead of deleting the record.',409);
+   await run(db,'DELETE FROM students WHERE id=?',b.id);
+   await audit(db,user,'delete','student',b.id,'Hard deleted student and linked records');
+   return json({ok:true});
+  }
  }
  // Full paper-form-equivalent admissions. Records are restricted to office roles.
  if(path==='/api/admissions'){
