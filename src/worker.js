@@ -748,7 +748,7 @@ async function familyIssuedStatement(db,invoiceId,viewer=null){
  if(viewer?.role==='parent'&&viewer.id!==record.guardian_id)error('Family invoice not available to this account',403);
  const rows=await familyLedgerRows(db,'',record.id);
  if(!rows.length)error('Family invoice has no student charges',409);
- if(rows.some(x=>x.guardian_id!==record.guardian_id))
+ if(rows.some(x=>x.guardian_id!==record.guardian_id||x.period!==record.period))
   error('Family relationships have changed. School administration must review this invoice.',409);
  const group=groupFamilyFeeRows(rows)[0];
  if(!group||group.requires_review||group.lines.length!==rows.length)
@@ -2633,7 +2633,7 @@ async function handle(req,env,ctx){
  }
  if(path==='/api/fees/families/payment-history' && method==='GET'){
   if(!['admin','staff','parent'].includes(user.role))error('Access not permitted',403);
-  const privateScope=user.role==='parent'?'WHERE f.guardian_id=? AND EXISTS (SELECT 1 FROM family_invoice_lines l JOIN fee_invoices i ON i.id=l.invoice_id JOIN students s ON s.id=i.student_id WHERE l.family_invoice_id=f.id AND s.parent_id=?)':'';
+  const privateScope=user.role==='parent'?'WHERE f.guardian_id=? AND NOT EXISTS (SELECT 1 FROM family_invoice_lines l JOIN fee_invoices i ON i.id=l.invoice_id JOIN students s ON s.id=i.student_id WHERE l.family_invoice_id=f.id AND (s.parent_id IS NULL OR s.parent_id<>?))':'';
   const rows=await all(db,'SELECT b.id,b.family_invoice_id,b.amount_pence,b.method,b.reference,b.created_at,f.period,f.invoice_number FROM family_payment_batches b JOIN family_invoices f ON f.id=b.family_invoice_id '+privateScope+' ORDER BY b.created_at DESC',...(user.role==='parent'?[user.id,user.id]:[]));
   return json({items:rows});
  }
