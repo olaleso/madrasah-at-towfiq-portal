@@ -823,6 +823,142 @@ async function dispatchFamilyInvoiceEmails(env,maxCount=6){
  return accepted;
 }
 
+async function eligibleFamilyGuardians(db){
+ const rows=await all(db,`SELECT s.id AS student_id,s.student_no,s.first_name,s.last_name,
+  u.id AS guardian_id,u.name AS guardian_name,u.email AS guardian_email,
+  u.active,CASE WHEN u.password_hash IS NOT NULL THEN 1 ELSE 0 END AS activated
+  FROM students s JOIN users u ON u.id=s.parent_id WHERE s.status='active'
+  ORDER BY u.name,s.last_name,s.first_name`);
+ const byId=new Map();
+ for(const row of rows){
+  const key=row.guardian_id;
+  if(!byId.has(key))byId.set(key,{guardian_id:key,guardian_name:row.guardian_name,guardian_email:row.guardian_email,
+   eligible:!!(row.active&&row.activated),children:[]});
+  byId.get(key).children.push({id:row.student_id,name:[row.first_name,row.last_name].filter(Boolean).join(' '),
+   student_no:row.student_no});
+ }
+ const missing=await first(db,"SELECT COUNT(*) AS n FROM students WHERE status='active' AND parent_id IS NULL");
+ return {items:[...byId.values()],unlinked_students:Number(missing?.n||0)};
+}
+
+async function issueFamilyInvoices(db,env,b,actor){
+ if(b.confirm!=='ISSUE_FAMILY_INVOICES')error('Confirm family invoice issue',400);
+ if(!['one','selected','all'].includes(b.mode))error('Choose one, selected or all eligible families',400);
+ if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(b.period||'')))error('Select a valid billing month',400);
+ const baseAmount=Number(b.amount_pence);
+ if(!Number.isSafeInteger(baseAmount)||baseAmount<1||baseAmount>10000000)error('Valid default fee amount required',400);
+ if(b.due_date&&!isDbsDate(b.due_date))error('Choose a valid due date',400);
+ if(!b.due_date)error('Payment due date is required',400);
+ const overrides=b.student_amounts||{};
+ if(!overrides||typeof overrides!=='object'||Array.isArray(overrides)||
+    Object.keys(overrides).length>100)error('Invalid per-student fee overrides',400);
+ for(const amount of Object.values(overrides))
+  if(!Number.isSafeInteger(Number(amount))||Number(amount)<0||Number(amount)>10000000)
+   error('Fee overrides must be valid amounts in pence',400);
+ const roster=await eligibleFamilyGuardians(db);
+ const allEligible=roster.items.filter(g=>g.eligible);
+ const wanted=b.mode==='all'?allEligible.map(g=>g.guardian_id):
+  b.mode==='one'?[b.guardian_id]:(Array.isArray(b.guardian_ids)?b.guardian_ids:[]);
+ if(wanted.length<1||wanted.length>60||new Set(wanted).size!==wanted.length)
+  error('Select between 1 and 60 distinct verified families',400);
+ const groups=wanted.map(x=>allEligible.find(g=>g.guardian_id===x));
+ if(groups.some(g=>!g))error('Family not verified, inactive or missing. Review the guardian account before issuing fees.',409);
+ const allowedStudentIds=new Set(groups.flatMap(g=>g.children.map(c=>c.id)));
+ if(Object.keys(overrides).some(sid=>!allowedStudentIds.has(sid)))error('A fee override targets a student outside the selected families',400);
+ let created=0,alreadyCharged=0,familiesCreated=0;
+ const results=[];
+ for(const group of groups){
+  // All linked children already billed for this month remain in the existing ledger.
+  const previous=await all(db,`SELECT f.id,fil.family_invoice_id FROM fee_invoices f
+    JOIN students s ON s.id=f.student_id
+    LEFT JOIN family_invoice_lines fil ON fil.invoice_id=f.id
+    WHERE s.parent_id=? AND f.period=?`,group.guardian_id,b.period);
+  const priorHeader=await first(db,'SELECT id FROM family_invoices WHERE guardian_id=? AND period=?',
+   group.guardian_id,b.period);
+  if(previous.some(x=>x.family_invoice_id&&x.family_invoice_id!==priorHeader?.id))
+   error('Some student charges belong to a different family invoice. Review their guardian records.',409);
+  const fid=priorHeader?.id||id();
+  const newlyBilled=group.children.map(child=>({
+   child,invoiceId:id(),amount_pence:Object.hasOwn(overrides,child.id)?Number(overrides[child.id]):baseAmount
+  }));
+  const ops=[];
+  if(!priorHeader)ops.push(db.prepare(`INSERT INTO family_invoices(id,guardian_id,period,invoice_number,due_date,created_by)
+     VALUES(?,?,?,?,?,?)`).bind(fid,group.guardian_id,b.period,
+      'MAT-FAM-'+b.period.replace('-','')+'-'+fid.slice(0,8).toUpperCase(),b.due_date,actor.id));
+  for(const row of newlyBilled){
+   ops.push(db.prepare(`INSERT OR IGNORE INTO fee_invoices(id,student_id,period,amount_pence,due_date)
+     VALUES(?,?,?,?,?)`).bind(row.invoiceId,row.child.id,b.period,row.amount_pence,b.due_date));
+  }
+  // Attach all existing and newly created student charges without changing amounts.
+  for(const row of previous)ops.push(db.prepare(
+   'INSERT OR IGNORE INTO family_invoice_lines(invoice_id,family_invoice_id) VALUES(?,?)'
+  ).bind(row.id,fid));
+  for(const row of newlyBilled)ops.push(db.prepare(`INSERT OR IGNORE INTO family_invoice_lines(invoice_id,family_invoice_id)
+    SELECT id,? FROM fee_invoices WHERE student_id=? AND period=?`).bind(fid,row.child.id,b.period));
+  ops.push(db.prepare(`INSERT OR IGNORE INTO family_invoice_email_queue(family_invoice_id) VALUES(?)`).bind(fid));
+  const committed=await db.batch(ops);
+  const offset=priorHeader?0:1;
+  const added=newlyBilled.reduce((sum,_,i)=>sum+Number(committed[offset+i]?.meta?.changes||0),0);
+  const check=await all(db,`SELECT f.id,fil.family_invoice_id FROM fee_invoices f
+    JOIN students s ON s.id=f.student_id
+    LEFT JOIN family_invoice_lines fil ON fil.invoice_id=f.id
+    WHERE s.parent_id=? AND f.period=?`,group.guardian_id,b.period);
+  if(check.some(x=>x.family_invoice_id!==fid))
+   error('One or more charges need guardian review before a complete family invoice can be issued',409);
+  created+=added;alreadyCharged+=newlyBilled.length-added;
+  familiesCreated+=priorHeader?0:1;
+  results.push({guardian_id:group.guardian_id,family_invoice_id:fid,children:group.children.length,
+   new_charges:added,existing_charges:newlyBilled.length-added});
+ }
+ try{await audit(db,actor,'issue_family_invoice','family_invoice','',
+  `${b.period}: ${familiesCreated} family headers, ${created} new student charges, ${alreadyCharged} existing charges retained`);}catch{}
+ // Issue does not send every message at once; the admin controls queued batches.
+ return {ok:true,families:results.length,families_created:familiesCreated,
+  created,skipped:alreadyCharged,unlinked_students:roster.unlinked_students,results};
+}
+
+async function recordFamilyPayment(db,env,b,actor){
+ const ref=short(b.request_key,80);
+ if(!/^[A-Za-z0-9_-]{16,80}$/.test(ref))error('Missing unique payment request reference',400);
+ const previous=await first(db,'SELECT id,family_invoice_id FROM family_payment_batches WHERE request_key=?',ref);
+ if(previous){
+  if(previous.family_invoice_id!==b.family_invoice_id)error('Payment request belongs to a different invoice',409);
+  return {ok:true,already_recorded:true,id:previous.id,notification_status:'previously_recorded'};
+ }
+ if(!['cash','bank_transfer','card_external','other'].includes(b.method))
+  error('Choose a valid payment method',400);
+ const amount=Number(b.amount_pence);
+ if(!Number.isSafeInteger(amount)||amount<1||amount>10000000)error('Enter a valid positive payment amount',400);
+ const group=await familyIssuedStatement(db,short(b.family_invoice_id,100));
+ const allocations=allocateFamilyPayment(group.lines,amount);
+ const batchId=id();
+ const ops=[db.prepare(`INSERT INTO family_payment_batches(id,family_invoice_id,amount_pence,method,reference,request_key,recorded_by)
+  VALUES(?,?,?,?,?,?,?)`).bind(batchId,group.family_invoice_id,amount,b.method,short(b.reference,120),ref,actor.id)];
+ for(const line of allocations){
+  const paymentId=id();
+  ops.push(db.prepare(`INSERT INTO payments(id,invoice_id,student_id,amount_pence,method,reference,recorded_by)
+   VALUES(?,?,?,?,?,?,?)`).bind(paymentId,line.invoice_id,line.student_id,line.amount_pence,b.method,short(b.reference,120),actor.id));
+  ops.push(db.prepare(`INSERT INTO family_payment_allocations(batch_id,payment_id) VALUES(?,?)`).bind(batchId,paymentId));
+ }
+ try{await db.batch(ops);}
+ catch(err){
+  // A concurrent payment can change the outstanding balance; the database
+  // trigger prevents over-allocation even when both requests saw the same balance.
+  if(/UNIQUE constraint failed: family_payment_batches.request_key/i.test(err.message||'')){
+   const repeat=await first(db,'SELECT id FROM family_payment_batches WHERE request_key=?',ref);
+   if(repeat)return {ok:true,already_recorded:true,id:repeat.id,notification_status:'previously_recorded'};
+  }
+  if(/Payment exceeds|constraint/i.test(err.message||''))error('Account balance changed. Refresh the family invoice before recording another payment.',409);
+  throw err;
+ }
+ try{await audit(db,actor,'family_payment','family_invoice',group.family_invoice_id,
+  `Recorded ${amount} pence across ${allocations.length} student fee records`);}catch{}
+ let emailStatus={notification_status:'not_sent'};
+ try{emailStatus=await sendFamilyFinanceEmail(db,env,group.family_invoice_id,'receipt',actor,amount);}
+ catch(err){console.error('Family receipt not sent',err);}
+ return {ok:true,id:batchId,allocations:allocations.length,amount_pence:amount,...emailStatus};
+}
+
 // Masjid website video curation. Uses an existing settings row: no schema changes,
 // no cross-domain access to private pupil/guardian records.
 const MASJID_VIDEO_KEY='masjid_public_videos_v1';
