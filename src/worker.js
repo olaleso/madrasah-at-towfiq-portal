@@ -2621,6 +2621,12 @@ async function handle(req,env,ctx){
   requireRole(user,'admin','staff');
   return json(await eligibleFamilyGuardians(db));
  }
+ if(path==='/api/fees/families/payment-history' && method==='GET'){
+  if(!['admin','staff','parent'].includes(user.role))error('Access not permitted',403);
+  const privateScope=user.role==='parent'?'WHERE f.guardian_id=? AND EXISTS (SELECT 1 FROM family_invoice_lines l JOIN fee_invoices i ON i.id=l.invoice_id JOIN students s ON s.id=i.student_id WHERE l.family_invoice_id=f.id AND s.parent_id=?)':'';
+  const rows=await all(db,'SELECT b.id,b.family_invoice_id,b.amount_pence,b.method,b.reference,b.created_at,f.period,f.invoice_number FROM family_payment_batches b JOIN family_invoices f ON f.id=b.family_invoice_id '+privateScope+' ORDER BY b.created_at DESC',...(user.role==='parent'?[user.id,user.id]:[]));
+  return json({items:rows});
+ }
  if(path==='/api/fees/families/email-status' && method==='GET'){
   requireRole(user,'admin','staff');
   return json({items:await all(db,'SELECT status,COUNT(*) AS total FROM family_invoice_email_queue GROUP BY status')});
@@ -2709,7 +2715,7 @@ async function handle(req,env,ctx){
   return json({ok:true,...result});
  }
  if(path==='/api/payments'){
-  if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT p.*,s.first_name,s.last_name,f.period FROM payments p JOIN students s ON s.id=p.student_id JOIN fee_invoices f ON f.id=p.invoice_id WHERE ${s.where} ORDER BY p.created_at DESC`,...s.args)});}
+  if(method==='GET'){const s=studentScope(user);return json({items:await all(db,`SELECT p.*,s.first_name,s.last_name,f.period,a.batch_id AS family_batch_id FROM payments p JOIN students s ON s.id=p.student_id JOIN fee_invoices f ON f.id=p.invoice_id LEFT JOIN family_payment_allocations a ON a.payment_id=p.id WHERE ${s.where} ORDER BY p.created_at DESC`,...s.args)});}
   requireRole(user,'admin','staff');if(method==='POST'){const b=await input(req),f=await first(db,'SELECT * FROM fee_invoices WHERE id=?',b.invoice_id);if(!f)error('Invoice not found',404);if(!isMoney(b.amount_pence)||Number(b.amount_pence)<=0)error('Valid payment amount required');const paid=await first(db,'SELECT COALESCE(SUM(amount_pence),0) AS total FROM payments WHERE invoice_id=?',f.id);if(Number(b.amount_pence)>f.amount_pence-paid.total)error('Payment exceeds outstanding invoice balance');const pid=id();await run(db,'INSERT INTO payments(id,invoice_id,student_id,amount_pence,method,reference,recorded_by) VALUES(?,?,?,?,?,?,?)',pid,f.id,f.student_id,Number(b.amount_pence),short(b.method,30)||'manual',short(b.reference,120),user.id);await audit(db,user,'payment','invoice',f.id,`${b.amount_pence} pence`);
    await notifyLinkedGuardianInApp(db,f.student_id,'payment',pid,'Payment recorded',
     'A payment has been recorded for {student}. View the receipt in your secure fee account.','fees');
