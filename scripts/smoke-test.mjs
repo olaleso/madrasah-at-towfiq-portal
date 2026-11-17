@@ -12,6 +12,8 @@ sqlite.exec(fs.readFileSync(new URL('../migrations/0017_masjid_contact_enquiries
 sqlite.exec(fs.readFileSync(new URL('../migrations/0018_legacy_student_import_records.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0019_legacy_migration_notices.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0020_legacy_parent_onboarding.sql',import.meta.url),'utf8'));
+sqlite.exec(fs.readFileSync(new URL('../migrations/0021_family_billing.sql',import.meta.url),'utf8'));
+
 
 
 // Reproduce the live upgrade path: an accepted admission existed before 0004, but no student did.
