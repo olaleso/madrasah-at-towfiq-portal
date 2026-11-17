@@ -1943,10 +1943,13 @@ assert.ok(Number(noticeStatus.data.counts.sent)>=1);
 // Family Billing — verified guardian grouping, no double-charging, split receipts,
 // one email per family and strict parent access. Test-only fixtures are cleaned
 // before the original first-cohort migration regression further below.
-const familyAdminCookie=cookie,familyAdminCsrf=csrf;
+// /auth/me rotates the session CSRF token; use the fresh token for all
+// subsequent simulated admin requests, including family invoice creation.
 let familyMe=await req('/auth/me');
 assert.equal(familyMe.status,200);
 assert.equal(familyMe.data.user.role,'admin','Family billing smoke tests require admin access');
+csrf=familyMe.data.csrf;
+const familyAdminCookie=cookie,familyAdminCsrf=csrf;
 const familySalt=randomBytes(16).toString('base64');
 const familyDigest='pbkdf2-sha256:100000:'+pbkdf2Sync('family-test-password',Buffer.from(familySalt,'base64'),100000,32,'sha256').toString('base64');
 sqlite.prepare('INSERT INTO users(id,name,email,role,active,password_hash,password_salt) VALUES(?,?,?,?,?,?,?)')
