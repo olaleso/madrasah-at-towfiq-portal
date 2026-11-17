@@ -1,0 +1,59 @@
+/* Family billing: scoped to Fees & Payments. */
+.family-billing{margin-top:20px}
+.family-billing[hidden],.family-issue-panel[hidden],.family-pay-panel[hidden],
+.family-bill[hidden],.family-billing [hidden]{display:none!important}
+.family-billing-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}
+.family-billing-metrics>div{border-radius:12px;border:1px solid #dce6f4;background:#f4f8fd;padding:16px;min-width:0}
+.family-billing-metrics small{display:block;color:#7385a0;font-size:12px;line-height:1.4}
+.family-billing-metrics strong{display:block;color:#17345e;font-size:21px;margin-top:7px}
+.family-billing-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.family-filter{display:flex;align-items:center;gap:12px;margin:16px 0}
+.family-filter input{flex:1;min-width:0;border:1px solid #dce6f4;background:#fff;border-radius:9px;padding:13px 15px;color:#17345e}
+.family-filter span{white-space:nowrap;font-size:12px;color:#7485a0}
+.family-bill-list{display:grid;gap:12px}
+.family-bill{background:#fff;border:1px solid #dce6f4;border-radius:13px;overflow:hidden}
+.family-bill[open]{border-color:#a4c1e9;box-shadow:0 9px 25px rgba(24,57,102,.06)}
+.family-bill-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:19px 22px;cursor:pointer;list-style:none}
+.family-bill-head::-webkit-details-marker{display:none}
+.family-bill-head>div:first-child{min-width:0;flex:1}
+.family-bill-head strong{display:block;color:#1a3760;font-size:15px}
+.family-bill-head small{display:block;color:#7285a1;font-size:12px;margin-top:6px;overflow-wrap:anywhere;line-height:1.6}
+.family-bill-total{text-align:right;flex:none}
+.family-bill-total strong{font-size:20px}
+.family-bill-status{display:inline-block;border-radius:20px;font-size:11px;margin-top:5px;padding:4px 9px}
+.family-bill-status.paid{background:#e7f7ef;color:#218259}
+.family-bill-status.outstanding{background:#fff4de;color:#995e15}
+.family-bill-body{border-top:1px solid #e4ebf5;padding:16px 20px 22px}
+.family-bill-body table td{vertical-align:middle}
+.family-bill-body td small{display:block;color:#8797ac;margin-top:5px}
+.family-bill-ref{font-size:12px;color:#50688d;margin:0 0 13px}
+.family-review{background:#fff3d8;color:#9b6d18;padding:4px 7px;border-radius:6px;margin-left:7px}
+.family-bill-foot{display:flex;align-items:center;flex-wrap:wrap;gap:14px 24px;border-top:1px solid #e6ecf5;padding:14px 0;color:#667b98;font-size:12px}
+.family-bill-foot b{color:#193a68;margin-left:7px}
+.family-bill-actions{display:flex;gap:10px;flex-wrap:wrap}
+.family-pay-history{margin-top:20px;border-top:1px solid #e4ebf5;padding-top:13px}
+.family-pay-history summary{cursor:pointer;font-size:12px;color:#375d96;font-weight:700;padding:6px 0}
+.family-issue-panel{padding:20px;margin:14px 0 20px;border:1px solid #c9d9ef;background:#f7faff;border-radius:13px}
+.family-issue-panel h3{margin:0 0 7px;color:#17345d}
+.family-issue-panel .form-grid{margin-top:18px}
+.family-choice-list{max-height:260px;overflow:auto;background:#fff;border:1px solid #dfe8f4;border-radius:10px;padding:8px}
+.family-choice{display:flex;align-items:center;gap:12px;padding:10px;border-bottom:1px solid #edf1f6}
+.family-choice:last-child{border-bottom:0}
+.family-choice input{flex:none}
+.family-choice small{display:block;color:#8596ae;line-height:1.5;margin-top:3px}
+.family-child-price{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:10px 0;border-bottom:1px solid #e3ebf5}
+.family-child-price span{font-weight:600;color:#243e69}
+.family-child-price small{display:block;color:#8a9cb3;font-weight:400}
+.family-child-price input{max-width:130px;padding:10px;border:1px solid #d6e2f2;border-radius:8px}
+.family-form-actions{margin-top:17px}
+.family-pay-panel{margin-top:17px;padding:19px;background:#f5f9fe;border:1px solid #dce9f6;border-radius:12px}
+.family-payment-form .form-grid{margin:0 0 14px}
+@media(max-width:850px){.family-billing-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:540px){
+ .family-bill-head{padding:16px 13px}
+ .family-bill-body{padding:12px}
+ .family-bill-total strong{font-size:16px}
+ .family-billing-metrics>div{padding:12px}
+ .family-filter{align-items:stretch;flex-direction:column}
+ .family-child-price{align-items:flex-start}
+}
