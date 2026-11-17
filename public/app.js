@@ -462,7 +462,7 @@ function feeTable(arr,formalIds=new Set()){
   return `<tr><td><span class="cell-name">${h(f.first_name||student(f.student_id)?.first_name||'')} ${h(f.last_name||student(f.student_id)?.last_name||'')}</span></td>
   <td>${h(f.period)}</td><td>${money(f.amount_pence)}</td><td>${money(f.paid_pence)}</td><td><strong class="${left?'red':'green'}">${money(left)}</strong></td>
   <td>${f.due_date?h(fmt(f.due_date)):'—'}<div class="fee-status-line">${tag(status,color)}</div></td>
-  <td>${canManage?`<div class="fee-actions">${left>0?`<button class="btn smol outline" data-action="modal" data-value="payment" data-id="${h(f.id)}">${ico('cash',14)} Record payment</button>${!formalIds.has(f.id)?`<button class="btn smol white" data-action="finance-notify" data-id="${h(f.id)}">${ico('mail',14)} Send statement</button>`:'<span class="small muted">Use family statement above</span>'}`:`<span class="tiny muted">${ico('check',14)} Settled</span>`}</div>`:left===0?tag('Settled','green'):`<span class="tiny muted">View in portal</span>`}</td></tr>`;
+  <td>${canManage?`<div class="fee-actions">${formalIds.has(f.id)?'<span class="small muted">Use family payment and statement actions above</span>':left>0?`<button class="btn smol outline" data-action="modal" data-value="payment" data-id="${h(f.id)}">${ico('cash',14)} Record payment</button>${!formalIds.has(f.id)?`<button class="btn smol white" data-action="finance-notify" data-id="${h(f.id)}">${ico('mail',14)} Send statement</button>`:'<span class="small muted">Use family statement above</span>'}`:`<span class="tiny muted">${ico('check',14)} Settled</span>`}</div>`:left===0?tag('Settled','green'):`<span class="tiny muted">View in portal</span>`}</td></tr>`;
  }).join('')}</tbody></table></div>`;
 }
 function feesPage(){
