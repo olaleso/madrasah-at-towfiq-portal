@@ -730,7 +730,7 @@ async function financeEmailForInvoice(db,env,invoiceId,kind,actor,paymentPence=0
 
 async function familyLedgerRows(db,guardianId='',familyId=''){
  const where=familyId?'WHERE fam.id=?':guardianId?'WHERE s.parent_id=?':'';
- return all(db,`SELECT f.id AS invoice_id,f.student_id,f.period,f.amount_pence,f.due_date,
+ return all(db,`SELECT f.id AS invoice_id,f.student_id,f.period,f.amount_pence,COALESCE(fam.due_date,f.due_date) AS due_date,
   s.first_name,s.last_name,s.student_no,s.parent_id AS guardian_id,
   u.name AS guardian_name,u.email AS guardian_email,
   fam.id AS family_invoice_id,fam.guardian_id AS family_guardian_id,fam.invoice_number,
