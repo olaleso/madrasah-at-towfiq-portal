@@ -2609,6 +2609,44 @@ async function handle(req,env,ctx){
    return json({ok:true,id:bid,...notification});}
   if(method==='DELETE'){requireRole(user,'admin');await run(db,'DELETE FROM behaviour WHERE id=?',b.id);await audit(db,user,'remove','behaviour',b.id);return json({ok:true});}
  }
+ if(path==='/api/fees/families' && method==='GET'){
+  if(!['admin','staff','parent'].includes(user.role))error('Fee accounts are not available for this role',403);
+  const rows=await familyLedgerRows(db,user.role==='parent'?user.id:'');
+  return json({items:groupFamilyFeeRows(rows)});
+ }
+ if(path==='/api/fees/families/eligible' && method==='GET'){
+  requireRole(user,'admin','staff');
+  return json(await eligibleFamilyGuardians(db));
+ }
+ if(path==='/api/fees/families/email-status' && method==='GET'){
+  requireRole(user,'admin','staff');
+  return json({items:await all(db,'SELECT status,COUNT(*) AS total FROM family_invoice_email_queue GROUP BY status')});
+ }
+ if(path==='/api/fees/families/issue' && method==='POST'){
+  requireRole(user,'admin','staff');
+  const b=await input(req);
+  return json(await issueFamilyInvoices(db,env,b,user));
+ }
+ if(path==='/api/fees/families/payments' && method==='POST'){
+  requireRole(user,'admin','staff');
+  const b=await input(req);
+  return json(await recordFamilyPayment(db,env,b,user));
+ }
+ if(path==='/api/fees/families/notify' && method==='POST'){
+  requireRole(user,'admin','staff');
+  const b=await input(req);
+  if(b.confirm!=='SEND_FAMILY_STATEMENT')error('Confirm family reminder',400);
+  const result=await sendFamilyFinanceEmail(db,env,short(b.family_invoice_id,100),'reminder',user);
+  return json({ok:true,...result});
+ }
+ if(path==='/api/fees/families/send' && method==='POST'){
+  requireRole(user,'admin','staff');
+  const b=await input(req);
+  if(b.confirm!=='SEND_FAMILY_INVOICES')error('Confirm sending family invoice emails',400);
+  const accepted=await dispatchFamilyInvoiceEmails(env,6);
+  const statuses=await all(db,'SELECT status,COUNT(*) AS total FROM family_invoice_email_queue GROUP BY status');
+  return json({ok:true,accepted,statuses});
+ }
  if(path==='/api/fees/bulk' && method==='POST'){
   const user=await session(req,env);if(!user)error('Your session has expired. Please sign in.',401);
   requireRole(user,'admin','staff');
@@ -3111,6 +3149,8 @@ export default {
    catch(err){console.error('Legacy notices dispatch failed',err);}
    try{await dispatchLegacyParentOnboarding(env,10);}
    catch(err){console.error('Legacy parent onboarding dispatch failed',err);}
+   try{await dispatchFamilyInvoiceEmails(env,6);}
+   catch(err){console.error('Family invoice email dispatch failed',err);}
   })());
   if(event.cron!=='0 8 * * 5')return;
   ctx.waitUntil((async()=>{if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM||env.EMAIL_FROM.includes('example.org'))return;const v=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_enabled'");if(v?.value!=='true')return;const m=await first(env.DB,"SELECT value FROM school_settings WHERE key='jumah_message'");const people=await all(env.DB,"SELECT email FROM users WHERE active=1 AND role IN ('parent','teacher','staff')");for(const p of people){await mail(env,p.email,'Jumu’ah reminder — Madrasah At-Towfiq',`<div style="font-family:Arial,sans-serif"><h2>Madrasah At-Towfiq</h2><p>${escapeHtml(m?.value||'Assalamu alaikum. Jumu’ah Mubarak.')}</p></div>`);}})());
