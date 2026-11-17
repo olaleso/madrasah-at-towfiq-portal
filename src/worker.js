@@ -930,7 +930,10 @@ async function recordFamilyPayment(db,env,b,actor){
  const amount=Number(b.amount_pence);
  if(!Number.isSafeInteger(amount)||amount<1||amount>10000000)error('Enter a valid positive payment amount',400);
  const group=await familyIssuedStatement(db,short(b.family_invoice_id,100));
- const allocations=allocateFamilyPayment(group.lines,amount);
+ if(amount>group.balance_pence)error('Payment exceeds the family invoice balance',400);
+ let allocations;
+ try{allocations=allocateFamilyPayment(group.lines,amount);}
+ catch(e){error(e.message,400);}
  const batchId=id();
  const ops=[db.prepare(`INSERT INTO family_payment_batches(id,family_invoice_id,amount_pence,method,reference,request_key,recorded_by)
   VALUES(?,?,?,?,?,?,?)`).bind(batchId,group.family_invoice_id,amount,b.method,short(b.reference,120),ref,actor.id)];
