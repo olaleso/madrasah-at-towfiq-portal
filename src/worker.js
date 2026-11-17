@@ -920,9 +920,9 @@ async function issueFamilyInvoices(db,env,b,actor){
 async function recordFamilyPayment(db,env,b,actor){
  const ref=short(b.request_key,80);
  if(!/^[A-Za-z0-9_-]{16,80}$/.test(ref))error('Missing unique payment request reference',400);
- const previous=await first(db,'SELECT id,family_invoice_id FROM family_payment_batches WHERE request_key=?',ref);
+ const previous=await first(db,'SELECT id,family_invoice_id,amount_pence,method FROM family_payment_batches WHERE request_key=?',ref);
  if(previous){
-  if(previous.family_invoice_id!==b.family_invoice_id)error('Payment request belongs to a different invoice',409);
+  if(previous.family_invoice_id!==b.family_invoice_id||Number(previous.amount_pence)!==Number(b.amount_pence)||previous.method!==b.method)error('This payment request reference has already been used for a different payment',409);
   return {ok:true,already_recorded:true,id:previous.id,notification_status:'previously_recorded'};
  }
  if(!['cash','bank_transfer','card_external','other'].includes(b.method))
