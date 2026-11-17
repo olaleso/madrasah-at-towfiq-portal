@@ -452,7 +452,7 @@ function updateInvoiceTargets(){
  const count=mode==='all'?active.length:mode==='selected'?selected:(form.elements.student_id?.value?1:0);
  const box=form.querySelector('#invoice-target-summary');if(box)box.textContent=`${count} active student${count===1?'':'s'} selected · ${money(Math.round(Number(form.elements.amount?.value||0)*100)*count)} total`;
 }
-function feeTable(arr){
+function feeTable(arr,formalIds=new Set()){
  const canManage=userCan('admin','staff');
  return `<div class="table-scroll"><table class="table"><thead><tr><th>Student</th><th>Period</th><th>Amount</th><th>Paid</th><th>Balance</th><th>Due</th><th>Actions</th></tr></thead><tbody>${arr.map(f=>{
   const left=Math.max(0,Number(f.amount_pence)-Number(f.paid_pence));
@@ -462,7 +462,7 @@ function feeTable(arr){
   return `<tr><td><span class="cell-name">${h(f.first_name||student(f.student_id)?.first_name||'')} ${h(f.last_name||student(f.student_id)?.last_name||'')}</span></td>
   <td>${h(f.period)}</td><td>${money(f.amount_pence)}</td><td>${money(f.paid_pence)}</td><td><strong class="${left?'red':'green'}">${money(left)}</strong></td>
   <td>${f.due_date?h(fmt(f.due_date)):'—'}<div class="fee-status-line">${tag(status,color)}</div></td>
-  <td>${canManage?`<div class="fee-actions">${left>0?`<button class="btn smol outline" data-action="modal" data-value="payment" data-id="${h(f.id)}">${ico('cash',14)} Record payment</button><button class="btn smol white" data-action="finance-notify" data-id="${h(f.id)}">${ico('mail',14)} Send statement</button>`:`<span class="tiny muted">${ico('check',14)} Settled</span>`}</div>`:left===0?tag('Settled','green'):`<span class="tiny muted">View in portal</span>`}</td></tr>`;
+  <td>${canManage?`<div class="fee-actions">${left>0?`<button class="btn smol outline" data-action="modal" data-value="payment" data-id="${h(f.id)}">${ico('cash',14)} Record payment</button>${!formalIds.has(f.id)?`<button class="btn smol white" data-action="finance-notify" data-id="${h(f.id)}">${ico('mail',14)} Send statement</button>`:'<span class="small muted">Use family statement above</span>'}`:`<span class="tiny muted">${ico('check',14)} Settled</span>`}</div>`:left===0?tag('Settled','green'):`<span class="tiny muted">View in portal</span>`}</td></tr>`;
  }).join('')}</tbody></table></div>`;
 }
 function feesPage(){
@@ -477,11 +477,13 @@ function feesPage(){
   return String(b.period).localeCompare(String(a.period));
  });
  const isParent=userCan('parent');
- return `${pagehead(isParent?'My family fee account':'Fees & payments',isParent?'Your family’s invoices, recorded payments and outstanding balances.':'Clear financial records, parent statements and payment acknowledgements.',userCan('admin','staff')?`<button class="btn primary" data-action="modal" data-value="invoice">${ico('plus',16)} Create invoice</button>`:'')}
+ const familyGroups=get('fees/families');
+ const formalInvoiceIds=new Set(familyGroups.filter(g=>g.formal).flatMap(g=>g.lines.map(x=>x.invoice_id)));
+ return `${pagehead(isParent?'My family fee account':'Fees & payments',isParent?'Your family’s invoices, recorded payments and outstanding balances.':'Clear financial records, parent statements and payment acknowledgements.',userCan('admin','staff')?`<button class="btn white" data-action="modal" data-value="invoice">${ico('plus',16)} Individual fee adjustment</button>`:'')}
  ${metricCards([{label:'Total invoiced',value:money(charged),icon:'cash'},{label:'Payments recorded',value:money(paid),icon:'check',color:'green'},{label:'Outstanding balance',value:money(outstanding),icon:'clock',color:'amber'},{label:'Overdue invoices',value:overdue.length,icon:'file',color:overdue.length?'amber':'green'}])}
  ${overdue.length&&userCan('admin','staff')?`<div class="finance-attention">${ico('info',19)} <div><strong>${overdue.length} overdue invoice${overdue.length===1?'':'s'} need attention</strong><p>Review balances below and use Send statement to contact the recorded guardian. This sends a private, non-payment-processing email.</p></div></div>`:''}
  ${window.MadrasahFamilyBilling?.html({groups:get('fees/families'),eligible:get('fees/families/eligible'),payments:get('payments'),queue:get('fees/families/email-status'),canManage:userCan('admin','staff')})||''}
- <section class="surface" style="margin-top:19px"><div class="surface-head"><h3>${isParent?'Your fee statements':'Invoice statements'}</h3>${tag(`${f.length} invoices`,'blue')}</div>${f.length?feeTable(order):blank('No invoices issued','New fee statements will appear here.')}</section>
+ ${userCan('admin','staff')?`<details class="surface" style="margin-top:19px"><summary style="cursor:pointer;font-weight:700;color:#1b3967">Detailed student invoice ledger · ${f.length} charges</summary><p class="small muted" style="margin:12px 0">Preserved item-level records for reconciliation and historical payments. For grouped family invoices, send one consolidated statement from the family panel above.</p>${f.length?feeTable(order,formalInvoiceIds):blank('No invoices issued','New fee statements will appear here.')}</details>`:''}
  <div class="notice" style="margin-top:15px">${ico('info',16)} ${isParent?'These are the madrasah’s recorded fee balances. If you have paid but a payment is missing, please contact admissions@attowfiqmasjid.org.':'Payments recorded here are manual ledger entries. Email notices do not collect funds. Stripe and GoCardless are not connected.'}</div>`;
 }
 
