@@ -44,3 +44,15 @@ CREATE TABLE IF NOT EXISTS family_invoice_email_queue (
  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_family_invoice_email_queue_status ON family_invoice_email_queue(status,attempts,updated_at);
+
+-- Protect the existing student ledger against concurrent or misplaced payments.
+CREATE TRIGGER IF NOT EXISTS trg_fee_payments_guard
+BEFORE INSERT ON payments
+BEGIN
+ SELECT CASE WHEN NEW.student_id <> (SELECT student_id FROM fee_invoices WHERE id=NEW.invoice_id)
+   THEN RAISE(ABORT,'Payment must belong to the invoiced student') END;
+ SELECT CASE WHEN NEW.amount_pence >
+   (SELECT f.amount_pence-COALESCE((SELECT SUM(p.amount_pence) FROM payments p WHERE p.invoice_id=f.id),0)
+    FROM fee_invoices f WHERE f.id=NEW.invoice_id)
+   THEN RAISE(ABORT,'Payment exceeds the invoice balance') END;
+END;
