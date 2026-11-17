@@ -1940,6 +1940,152 @@ assert.equal(noticeStatus.status,200);
 assert.ok(Number(noticeStatus.data.counts.sent)>=1);
 
 
+// Family Billing — verified guardian grouping, no double-charging, split receipts,
+// one email per family and strict parent access. Test-only fixtures are cleaned
+// before the original first-cohort migration regression further below.
+const familyAdminCookie=cookie,familyAdminCsrf=csrf;
+let familyMe=await req('/auth/me');
+assert.equal(familyMe.status,200);
+assert.equal(familyMe.data.user.role,'admin','Family billing smoke tests require admin access');
+const familySalt=randomBytes(16).toString('base64');
+const familyDigest='pbkdf2-sha256:100000:'+pbkdf2Sync('family-test-password',Buffer.from(familySalt,'base64'),100000,32,'sha256').toString('base64');
+sqlite.prepare('INSERT INTO users(id,name,email,role,active,password_hash,password_salt) VALUES(?,?,?,?,?,?,?)')
+ .run('family-guardian','Family Billing Parent','billing-parent@example.test','parent',1,familyDigest,familySalt);
+sqlite.prepare('INSERT INTO users(id,name,email,role,active,password_hash,password_salt) VALUES(?,?,?,?,?,?,?)')
+ .run('family-other','Other Billing Parent','billing-other@example.test','parent',1,familyDigest,familySalt);
+for(const [studentId,studentNo,name,parentId] of [
+ ['family-child-a','MATT-2098-8601','Fatimah','family-guardian'],
+ ['family-child-b','MATT-2098-8602','Yusuf','family-guardian'],
+ ['family-other-child','MATT-2098-8603','Bilal','family-other'],
+ ['family-no-guardian','MATT-2098-8604','Unknown',null]
+]){
+ sqlite.prepare('INSERT INTO students(id,student_no,first_name,last_name,parent_id,status) VALUES(?,?,?,?,?,?)')
+  .run(studentId,studentNo,name,'Billing Test',parentId,'active');
+}
+let eligibleFamilies=await req('/fees/families/eligible');
+assert.equal(eligibleFamilies.status,200,JSON.stringify(eligibleFamilies.data));
+assert.ok(eligibleFamilies.data.items.find(g=>g.guardian_id==='family-guardian'&&g.children.length===2));
+assert.ok(eligibleFamilies.data.unlinked_students>=1,'Unlinked student must be reported for review');
+const familyIssue={
+ mode:'one',guardian_id:'family-guardian',period:'2031-08',amount_pence:3000,
+ student_amounts:{'family-child-a':3000,'family-child-b':1500},due_date:'2031-08-20',
+ confirm:'ISSUE_FAMILY_INVOICES'
+};
+let familyResult=await req('/fees/families/issue',familyIssue);
+assert.equal(familyResult.status,200,JSON.stringify(familyResult.data));
+assert.equal(familyResult.data.created,2);
+assert.equal(familyResult.data.families_created,1);
+const familyId=familyResult.data.results[0].family_invoice_id;
+familyResult=await req('/fees/families/issue',familyIssue);
+assert.equal(familyResult.status,200,JSON.stringify(familyResult.data));
+assert.equal(familyResult.data.created,0,'Repeated family issue cannot duplicate student charges');
+assert.equal(familyResult.data.skipped,2);
+assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM fee_invoices WHERE period='2031-08' AND student_id IN ('family-child-a','family-child-b')").get().n,2);
+let familyGroups=await req('/fees/families');
+assert.equal(familyGroups.status,200);
+const familyAccount=familyGroups.data.items.find(g=>g.family_invoice_id===familyId);
+assert.ok(familyAccount&&familyAccount.formal);
+assert.equal(familyAccount.total_pence,4500);
+assert.equal(familyAccount.balance_pence,4500);
+assert.equal(familyAccount.lines.length,2);
+assert.match(familyAccount.invoice_number,/^MAT-FAM-203108-/);
+const familyPayKey='family-payment-test-request-001';
+let familyPay=await req('/fees/families/payments',{
+ family_invoice_id:familyId,amount_pence:2000,method:'cash',
+ reference:'cash-receipt-1',request_key:familyPayKey
+});
+assert.equal(familyPay.status,200,JSON.stringify(familyPay.data));
+assert.equal(familyPay.data.amount_pence,2000);
+assert.equal(sqlite.prepare('SELECT SUM(amount_pence) AS n FROM payments WHERE invoice_id IN (SELECT invoice_id FROM family_invoice_lines WHERE family_invoice_id=?)').get(familyId).n,2000);
+familyPay=await req('/fees/families/payments',{
+ family_invoice_id:familyId,amount_pence:2000,method:'cash',
+ reference:'cash-receipt-1',request_key:familyPayKey
+});
+assert.equal(familyPay.status,200);
+assert.equal(familyPay.data.already_recorded,true,'Network retries must not double-charge family payments');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM family_payment_batches WHERE family_invoice_id=?').get(familyId).n,1);
+familyPay=await req('/fees/families/payments',{
+ family_invoice_id:familyId,amount_pence:3000,method:'cash',
+ request_key:'family-payment-test-overpay'
+});
+assert.equal(familyPay.status,400,'Overpayments should return validation errors, never 500');
+familyGroups=await req('/fees/families');
+assert.equal(familyGroups.data.items.find(g=>g.family_invoice_id===familyId).balance_pence,2500);
+const firstStudentBill=sqlite.prepare("SELECT id,student_id FROM fee_invoices WHERE student_id='family-child-a' AND period='2031-08'").get();
+assert.throws(()=>sqlite.prepare('INSERT INTO payments(id,invoice_id,student_id,amount_pence) VALUES(?,?,?,?)')
+ .run('bad-overpay',firstStudentBill.id,firstStudentBill.student_id,5000),/Payment exceeds/,
+ 'Database trigger must reject direct overpayment even if another request bypasses preflight');
+// A second guardian must not appear in the logged-in parent's family statements.
+let otherIssue=await req('/fees/families/issue',{
+ mode:'one',guardian_id:'family-other',period:'2031-08',amount_pence:3000,
+ due_date:'2031-08-20',confirm:'ISSUE_FAMILY_INVOICES'
+});
+assert.equal(otherIssue.status,200,JSON.stringify(otherIssue.data));
+const familyLogin=await req('/auth/login',{email:'billing-parent@example.test',password:'family-test-password'},'POST',false);
+assert.equal(familyLogin.status,200,JSON.stringify(familyLogin.data));
+cookie=familyLogin.response.headers.get('set-cookie').split(';')[0];csrf=familyLogin.data.csrf;
+let parentFamily=await req('/fees/families');
+assert.equal(parentFamily.status,200);
+assert.ok(parentFamily.data.items.some(g=>g.family_invoice_id===familyId));
+assert.ok(parentFamily.data.items.every(g=>g.guardian_id==='family-guardian'),'Parents must not see other families');
+let deniedFamily=await req('/fees/families/eligible');
+assert.equal(deniedFamily.status,403);
+deniedFamily=await req('/fees/families/issue',familyIssue);
+assert.equal(deniedFamily.status,403);
+deniedFamily=await req('/fees/families/payments',{family_invoice_id:familyId,amount_pence:1000,method:'cash',request_key:'family-user-forbidden-pay'});
+assert.equal(deniedFamily.status,403);
+deniedFamily=await req('/fees/families/notify',{family_invoice_id:familyId,confirm:'SEND_FAMILY_STATEMENT'});
+assert.equal(deniedFamily.status,403);
+cookie=familyAdminCookie;csrf=familyAdminCsrf;
+// Existing per-child invoices can be linked to a formal family header without recharging.
+sqlite.prepare('INSERT INTO fee_invoices(id,student_id,period,amount_pence,due_date) VALUES(?,?,?,?,?)')
+ .run('existing-family-ledger-item','family-child-a','2031-07',2800,'2031-07-20');
+let historyStatement=await req('/fees/families');
+const oldGroup=historyStatement.data.items.find(g=>g.period==='2031-07'&&g.guardian_id==='family-guardian');
+assert.ok(oldGroup&&!oldGroup.formal,'Historical student fees appear as grouped family statement');
+let linkedHistory=await req('/fees/families/issue',{
+ mode:'one',guardian_id:'family-guardian',period:'2031-07',amount_pence:3000,
+ due_date:'2031-07-20',confirm:'ISSUE_FAMILY_INVOICES'
+});
+assert.equal(linkedHistory.status,200,JSON.stringify(linkedHistory.data));
+assert.equal(linkedHistory.data.created,1);
+assert.equal(sqlite.prepare("SELECT amount_pence FROM fee_invoices WHERE id='existing-family-ledger-item'").get().amount_pence,2800,'Existing charge remains untouched');
+const knownEmailFetch=globalThis.fetch, familySentPayloads=[];
+env.RESEND_API_KEY='family-billing-test-key';
+env.EMAIL_FROM='Madrasah At-Towfiq <notifications@attowfiqmasjid.org>';
+env.ADMISSIONS_EMAIL='admissions@attowfiqmasjid.org';
+globalThis.fetch=async(url,options)=>{
+ assert.equal(String(url),'https://api.resend.com/emails');
+ familySentPayloads.push(JSON.parse(options.body));
+ return new Response(JSON.stringify({id:'family-test-accepted'}),{status:200,headers:{'content-type':'application/json'}});
+};
+try{
+ let queued=await req('/fees/families/send',{confirm:'SEND_FAMILY_INVOICES'});
+ assert.equal(queued.status,200,JSON.stringify(queued.data));
+ assert.equal(queued.data.accepted,3);
+ assert.equal(familySentPayloads.length,3,'One consolidated notification per family invoice');
+ const firstMail=familySentPayloads.find(e=>e.to[0]==='billing-parent@example.test'&&e.html.includes('August 2031'));
+ assert.ok(firstMail);
+ assert.ok(firstMail.html.includes('Fatimah Billing Test'));
+ assert.ok(firstMail.html.includes('Yusuf Billing Test'));
+ assert.ok(firstMail.html.includes('£45.00'));
+ assert.ok(firstMail.html.includes('MADRASAH AT-TOWFIQ'));
+ assert.ok(!firstMail.subject.includes('Fatimah'));
+ queued=await req('/fees/families/send',{confirm:'SEND_FAMILY_INVOICES'});
+ assert.equal(queued.data.accepted,0,'Already accepted family invoices are never resent');
+ const reminder=await req('/fees/families/notify',{family_invoice_id:familyId,confirm:'SEND_FAMILY_STATEMENT'});
+ assert.equal(reminder.status,200);
+ assert.equal(reminder.data.notification_status,'sent');
+ assert.match(familySentPayloads.at(-1).subject,/Family fee reminder/);
+}finally{
+ globalThis.fetch=knownEmailFetch;
+ delete env.RESEND_API_KEY;delete env.EMAIL_FROM;delete env.ADMISSIONS_EMAIL;
+}
+// Keep test data isolated from the real registration sequence and other tests.
+sqlite.exec('DELETE FROM family_payment_allocations; DELETE FROM family_payment_batches; DELETE FROM family_invoice_email_queue; DELETE FROM family_invoice_lines; DELETE FROM family_invoices;');
+sqlite.prepare("DELETE FROM students WHERE id IN ('family-child-a','family-child-b','family-other-child','family-no-guardian')").run();
+sqlite.prepare("DELETE FROM users WHERE id IN ('family-guardian','family-other')").run();
+
 // One-time first-live-cohort numbering after all development records are
 // cleared. The 4-digit MATT sequence must begin at 0001, but must never
 // restart when a real pupil is already present.
