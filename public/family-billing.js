@@ -94,7 +94,7 @@
  }
  async function mount(context){
   const root=$('#family-billing');if(!root)return;
-  state={...context,root};
+  state={...context,groups:[...context.groups].sort((a,b)=>String(b.period).localeCompare(String(a.period))||String(a.guardian_name).localeCompare(String(b.guardian_name))),root};
   root.addEventListener('change',e=>{
    if(e.target.name==='mode'||e.target.name==='guardian_id')updateMode(root);
    if(e.target.name==='amount'&&e.target.closest('#family-issue-form'))updateChildren(root);
