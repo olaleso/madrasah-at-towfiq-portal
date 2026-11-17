@@ -10,10 +10,10 @@
  const $=(sel,root=document)=>root.querySelector(sel);
  const $$=(sel,root=document)=>[...root.querySelectorAll(sel)];
  const sum=(groups,key)=>groups.reduce((a,g)=>a+Number(g[key]||0),0);
- function familyCard(group,index,payments,canManage){
+ function familyCard(group,index,payments,familyPayments,canManage){
   const balance=Number(group.balance_pence||0),paid=Number(group.paid_pence||0);
   const invoiceIds=new Set(group.lines.map(x=>x.invoice_id));
-  const history=payments.filter(x=>invoiceIds.has(x.invoice_id)).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+  const history=[...familyPayments.filter(x=>x.family_invoice_id===group.family_invoice_id).map(x=>({...x,first_name:'Family payment',last_name:''})),...payments.filter(x=>invoiceIds.has(x.invoice_id)&&!x.family_batch_id)].sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
   const status=!balance?'Paid':paid?'Part paid':'Outstanding';
   const lines=group.lines.map(x=>`<tr><td><strong>${safe(x.student_name)}</strong><small>${safe(x.student_no)}</small></td><td>${money(x.amount_pence)}</td><td>${money(x.paid_pence)}</td><td><strong>${money(x.balance_pence)}</strong></td></tr>`).join('');
   return `<details class="family-bill" data-family-row data-family-index="${index}" data-search="${safe([group.guardian_name,group.guardian_email,group.period,group.invoice_number,group.lines.map(x=>x.student_name+' '+x.student_no).join(' ')].join(' ').toLowerCase())}">
@@ -47,7 +47,7 @@
    </div>
   </details>`;
  }
- function html({groups=[],eligible=[],payments=[],queue=[],canManage=false}){
+ function html({groups=[],eligible=[],payments=[],familyPayments=[],queue=[],canManage=false}){
   const queued=queue.reduce((n,x)=>['pending','failed'].includes(x.status)?n+Number(x.total||0):n,0);
   const sorted=[...groups].sort((a,b)=>String(b.period).localeCompare(String(a.period))||String(a.guardian_name).localeCompare(String(b.guardian_name)));
   const verified=eligible.filter(x=>x.eligible);
@@ -75,7 +75,7 @@
       </div><div class="family-form-actions"><button class="btn primary" type="submit">Issue family invoices</button></div></form>`:'<p class="muted">No activated, linked guardian accounts are available for family billing.</p>'}
     </div>`:''}
    ${sorted.length?`<div class="family-filter"><input id="family-billing-search" type="search" autocomplete="off" placeholder="Search guardian, student, registration or invoice" aria-label="Search family fee statements"><span id="family-billing-count">${sorted.length} families shown</span></div>
-     <div class="family-bill-list">${sorted.map((g,i)=>familyCard(g,i,payments,canManage)).join('')}</div>`:'<p class="muted" style="padding:20px 0">No family fee records yet. Existing student invoices will appear here grouped automatically.</p>'}
+     <div class="family-bill-list">${sorted.map((g,i)=>familyCard(g,i,payments,familyPayments,canManage)).join('')}</div>`:'<p class="muted" style="padding:20px 0">No family fee records yet. Existing student invoices will appear here grouped automatically.</p>'}
    </section>`;
  }
  function updateMode(root){
