@@ -1,3 +1,4 @@
+import {groupFamilyFeeRows,allocateFamilyPayment} from './family-billing.mjs';
 import {loadCommunity,saveCommunity,validateCommunityEntry,publicCommunity,COMMUNITY_LIMIT} from './masjid-community.mjs';
 import {validateLegacyBatch,matchExistingLegacy,validLegacyDate,normalizeLegacyPhone} from './legacy-students.mjs';
 import {legacyMigrationEmail,LEGACY_MIGRATION_SUBJECT} from './legacy-migration-email.mjs';
@@ -726,6 +727,101 @@ async function financeEmailForInvoice(db,env,invoiceId,kind,actor,paymentPence=0
  return {notification_status:result};
 }
 
+
+async function familyLedgerRows(db,guardianId='',familyId=''){
+ const where=familyId?'WHERE fam.id=?':guardianId?'WHERE s.parent_id=?':'';
+ return all(db,`SELECT f.id AS invoice_id,f.student_id,f.period,f.amount_pence,f.due_date,
+  s.first_name,s.last_name,s.student_no,s.parent_id AS guardian_id,
+  u.name AS guardian_name,u.email AS guardian_email,
+  fam.id AS family_invoice_id,fam.guardian_id AS family_guardian_id,fam.invoice_number,
+  (SELECT COALESCE(SUM(p.amount_pence),0) FROM payments p WHERE p.invoice_id=f.id) AS paid_pence
+  FROM fee_invoices f JOIN students s ON s.id=f.student_id
+  LEFT JOIN users u ON u.id=s.parent_id
+  LEFT JOIN family_invoice_lines fil ON fil.invoice_id=f.id
+  LEFT JOIN family_invoices fam ON fam.id=fil.family_invoice_id
+  ${where} ORDER BY f.period DESC,s.last_name,s.first_name`,...(familyId?[familyId]:guardianId?[guardianId]:[]));
+}
+
+async function familyIssuedStatement(db,invoiceId,viewer=null){
+ const record=await first(db,'SELECT id,guardian_id,period,invoice_number,due_date FROM family_invoices WHERE id=?',invoiceId);
+ if(!record)error('Family invoice not found',404);
+ if(viewer?.role==='parent'&&viewer.id!==record.guardian_id)error('Family invoice not available to this account',403);
+ const rows=await familyLedgerRows(db,'',record.id);
+ if(!rows.length)error('Family invoice has no student charges',409);
+ if(rows.some(x=>x.guardian_id!==record.guardian_id))
+  error('Family relationships have changed. School administration must review this invoice.',409);
+ const group=groupFamilyFeeRows(rows)[0];
+ if(!group||group.requires_review||group.lines.length!==rows.length)
+  error('Family invoice requires guardian review',409);
+ return {...group,guardian_id:record.guardian_id,family_invoice_id:record.id,invoice_number:record.invoice_number,
+  due_date:record.due_date||group.due_date,formal:true};
+}
+
+function familyFinanceEmailHtml(group,kind,paidNow=0){
+ const currency=p=>financeMoney(p);
+ const safe=x=>escapeHtml(String(x??''));
+ const payment=kind==='receipt',reminder=kind==='reminder';
+ const title=payment?'Your family payment has been recorded':reminder?'Your family fee statement':'Your family invoice is ready';
+ const intro=payment?'We have recorded your family payment. The statement below shows how the amount has been allocated across your children’s accounts.':reminder?'Please find your updated family balance below. If you have recently paid, contact the school so we can reconcile the records.':'Your monthly madrasah fees are now available as one family invoice with each child’s charge shown separately.';
+ const rows=group.lines.map(x=>`<tr><td style="border-bottom:1px solid #e7eef7;padding:11px 6px">${safe(x.student_name)}<small style="display:block;color:#7485a1">${safe(x.student_no)}</small></td>
+  <td align="right" style="border-bottom:1px solid #e7eef7;padding:11px 6px">${currency(x.amount_pence)}</td>
+  <td align="right" style="border-bottom:1px solid #e7eef7;padding:11px 6px">${currency(x.paid_pence)}</td>
+  <td align="right" style="border-bottom:1px solid #e7eef7;padding:11px 6px">${currency(x.balance_pence)}</td></tr>`).join('');
+ return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+ <body style="margin:0;background:#f0f4fa;color:#263c61;font-family:Arial,sans-serif">
+ <table role="presentation" width="100%"><tr><td align="center" style="padding:28px 12px"><table role="presentation" width="620" style="width:100%;max-width:620px;background:#fff;border-radius:14px;border-collapse:collapse;overflow:hidden">
+ <tr><td style="padding:24px;background:#122f58;text-align:center;color:white"><img src="https://portal.attowfiqmasjid.org/assets/at-towfiq-madrasah-logo.png" width="150" alt="Madrasah At-Towfiq" style="background:white;border-radius:6px;padding:7px"><p style="letter-spacing:1.5px;font-size:11px">MADRASAH AT-TOWFIQ · BOLTON</p><p lang="ar" dir="rtl" style="font-size:19px">السلام عليكم ورحمة الله وبركاته</p></td></tr>
+ <tr><td style="padding:30px"><p style="font-size:11px;color:#957139;font-weight:bold">FAMILY BILLING · ${safe(group.invoice_number||'Statement')}</p><h1 style="font:normal 29px Georgia,serif;color:#1c3d6a">${title}</h1><p>Assalāmu ʿalaykum, <strong>${safe(group.guardian_name)}</strong>,</p><p style="line-height:1.7">${intro}</p>
+ <p><strong>Billing month:</strong> ${safe(financePeriod(group.period))}<br><strong>Invoice number:</strong> ${safe(group.invoice_number||'Family statement')}<br><strong>Payment due:</strong> ${group.due_date?safe(safeEmailDate(group.due_date)):'See parent portal'}</p>
+ <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:12px"><tr style="background:#ecf3fb"><th align="left" style="padding:10px 6px">Student</th><th align="right">Charge</th><th align="right">Paid</th><th align="right">Outstanding</th></tr>${rows}</table>
+ <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:20px"><tr><td style="padding:5px 0">Family charges</td><td align="right">${currency(group.total_pence)}</td></tr><tr><td style="padding:5px 0">Total paid</td><td align="right">${currency(group.paid_pence)}</td></tr>${payment?`<tr><td style="padding:5px 0">Payment just recorded</td><td align="right">${currency(paidNow)}</td></tr>`:''}<tr style="color:#123e75;font-weight:bold;font-size:18px"><td style="border-top:1px solid #cad9eb;padding-top:14px">Family balance</td><td align="right" style="border-top:1px solid #cad9eb;padding-top:14px">${currency(group.balance_pence)}</td></tr></table>
+ <p style="margin:28px 0"><a href="https://portal.attowfiqmasjid.org/" style="background:#2664b9;color:white;text-decoration:none;padding:14px 20px;border-radius:6px">View my family fee account</a></p>
+ <p style="font-size:12px;line-height:1.6;color:#617693">This statement records school charges and payments already entered. It does not collect payments automatically. To report a missing payment, contact <a href="mailto:admissions@attowfiqmasjid.org">admissions@attowfiqmasjid.org</a>.</p><p>Jazākum Allāhu khayran,<br><strong>Madrasah At-Towfiq Accounts</strong></p></td></tr>
+ <tr><td style="background:#eef3f9;text-align:center;padding:17px;color:#667b97;font-size:11px">24 Punch Street, Bolton, BL3 5BJ, UK · attowfiqmasjid.org</td></tr></table></td></tr></table></body></html>`;
+}
+
+async function sendFamilyFinanceEmail(db,env,invoiceId,kind,actor=null,paidNow=0){
+ const group=await familyIssuedStatement(db,invoiceId);
+ if(kind==='reminder'&&!group.balance_pence)return {notification_status:'already_paid'};
+ const guardian=await first(db,'SELECT name,email,active,password_hash FROM users WHERE id=?',group.guardian_id);
+ if(!guardian||!guardian.active||!guardian.password_hash||!/^\S+@\S+\.\S+$/.test(guardian.email||''))
+  return {notification_status:'guardian_not_activated'};
+ const html=familyFinanceEmailHtml(group,kind,paidNow);
+ const subject=kind==='receipt'?'Family payment receipt | Madrasah At-Towfiq':
+  kind==='reminder'?'Family fee reminder | Madrasah At-Towfiq':'Your family invoice | Madrasah At-Towfiq';
+ const response=await mail(env,guardian.email,subject,html,{replyTo:env.ADMISSIONS_EMAIL});
+ if(actor)try{await audit(db,actor,'family_invoice_'+kind,'family_invoice',invoiceId,response.sent?'sent':'not_sent');}catch{}
+ return {notification_status:response.sent?'sent':'not_sent',status:response.status||0,error:response.error||''};
+}
+
+async function dispatchFamilyInvoiceEmails(env,maxCount=6){
+ if(!env.DB||!env.RESEND_API_KEY||!env.EMAIL_FROM)return 0;
+ const db=env.DB;
+ const queue=await all(db,`SELECT family_invoice_id FROM family_invoice_email_queue
+  WHERE attempts<4 AND (status IN ('pending','failed') OR
+  (status='sending' AND updated_at<datetime('now','-15 minutes')))
+  ORDER BY updated_at,family_invoice_id LIMIT ?`,Math.min(Math.max(1,maxCount),6));
+ let accepted=0;
+ for(const item of queue){
+  const claim=await run(db,`UPDATE family_invoice_email_queue SET status='sending',attempts=attempts+1,updated_at=CURRENT_TIMESTAMP
+   WHERE family_invoice_id=? AND attempts<4 AND
+   (status IN ('pending','failed') OR (status='sending' AND updated_at<datetime('now','-15 minutes')))`,item.family_invoice_id);
+  if(Number(claim.meta?.changes||0)!==1)continue;
+  let rateLimited=false;
+  try{
+   const result=await sendFamilyFinanceEmail(db,env,item.family_invoice_id,'issued');
+   rateLimited=result.status===429;
+   if(result.notification_status!=='sent')throw Error(result.error||result.notification_status);
+   await run(db,`UPDATE family_invoice_email_queue SET status='sent',sent_at=CURRENT_TIMESTAMP,last_error='',updated_at=CURRENT_TIMESTAMP WHERE family_invoice_id=?`,item.family_invoice_id);
+   accepted++;
+  }catch(err){
+   await run(db,`UPDATE family_invoice_email_queue SET status='failed',last_error=?,updated_at=CURRENT_TIMESTAMP WHERE family_invoice_id=?`,short(err.message,280),item.family_invoice_id);
+  }
+  if(rateLimited)break;
+  await new Promise(resolve=>setTimeout(resolve,650));
+ }
+ return accepted;
+}
 
 // Masjid website video curation. Uses an existing settings row: no schema changes,
 // no cross-domain access to private pupil/guardian records.
