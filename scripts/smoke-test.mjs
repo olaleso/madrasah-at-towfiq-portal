@@ -2026,6 +2026,11 @@ assert.equal(familyLogin.status,200,JSON.stringify(familyLogin.data));
 cookie=familyLogin.response.headers.get('set-cookie').split(';')[0];csrf=familyLogin.data.csrf;
 let parentFamily=await req('/fees/families');
 assert.equal(parentFamily.status,200);
+const parentPaymentHistory=await req('/fees/families/payment-history');
+assert.equal(parentPaymentHistory.status,200);
+assert.equal(parentPaymentHistory.data.items.length,1,'One family receipt is shown for an allocated payment');
+assert.equal(parentPaymentHistory.data.items[0].amount_pence,2000);
+
 assert.ok(parentFamily.data.items.some(g=>g.family_invoice_id===familyId));
 assert.ok(parentFamily.data.items.every(g=>g.guardian_id==='family-guardian'),'Parents must not see other families');
 let deniedFamily=await req('/fees/families/eligible');
@@ -2060,6 +2065,15 @@ globalThis.fetch=async(url,options)=>{
  return new Response(JSON.stringify({id:'family-test-accepted'}),{status:200,headers:{'content-type':'application/json'}});
 };
 try{
+ // Resend rate limits must stop the batch and leave other family notices queued.
+ const rateLimitedFetch=globalThis.fetch;
+ globalThis.fetch=async()=>new Response(JSON.stringify({message:'Too many requests'}),{status:429,headers:{'content-type':'application/json'}});
+ let throttled=await req('/fees/families/send',{confirm:'SEND_FAMILY_INVOICES'});
+ assert.equal(throttled.status,200);
+ assert.equal(throttled.data.accepted,0);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM family_invoice_email_queue WHERE status='failed'").get().n,1,
+  'HTTP 429 must mark only the attempted family notice as failed');
+ globalThis.fetch=rateLimitedFetch;
  let queued=await req('/fees/families/send',{confirm:'SEND_FAMILY_INVOICES'});
  assert.equal(queued.status,200,JSON.stringify(queued.data));
  assert.equal(queued.data.accepted,3);
