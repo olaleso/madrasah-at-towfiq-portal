@@ -1971,15 +1971,15 @@ const familyIssue={
  student_amounts:{'family-child-a':3000,'family-child-b':1500},due_date:'2031-08-20',
  confirm:'ISSUE_FAMILY_INVOICES'
 };
-let familyResult=await req('/fees/families/issue',familyIssue);
-assert.equal(familyResult.status,200,JSON.stringify(familyResult.data));
-assert.equal(familyResult.data.created,2);
-assert.equal(familyResult.data.families_created,1);
-const familyId=familyResult.data.results[0].family_invoice_id;
-familyResult=await req('/fees/families/issue',familyIssue);
-assert.equal(familyResult.status,200,JSON.stringify(familyResult.data));
-assert.equal(familyResult.data.created,0,'Repeated family issue cannot duplicate student charges');
-assert.equal(familyResult.data.skipped,2);
+let billingIssueResponse=await req('/fees/families/issue',familyIssue);
+assert.equal(billingIssueResponse.status,200,JSON.stringify(billingIssueResponse.data));
+assert.equal(billingIssueResponse.data.created,2);
+assert.equal(billingIssueResponse.data.families_created,1);
+const familyId=billingIssueResponse.data.results[0].family_invoice_id;
+billingIssueResponse=await req('/fees/families/issue',familyIssue);
+assert.equal(billingIssueResponse.status,200,JSON.stringify(billingIssueResponse.data));
+assert.equal(billingIssueResponse.data.created,0,'Repeated family issue cannot duplicate student charges');
+assert.equal(billingIssueResponse.data.skipped,2);
 assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM fee_invoices WHERE period='2031-08' AND student_id IN ('family-child-a','family-child-b')").get().n,2);
 let familyGroups=await req('/fees/families');
 assert.equal(familyGroups.status,200);
