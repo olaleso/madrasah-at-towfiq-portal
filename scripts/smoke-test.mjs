@@ -13,6 +13,8 @@ sqlite.exec(fs.readFileSync(new URL('../migrations/0018_legacy_student_import_re
 sqlite.exec(fs.readFileSync(new URL('../migrations/0019_legacy_migration_notices.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0020_legacy_parent_onboarding.sql',import.meta.url),'utf8'));
 sqlite.exec(fs.readFileSync(new URL('../migrations/0021_family_billing.sql',import.meta.url),'utf8'));
+sqlite.exec(fs.readFileSync(new URL('../migrations/0022_saved_marriage_certificates.sql',import.meta.url),'utf8'));
+
 
 
 
@@ -1604,6 +1606,92 @@ assert.equal(sqlite.prepare("SELECT value FROM school_settings WHERE key='masjid
 const publicTemplate=await worker.fetch(new Request('http://localhost:8787/api/masjid/marriage-template'),env);
 assert.equal(publicTemplate.status,401,'Public visitors cannot retrieve the approved marriage certificate template');
 
+// Private Nikah archive: opt-in retention, no public file URL, idempotent save,
+// list/search, PDF retrieval and deletion. Store only in the test R2 map.
+const marriageSaveAdminCookie=cookie,marriageSaveAdminCsrf=csrf;
+const fakeNikahPdf=new TextEncoder().encode('%PDF-1.4\n'+'.'.repeat(180)+'\n%%EOF');
+const nikahForm=new FormData();
+for(const [k,v] of Object.entries({
+ groom:'Adam Sample',bride:'Aisha Sample',witness1:'Witness One',
+ witness2:'Witness Two',imam:'Authorised Imam',
+ nikahDate:'2026-11-20',issueDate:'2026-11-20',
+ mahr:'£500',request_key:'abcdefab-1234-4abb-9cde-111111111111',
+ retention_confirmed:'YES'
+}))nikahForm.append(k,v);
+nikahForm.append('certificate',new Blob([fakeNikahPdf],{type:'application/pdf'}),'generated.pdf');
+async function nikahRequest(body=nikahForm,method='POST'){
+ const response=await worker.fetch(new Request('http://localhost:8787/api/masjid/marriage-certificates',{
+  method,headers:{Origin:'http://localhost:8787','x-csrf-token':csrf,cookie},body
+ }),env);
+ return {status:response.status,data:await response.json()};
+}
+let archiveResult=await nikahRequest();
+assert.equal(archiveResult.status,503,'Saving must be blocked when the private R2 binding is missing');
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM marriage_certificates').get().n,0);
+const nikahDocuments=new Map();
+env.DBS_FILES={
+ async put(key,bytes){nikahDocuments.set(key,new Uint8Array(bytes));},
+ async get(key){const content=nikahDocuments.get(key);return content?{body:new Blob([content]).stream()}:null;},
+ async delete(key){nikahDocuments.delete(key);}
+};
+let invalidNikah=new FormData(nikahForm);
+invalidNikah.delete('retention_confirmed');
+archiveResult=await nikahRequest(invalidNikah);
+assert.equal(archiveResult.status,400,'Admin must opt in to retain named marriage documents');
+invalidNikah=new FormData(nikahForm);
+invalidNikah.set('certificate',new Blob(['not a pdf'.repeat(40)],{type:'application/pdf'}),'bad.pdf');
+archiveResult=await nikahRequest(invalidNikah);
+assert.equal(archiveResult.status,415,'Server must inspect the PDF signature and trailer');
+assert.equal(nikahDocuments.size,0,'Rejected documents never reach R2');
+archiveResult=await nikahRequest();
+assert.equal(archiveResult.status,201,JSON.stringify(archiveResult.data));
+const archiveId=archiveResult.data.id,archiveRef=archiveResult.data.reference;
+assert.match(archiveRef,/^MAT-NIK-2026-[A-F0-9]{8}$/);
+assert.equal(nikahDocuments.size,1,'Generated PDF stored privately under a dedicated R2 prefix');
+assert.ok([...nikahDocuments.keys()][0].startsWith('private/marriage-certificates/'));
+const originalArchive=await nikahRequest();
+assert.equal(originalArchive.status,200);
+assert.equal(originalArchive.data.already_saved,true,'Repeated network requests must not duplicate archived certificates');
+assert.equal(originalArchive.data.id,archiveId);
+assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM marriage_certificates').get().n,1);
+let archiveList=await req('/masjid/marriage-certificates');
+assert.equal(archiveList.status,200);
+assert.equal(archiveList.data.items.length,1);
+assert.equal(archiveList.data.items[0].reference,archiveRef);
+assert.ok(!('document_key' in archiveList.data.items[0]),'Private bucket key must not be exposed');
+archiveList=await req('/masjid/marriage-certificates?q=Aisha');
+assert.equal(archiveList.status,200);
+assert.equal(archiveList.data.items.length,1);
+archiveList=await req('/masjid/marriage-certificates?q=Unknown');
+assert.equal(archiveList.data.items.length,0);
+const nikahFileUrl='http://localhost:8787/api/masjid/marriage-certificates/file?id='+archiveId;
+let nikahFile=await worker.fetch(new Request(nikahFileUrl,{headers:{cookie}}),env);
+assert.equal(nikahFile.status,200);
+assert.equal(nikahFile.headers.get('Content-Type'),'application/pdf');
+assert.equal(nikahFile.headers.get('Cache-Control'),'no-store, private');
+assert.deepEqual(new Uint8Array(await nikahFile.arrayBuffer()),fakeNikahPdf);
+let nikahPublic=await worker.fetch(new Request(nikahFileUrl),env);
+assert.equal(nikahPublic.status,401,'Anonymous users must never download certificates');
+cookie=parent_cookie;csrf=parent_csrf;
+archiveList=await req('/masjid/marriage-certificates');
+assert.equal(archiveList.status,403,'Guardians must not access marriage documents');
+nikahFile=await worker.fetch(new Request(nikahFileUrl,{headers:{cookie}}),env);
+assert.equal(nikahFile.status,403);
+archiveResult=await nikahRequest();
+assert.equal(archiveResult.status,403,'Guardians must not store marriage documents');
+cookie=marriageSaveAdminCookie;csrf=marriageSaveAdminCsrf;
+archiveResult=await req('/masjid/marriage-certificates',{id:archiveId,reference:'WRONG',confirm:'DELETE_CERTIFICATE'},'DELETE');
+assert.equal(archiveResult.status,400,'Delete requires the correct certificate reference');
+assert.equal(nikahDocuments.size,1);
+archiveResult=await req('/masjid/marriage-certificates',{id:archiveId,reference:archiveRef,confirm:'DELETE_CERTIFICATE'},'DELETE');
+assert.equal(archiveResult.status,200);
+assert.equal(nikahDocuments.size,0,'Deletion must remove the stored PDF bytes');
+assert.ok(sqlite.prepare('SELECT deleted_at FROM marriage_certificates WHERE id=?').get(archiveId).deleted_at,'Deletion leaves an audit-safe tombstone');
+nikahFile=await worker.fetch(new Request(nikahFileUrl,{headers:{cookie}}),env);
+assert.equal(nikahFile.status,404,'Deleted document must not be downloadable');
+archiveList=await req('/masjid/marriage-certificates');
+assert.equal(archiveList.data.items.length,0,'Deleted certificate no longer appears in the archive');
+delete env.DBS_FILES;
 cookie=contactPrevCookie;csrf=contactPrevCsrf;
 
 
