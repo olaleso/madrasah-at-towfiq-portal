@@ -37,7 +37,7 @@ test('approved certificate and download controls are admin only in portal UI',()
  const certPage=app.slice(app.indexOf('function marriagePage()'),app.indexOf('function ',app.indexOf('function marriagePage()')+20));
  assert.match(certPage,/Witness 1 · Full name/);
  assert.match(certPage,/Witness 2 · Full name/);
- assert.match(certPage,/Officiating imam · Full name/);
+ assert.match(certPage,/Authorised Imam \/ Officiating Registrar · Name/);
  assert.doesNotMatch(certPage,/Witness 1 · Signature|Witness 2 · Signature/);
  assert.match(client,/witness1:get\('witness1'\),witness2:get\('witness2'\),imam:get\('imam'\)/);
  assert.match(client,/scriptName\(ctx,r\.witness1,440,625,1442,665\)/);
