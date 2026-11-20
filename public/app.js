@@ -745,7 +745,7 @@ function marriagePage(){
       ${field('Mahr / dower (optional)','mahr','','text','maxlength="160" placeholder="e.g. £500 or an agreed gift"','wide')}
       ${field('Witness 1 · Full name','witness1','','text','required maxlength="120" autocomplete="off"','wide')}
       ${field('Witness 2 · Full name','witness2','','text','required maxlength="120" autocomplete="off"','wide')}
-      ${field('Officiating imam · Full name','imam','','text','required maxlength="120" autocomplete="off"','wide')}
+      ${field('Authorised Imam / Officiating Registrar · Name','imam','','text','required maxlength="120" autocomplete="off"','wide')}
      </div>
      <div class="marriage-signature-note">${ico('info',17)} The two witnesses appear as names only. The officiating imam’s name is printed within the existing Authorised Imam / Officiating Registrar area at the bottom, with no extra imam row. The imam’s signature line and mosque seal are preserved.</div>
      <button class="btn primary" type="submit">${ico('award',18)} Generate certificate</button>
