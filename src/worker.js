@@ -1395,7 +1395,7 @@ async function handle(req,env,ctx){
     error('Confirm the exact certificate reference to delete the stored copy',400);
    if(!env.DBS_FILES)error('Secure certificate storage is unavailable; deletion was not completed',503);
    await env.DBS_FILES.delete(cert.document_key);
-   await run(db,'UPDATE marriage_certificates SET deleted_at=?,deleted_by=? WHERE id=? AND deleted_at IS NULL',iso(),user.id,cert.id);
+   await run(db,"UPDATE marriage_certificates SET deleted_at=?,deleted_by=?,groom_name='[Deleted]',bride_name='[Deleted]',witness1_name='',witness2_name='',imam_name='',nikah_date=NULL,mahr='' WHERE id=? AND deleted_at IS NULL",iso(),user.id,cert.id);
    try{await audit(db,user,'delete','marriage_certificate',cert.id,'Deleted PDF '+cert.reference);}
    catch(e){console.error('Nikah certificate deletion audit failed',e);}
    return json({ok:true});
