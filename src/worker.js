@@ -1311,8 +1311,8 @@ async function handle(req,env,ctx){
  // is saved in D1 for use by the browser-side certificate renderer.
  if(path==='/api/masjid/marriage-template'){
   requireRole(user,'admin');
-  // New approved artwork intentionally uses a new key so the old witness-bearing image cannot appear after deployment.
-  const key='masjid_marriage_certificate_template_v2_no_witnesses';
+  // New approved artwork uses its own key: print witness names and officiating imam but do not reuse previous witness-signature or witness-free templates.
+  const key='masjid_marriage_certificate_template_v3_witness_names_imam';
   if(method==='GET'){
    const record=await first(db,'SELECT value FROM school_settings WHERE key=?',key);
    return json({configured:!!record?.value,image:record?.value||null},200,
