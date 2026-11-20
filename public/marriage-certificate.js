@@ -17,9 +17,8 @@
  const toUK=d=>validDate(d)?d.split('-').reverse().join(' / '):'';
  function record(){
   const f=new FormData(form),get=name=>text(f.get(name));
-  return {groom:get('groom'),bride:get('bride'),witness1:get('witness1'),
-   witness2:get('witness2'),nikahDate:get('nikahDate'),mahr:get('mahr'),
-   issueDate:get('issueDate')};
+  return {groom:get('groom'),bride:get('bride'),
+   nikahDate:get('nikahDate'),mahr:get('mahr'),issueDate:get('issueDate')};
  }
  function scriptName(ctx,name,x1,y1,x2,y2){
   if(!name)return;
@@ -54,18 +53,15 @@
   const ctx=canvas.getContext('2d',{alpha:false});
   ctx.clearRect(0,0,W,H);ctx.drawImage(base,0,0,W,H);
   const r=record();
-  // Exact blank-field bounds of the approved 1535×1024 bilingual image.
-  // One beautifully calligraphed entry per person: no duplicated Arabic field.
-  scriptName(ctx,r.groom,445,434,1439,473);
-  scriptName(ctx,r.bride,445,478,1439,517);
-  formal(ctx,toUK(r.nikahDate),594,549,303,19);
-  formal(ctx,r.mahr,940,592,973,19);
-  formal(ctx,r.witness1,638,697,350,20);
-  formal(ctx,r.witness2,638,741,350,20);
-  if(r.issueDate){
-   ctx.save();ctx.fillStyle='#fff';ctx.fillRect(1163,934,226,39);ctx.restore();
-   formal(ctx,toUK(r.issueDate),1276,952,215,19);
-  }
+  // Blank-field bounds of the approved witness-free 1535×1024 artwork.
+  // Names are written once and used in the bilingual certificate.
+  scriptName(ctx,r.groom,444,450,1438,487);
+  scriptName(ctx,r.bride,444,499,1438,536);
+  formal(ctx,toUK(r.nikahDate),593,568,300,19);
+  formal(ctx,r.mahr,942,623,975,19);
+  // Date of issue is written ABOVE the printed date/signature line.
+  // Do not paint an opaque rectangle that can obscure the artwork.
+  formal(ctx,toUK(r.issueDate),1278,790,215,18);
  }
  function setDownloads(enabled){
   downloadReady=enabled;
