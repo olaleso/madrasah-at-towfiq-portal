@@ -256,7 +256,9 @@ async function dispatchLegacyParentOnboarding(env,maxCount=10){
   const claim=await run(db,`UPDATE legacy_parent_onboarding SET status='sending',attempts=attempts+1,updated_at=CURRENT_TIMESTAMP
    WHERE id=? AND attempts<4 AND (status IN ('pending','failed') OR
    (status='sending' AND updated_at<datetime('now','-15 minutes')))`,item.id);
-  if(Number(claim.meta?.changes||0)!==1)continue;
+  // Cloudflare D1 reports changes in meta.changes. The Node SQLite smoke
+  // adapter returns changes directly; require an actual claim in both.
+  if(Number(claim.meta?.changes ?? claim.changes ?? 0)!==1)continue;
   let rateLimited=false;
   try{
    const uid=item.user_id;
