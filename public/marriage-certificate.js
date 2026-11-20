@@ -172,7 +172,7 @@
   try{
    const response=await apiFn('/masjid/marriage-template');
    if(!response.configured||!response.image){
-    $('marriage-template-message').textContent='One-time setup: upload the approved certificate artwork below.';
+    $('marriage-template-message').textContent='Template update required: upload the new witness-free certificate artwork below. The previous version remains archived and is not used.';
     $('marriage-canvas-placeholder').hidden=false;canvas.hidden=true;return;
    }
    base=await loadImage(response.image);ready=true;
