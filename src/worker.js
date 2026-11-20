@@ -1319,7 +1319,9 @@ async function handle(req,env,ctx){
   const cert=await first(db,'SELECT id,reference,document_key FROM marriage_certificates WHERE id=? AND deleted_at IS NULL',cid);
   if(!cert)error('Saved certificate not found',404);
   if(!env.DBS_FILES)error('Private certificate storage is unavailable',503);
-  const pdf=await env.DBS_FILES.get(cert.document_key);
+  let pdf;
+  try{pdf=await env.DBS_FILES.get(cert.document_key);}
+  catch(e){console.error('Nikah certificate PDF storage retrieval failed',e);error('Private storage could not retrieve the certificate. Please retry.',503);}
   if(!pdf)error('Stored certificate PDF is missing; contact the administrator',404);
   try{await audit(db,user,'download','marriage_certificate',cert.id,'Downloaded '+cert.reference);}
   catch(e){console.error('Marriage archive download audit failed',e);}
@@ -1373,7 +1375,8 @@ async function handle(req,env,ctx){
    const certId=id();
    const reference='MAT-NIK-'+issued.slice(0,4)+'-'+certId.slice(0,8).toUpperCase();
    const objectKey='private/marriage-certificates/'+certId+'.pdf';
-   await env.DBS_FILES.put(objectKey,pdf,{httpMetadata:{contentType:'application/pdf'}});
+   try{await env.DBS_FILES.put(objectKey,pdf,{httpMetadata:{contentType:'application/pdf'}});}
+   catch(e){console.error('Nikah certificate private storage write failed',e);error('The private store could not save the PDF. No certificate record was created.',503);}
    try{
     await run(db,'INSERT INTO marriage_certificates (id,reference,request_key,groom_name,bride_name,witness1_name,witness2_name,imam_name,nikah_date,issue_date,mahr,document_key,document_size,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
      certId,reference,key,groom,bride,witness1,witness2,imam,nikah||null,issued,mahr,objectKey,pdf.length,user.id);
@@ -1394,7 +1397,8 @@ async function handle(req,env,ctx){
    if(b.confirm!=='DELETE_CERTIFICATE'||b.reference!==cert.reference)
     error('Confirm the exact certificate reference to delete the stored copy',400);
    if(!env.DBS_FILES)error('Secure certificate storage is unavailable; deletion was not completed',503);
-   await env.DBS_FILES.delete(cert.document_key);
+   try{await env.DBS_FILES.delete(cert.document_key);}
+   catch(e){console.error('Nikah certificate private delete failed',e);error('Could not remove the private PDF. Deletion was not completed.',503);}
    await run(db,"UPDATE marriage_certificates SET deleted_at=?,deleted_by=?,groom_name='[Deleted]',bride_name='[Deleted]',witness1_name='',witness2_name='',imam_name='',nikah_date=NULL,mahr='' WHERE id=? AND deleted_at IS NULL",iso(),user.id,cert.id);
    try{await audit(db,user,'delete','marriage_certificate',cert.id,'Deleted PDF '+cert.reference);}
    catch(e){console.error('Nikah certificate deletion audit failed',e);}
