@@ -1580,7 +1580,7 @@ const noSessionContact=await worker.fetch(new Request('http://localhost:8787/api
 assert.equal(noSessionContact.status,401,'Public visitors cannot read private contact messages');
 
 // Marriage certificate background: private admin-only storage and image validation.
-// Personal bride and groom details remain client-side; the approved witness-free template contains no names.
+// Bride, groom, both witnesses and imam names remain client-side; the approved background has no personal names or signatures.
 const beforeTemplate=await req('/masjid/marriage-template');
 assert.equal(beforeTemplate.status,200);
 assert.equal(beforeTemplate.data.configured,false);
@@ -1593,12 +1593,14 @@ const savedTemplate=await req('/masjid/marriage-template');
 assert.equal(savedTemplate.status,200);
 assert.equal(savedTemplate.data.configured,true);
 assert.equal(savedTemplate.data.image,testTemplate,'Approved artwork persists without personal details');
-const witnessFreeArtwork=sqlite.prepare("SELECT value FROM school_settings WHERE key='masjid_marriage_certificate_template_v2_no_witnesses'").get();
-assert.ok(witnessFreeArtwork,'Approved artwork must be stored under the witness-free v2 template key');
-assert.ok(!witnessFreeArtwork.value.includes('groom')&&!witnessFreeArtwork.value.includes('bride'),
- 'Personal names must not be saved to the certificate template');
+const namedWitnessArtwork=sqlite.prepare("SELECT value FROM school_settings WHERE key='masjid_marriage_certificate_template_v3_witness_names_imam'").get();
+assert.ok(namedWitnessArtwork,'Approved artwork must be stored under the v3 witness-name and imam template key');
+assert.ok(!namedWitnessArtwork.value.includes('groom')&&!namedWitnessArtwork.value.includes('bride'),
+ 'Personal names must not be saved to the certificate background');
+assert.equal(sqlite.prepare("SELECT value FROM school_settings WHERE key='masjid_marriage_certificate_template_v2_no_witnesses'").get(),undefined,
+ 'Uploading the new layout must not overwrite or create the previous witness-free template');
 assert.equal(sqlite.prepare("SELECT value FROM school_settings WHERE key='masjid_marriage_certificate_template_v1'").get(),undefined,
- 'New witness-free certificate uploads must not overwrite or recreate the retired v1 template');
+ 'Uploading the v3 layout must not recreate the retired v1 template');
 const publicTemplate=await worker.fetch(new Request('http://localhost:8787/api/masjid/marriage-template'),env);
 assert.equal(publicTemplate.status,401,'Public visitors cannot retrieve the approved marriage certificate template');
 
