@@ -22,7 +22,7 @@
 @media(max-width:610px){.marriage-form-side .form-grid{grid-template-columns:1fr}.marriage-form-side .field.wide{grid-column:1}.marriage-intro{padding:14px}.marriage-download-actions button{flex:1 1 100%}}
 
 .marriage-retention-confirmation{border:1px solid #d6e4f2;background:#f7faff;border-radius:10px;padding:12px 13px;margin:13px 0 16px!important;line-height:1.55;font-size:12px}
-.marriage-saved-section{margin-top:24px}
+.marriage-saved-section{grid-column:1/-1;margin-top:24px;min-width:0}
 .marriage-archive-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0}
 .marriage-archive-tools input{flex:1;min-width:220px;border:1px solid #d6e2ed;border-radius:9px;padding:11px 13px;background:#fff;color:#1b355b;font:inherit;font-size:13px}
 .marriage-archive-partner{display:block;color:#708298;font-size:12px;margin-top:6px}
