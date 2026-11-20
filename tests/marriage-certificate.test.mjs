@@ -32,20 +32,26 @@ test('approved certificate and download controls are admin only in portal UI',()
  assert.ok(app.includes("['marriage','Marriage certificates','award']"));
  assert.ok(app.includes("case'marriage':content=marriagePage()"));
  assert.ok(app.includes("window.MasjidMarriageCertificate?.mount"));
- for(const field of ['groom','bride','nikahDate','mahr','issueDate'])
+ for(const field of ['groom','bride','nikahDate','mahr','witness1','witness2','imam','issueDate'])
   assert.ok(app.includes("'"+field+"'"),'Missing required certificate field '+field);
  const certPage=app.slice(app.indexOf('function marriagePage()'),app.indexOf('function ',app.indexOf('function marriagePage()')+20));
- assert.ok(!certPage.includes("'witness1'")&&!certPage.includes("'witness2'"),
-  'Certificate form must not request witness details');
- assert.ok(!client.includes('witness1')&&!client.includes('witness2'),
-  'Witness details must not be rendered on the certificate');
+ assert.match(certPage,/Witness 1 · Full name/);
+ assert.match(certPage,/Witness 2 · Full name/);
+ assert.match(certPage,/Officiating imam · Full name/);
+ assert.doesNotMatch(certPage,/Witness 1 · Signature|Witness 2 · Signature/);
+ assert.match(client,/witness1:get\('witness1'\),witness2:get\('witness2'\),imam:get\('imam'\)/);
+ assert.match(client,/scriptName\(ctx,r\.witness1,457,585,1443,622\)/);
+ assert.match(client,/scriptName\(ctx,r\.witness2,457,632,1443,669\)/);
+ assert.match(client,/scriptName\(ctx,r\.imam,457,684,1443,722\)/);
+ assert.ok(!client.includes('witnessSignature'),'Witness signatures must not be rendered');
  assert.ok(app.includes("userCan('admin')"),'Marriage page must be restricted to administrators');
  assert.ok(client.includes('Great Vibes'),'Groom and bride names should use calligraphic script');
  assert.ok(client.includes('ctx.drawImage(base,0,0,W,H)'),'Original approved bilingual template must be preserved');
- assert.match(client,/scriptName\(ctx,r\.groom,444,450,1438,487\)/);
- assert.match(client,/formal\(ctx,toUK\(r\.issueDate\),1278,790,215,18\)/);
+ assert.match(client,/scriptName\(ctx,r\.groom,439,387,1443,424\)/);
+ assert.match(client,/scriptName\(ctx,r\.bride,439,430,1443,467\)/);
+ assert.match(client,/formal\(ctx,toUK\(r\.issueDate\),1176,826,300,19\)/);
  const worker=fs.readFileSync(new URL('../src/worker.js',import.meta.url),'utf8');
- assert.ok(worker.includes('masjid_marriage_certificate_template_v2_no_witnesses'),
-  'Use a versioned artwork key so old witness fields cannot remain visible');
+ assert.ok(worker.includes('masjid_marriage_certificate_template_v3_witness_names_imam'),
+  'Use a versioned artwork key so older certificate layouts cannot remain visible');
 
 });
