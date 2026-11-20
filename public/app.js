@@ -728,9 +728,9 @@ function websiteVideosPage(){
 
 function marriagePage(){
  if(!userCan('admin'))return blank('Administrator access required','Marriage certificates are available to authorised administrators only.');
- return `${pagehead('Marriage certificates','Generate beautiful bilingual Nikah certificates with calligraphic groom and bride names.')}
+ return `${pagehead('Marriage certificates','Generate bilingual Nikah certificates with prefilled bride, groom, witness and officiating imam names.')}
   <div class="marriage-intro">
-   <div><strong>${ico('award',18)} Approved Masjid At-Towfiq design</strong><p>The blue-and-gold certificate preserves its Arabic and English wording, masjid seal and imam signature line, with the witnesses section removed. Only the blank fields are filled; the couple’s names use elegant script lettering.</p></div>
+   <div><strong>${ico('award',18)} Approved Masjid At-Towfiq design</strong><p>The bilingual blue-and-gold certificate now prints both witness names and the officiating imam’s name in addition to the couple’s names. Witness signatures are not required; the imam’s manual signature line and masjid seal are retained.</p></div>
    <p class="small muted">Religious Nikah certificate · Not a UK civil marriage certificate. The imam or authorised registrar signs the printed original manually; no signature is fabricated.</p>
   </div>
   <div class="marriage-workspace">
@@ -743,8 +743,11 @@ function marriagePage(){
       ${field('Nikah date (optional)','nikahDate','','date')}
       ${field('Date of issue','issueDate',today(),'date','required')}
       ${field('Mahr / dower (optional)','mahr','','text','maxlength="160" placeholder="e.g. £500 or an agreed gift"','wide')}
+      ${field('Witness 1 · Full name','witness1','','text','required maxlength="120" autocomplete="off"','wide')}
+      ${field('Witness 2 · Full name','witness2','','text','required maxlength="120" autocomplete="off"','wide')}
+      ${field('Officiating imam · Full name','imam','','text','required maxlength="120" autocomplete="off"','wide')}
      </div>
-     <div class="marriage-signature-note">${ico('info',17)} No witness details are required on this certificate. The masjid seal and authorised imam/registrar signature line remain on the printed original.</div>
+     <div class="marriage-signature-note">${ico('info',17)} Witness 1, Witness 2 and the officiating imam are printed automatically from the fields above, just like the bride and groom. There are no witness signature spaces. The officiating imam signs the printed original manually; the mosque seal remains in place.</div>
      <button class="btn primary" type="submit">${ico('award',18)} Generate certificate</button>
     </form>
     <details class="marriage-template-settings" id="marriage-template-settings">
