@@ -54,19 +54,19 @@
   const ctx=canvas.getContext('2d',{alpha:false});
   ctx.clearRect(0,0,W,H);ctx.drawImage(base,0,0,W,H);
   const r=record();
-  // Blank field bounds of the approved 1535×1024 v3 bilingual artwork.
-  // All five personal names are entered once in the form and printed in
-  // their dedicated fields. There are no witness signature lines.
-  scriptName(ctx,r.groom,439,387,1443,424);
-  scriptName(ctx,r.bride,439,430,1443,467);
-  formal(ctx,toUK(r.nikahDate),594,491,307,19);
-  formal(ctx,r.mahr,943,538,965,19);
-  scriptName(ctx,r.witness1,457,585,1443,622);
-  scriptName(ctx,r.witness2,457,632,1443,669);
-  scriptName(ctx,r.imam,457,684,1443,722);
-  // Date of issue appears above its printed line; the imam's lower
-  // handwritten signature line and mosque seal remain untouched.
-  formal(ctx,toUK(r.issueDate),1176,826,300,19);
+  // Blank field bounds of approved 1535×1024 v4 artwork. Witnesses
+  // have name fields only; NO third "imam" row exists beside them.
+  scriptName(ctx,r.groom,436,403,1442,444);
+  scriptName(ctx,r.bride,436,451,1442,493);
+  formal(ctx,toUK(r.nikahDate),594,524,318,19);
+  formal(ctx,r.mahr,945,574,976,19);
+  scriptName(ctx,r.witness1,440,625,1442,665);
+  scriptName(ctx,r.witness2,440,674,1442,715);
+  // The officiating imam is identified in the EXISTING footer labelled
+  // "Authorised Imam / Officiating Registrar" – not in a new table field.
+  // Place their printed name above the existing footer line.
+  scriptName(ctx,r.imam,182,811,539,851);
+  formal(ctx,toUK(r.issueDate),1177,825,350,19);
  }
  function setDownloads(enabled){
   downloadReady=enabled;
@@ -177,7 +177,7 @@
   try{
    const response=await apiFn('/masjid/marriage-template');
    if(!response.configured||!response.image){
-    $('marriage-template-message').textContent='Template update required: upload the approved certificate with two witness-name fields and an officiating imam field. Earlier artwork remains archived and is not used.';
+    $('marriage-template-message').textContent='Template update required: upload the approved certificate with two witness-name rows and the officiating imam identified in the existing footer. Previous certificate designs remain archived.';
     $('marriage-canvas-placeholder').hidden=false;canvas.hidden=true;return;
    }
    base=await loadImage(response.image);ready=true;
