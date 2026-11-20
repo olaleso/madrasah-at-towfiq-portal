@@ -1306,9 +1306,102 @@ async function handle(req,env,ctx){
  }
 
 
- // Private, admin-only certificate template. No names, witnesses or generated
- // certificates are ever stored by this feature. One approved original image
- // is saved in D1 for use by the browser-side certificate renderer.
+ // Private, admin-only blank certificate artwork. A generated certificate is
+ // stored only after a separate explicit Save certificate action.
+
+ // Saved Nikah PDFs are private admin-only records, stored under their own
+ // R2 prefix, never in the public assets or school settings.
+ if(path==='/api/masjid/marriage-certificates/file'){
+  requireRole(user,'admin');
+  if(method!=='GET')error('Method not allowed',405);
+  const cid=short(u.searchParams.get('id'),60);
+  if(!/^[0-9a-f-]{36}$/i.test(cid))error('Invalid certificate ID',400);
+  const cert=await first(db,'SELECT id,reference,document_key FROM marriage_certificates WHERE id=? AND deleted_at IS NULL',cid);
+  if(!cert)error('Saved certificate not found',404);
+  if(!env.DBS_FILES)error('Private certificate storage is unavailable',503);
+  const pdf=await env.DBS_FILES.get(cert.document_key);
+  if(!pdf)error('Stored certificate PDF is missing; contact the administrator',404);
+  try{await audit(db,user,'download','marriage_certificate',cert.id,'Downloaded '+cert.reference);}
+  catch(e){console.error('Marriage archive download audit failed',e);}
+  return new Response(pdf.body,{headers:{
+   'Content-Type':'application/pdf',
+   'Content-Disposition':'attachment; filename="'+cert.reference+'.pdf"',
+   'Cache-Control':'no-store, private','X-Content-Type-Options':'nosniff',
+   'Content-Security-Policy':"sandbox",'Referrer-Policy':'no-referrer'
+  }});
+ }
+ if(path==='/api/masjid/marriage-certificates'){
+  requireRole(user,'admin');
+  if(method==='GET'){
+   const q=short(u.searchParams.get('q'),100).trim();
+   const filter=q?'WHERE deleted_at IS NULL AND (instr(lower(reference),lower(?))>0 OR instr(lower(groom_name),lower(?))>0 OR instr(lower(bride_name),lower(?))>0)':'WHERE deleted_at IS NULL';
+   const records=await all(db,'SELECT id,reference,groom_name,bride_name,nikah_date,issue_date,created_at FROM marriage_certificates '+filter+' ORDER BY created_at DESC,id DESC LIMIT 100',...(q?[q,q,q]:[]));
+   return json({items:records},200,{'Cache-Control':'no-store, private'});
+  }
+  if(method==='POST'){
+   if(!env.DBS_FILES)error('Secure certificate storage is unavailable. No certificate was saved.',503);
+   if(Number(req.headers.get('content-length')||0)>3250000)error('Certificate upload exceeds 3 MB',413);
+   if(!(req.headers.get('content-type')||'').toLowerCase().startsWith('multipart/form-data;'))
+    error('Submit a generated PDF document',415);
+   const form=await req.formData();
+   if(form.get('retention_confirmed')!=='YES')
+    error('Confirm that the masjid is authorised to retain this marriage certificate',400);
+   const key=short(form.get('request_key'),90);
+   if(!/^[0-9a-f-]{36}$/i.test(key))error('Invalid save request; generate the certificate again',400);
+   const groom=short(form.get('groom'),120),bride=short(form.get('bride'),120),
+    witness1=short(form.get('witness1'),120),witness2=short(form.get('witness2'),120),
+    imam=short(form.get('imam'),120),mahr=short(form.get('mahr'),160),
+    nikah=short(form.get('nikahDate'),10),issued=short(form.get('issueDate'),10);
+   if(!groom||!bride||!witness1||!witness2||!imam)
+    error('Complete both names, both witnesses and the authorised imam',400);
+   if(!isDbsDate(issued)||(nikah&&!isDbsDate(nikah)))
+    error('Enter valid certificate dates',400);
+   const previous=await first(db,'SELECT id,reference,groom_name,bride_name,issue_date,deleted_at FROM marriage_certificates WHERE request_key=?',key);
+   if(previous){
+    if(previous.deleted_at||previous.groom_name!==groom||previous.bride_name!==bride||previous.issue_date!==issued)
+     error('This save request is already associated with a different certificate',409);
+    return json({ok:true,id:previous.id,reference:previous.reference,already_saved:true});
+   }
+   const upload=form.get('certificate');
+   if(!(upload instanceof Blob)||upload.size<120||upload.size>3145728)
+    error('Choose a generated PDF smaller than 3 MB',413);
+   const pdf=new Uint8Array(await upload.arrayBuffer());
+   const header=new TextDecoder().decode(pdf.subarray(0,8));
+   const trailer=new TextDecoder().decode(pdf.subarray(Math.max(0,pdf.length-128)));
+   if(!header.startsWith('%PDF-')||!trailer.includes('%%EOF'))
+    error('Only a valid generated PDF can be saved',415);
+   const certId=id();
+   const reference='MAT-NIK-'+issued.slice(0,4)+'-'+certId.slice(0,8).toUpperCase();
+   const objectKey='private/marriage-certificates/'+certId+'.pdf';
+   await env.DBS_FILES.put(objectKey,pdf,{httpMetadata:{contentType:'application/pdf'}});
+   try{
+    await run(db,'INSERT INTO marriage_certificates (id,reference,request_key,groom_name,bride_name,witness1_name,witness2_name,imam_name,nikah_date,issue_date,mahr,document_key,document_size,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+     certId,reference,key,groom,bride,witness1,witness2,imam,nikah||null,issued,mahr,objectKey,pdf.length,user.id);
+   }catch(e){
+    try{await env.DBS_FILES.delete(objectKey);}catch(err){console.error('Nikah archive upload rollback failed',err);}
+    const duplicate=await first(db,'SELECT id,reference,deleted_at FROM marriage_certificates WHERE request_key=?',key);
+    if(duplicate&&!duplicate.deleted_at)return json({ok:true,id:duplicate.id,reference:duplicate.reference,already_saved:true});
+    throw e;
+   }
+   try{await audit(db,user,'save','marriage_certificate',certId,'Saved PDF '+reference);}
+   catch(e){console.error('Nikah certificate save audit failed',e);}
+   return json({ok:true,id:certId,reference,already_saved:false},201,{'Cache-Control':'no-store'});
+  }
+  if(method==='DELETE'){
+   const b=await input(req);
+   const cert=await first(db,'SELECT id,reference,document_key,deleted_at FROM marriage_certificates WHERE id=?',short(b.id,60));
+   if(!cert||cert.deleted_at)error('Saved certificate not found',404);
+   if(b.confirm!=='DELETE_CERTIFICATE'||b.reference!==cert.reference)
+    error('Confirm the exact certificate reference to delete the stored copy',400);
+   if(!env.DBS_FILES)error('Secure certificate storage is unavailable; deletion was not completed',503);
+   await env.DBS_FILES.delete(cert.document_key);
+   await run(db,'UPDATE marriage_certificates SET deleted_at=?,deleted_by=? WHERE id=? AND deleted_at IS NULL',iso(),user.id,cert.id);
+   try{await audit(db,user,'delete','marriage_certificate',cert.id,'Deleted PDF '+cert.reference);}
+   catch(e){console.error('Nikah certificate deletion audit failed',e);}
+   return json({ok:true});
+  }
+  error('Method not allowed',405);
+ }
  if(path==='/api/masjid/marriage-template'){
   requireRole(user,'admin');
   // New approved artwork uses its own key: print witness names and officiating imam but do not reuse previous witness-signature or witness-free templates.
