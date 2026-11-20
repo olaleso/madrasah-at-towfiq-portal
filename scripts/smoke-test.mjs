@@ -1634,11 +1634,12 @@ env.DBS_FILES={
  async get(key){const content=nikahDocuments.get(key);return content?{body:new Blob([content]).stream()}:null;},
  async delete(key){nikahDocuments.delete(key);}
 };
-let invalidNikah=new FormData(nikahForm);
+const copyNikahForm=()=>{const next=new FormData();for(const [field,value] of nikahForm.entries())next.append(field,value);return next;};
+let invalidNikah=copyNikahForm();
 invalidNikah.delete('retention_confirmed');
 archiveResult=await nikahRequest(invalidNikah);
 assert.equal(archiveResult.status,400,'Admin must opt in to retain named marriage documents');
-invalidNikah=new FormData(nikahForm);
+invalidNikah=copyNikahForm();
 invalidNikah.set('certificate',new Blob(['not a pdf'.repeat(40)],{type:'application/pdf'}),'bad.pdf');
 archiveResult=await nikahRequest(invalidNikah);
 assert.equal(archiveResult.status,415,'Server must inspect the PDF signature and trailer');
