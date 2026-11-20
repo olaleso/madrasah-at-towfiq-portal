@@ -18,6 +18,7 @@
  function record(){
   const f=new FormData(form),get=name=>text(f.get(name));
   return {groom:get('groom'),bride:get('bride'),
+   witness1:get('witness1'),witness2:get('witness2'),imam:get('imam'),
    nikahDate:get('nikahDate'),mahr:get('mahr'),issueDate:get('issueDate')};
  }
  function scriptName(ctx,name,x1,y1,x2,y2){
@@ -53,15 +54,19 @@
   const ctx=canvas.getContext('2d',{alpha:false});
   ctx.clearRect(0,0,W,H);ctx.drawImage(base,0,0,W,H);
   const r=record();
-  // Blank-field bounds of the approved witness-free 1535×1024 artwork.
-  // Names are written once and used in the bilingual certificate.
-  scriptName(ctx,r.groom,444,450,1438,487);
-  scriptName(ctx,r.bride,444,499,1438,536);
-  formal(ctx,toUK(r.nikahDate),593,568,300,19);
-  formal(ctx,r.mahr,942,623,975,19);
-  // Date of issue is written ABOVE the printed date/signature line.
-  // Do not paint an opaque rectangle that can obscure the artwork.
-  formal(ctx,toUK(r.issueDate),1278,790,215,18);
+  // Blank field bounds of the approved 1535×1024 v3 bilingual artwork.
+  // All five personal names are entered once in the form and printed in
+  // their dedicated fields. There are no witness signature lines.
+  scriptName(ctx,r.groom,439,387,1443,424);
+  scriptName(ctx,r.bride,439,430,1443,467);
+  formal(ctx,toUK(r.nikahDate),594,491,307,19);
+  formal(ctx,r.mahr,943,538,965,19);
+  scriptName(ctx,r.witness1,457,585,1443,622);
+  scriptName(ctx,r.witness2,457,632,1443,669);
+  scriptName(ctx,r.imam,457,684,1443,722);
+  // Date of issue appears above its printed line; the imam's lower
+  // handwritten signature line and mosque seal remain untouched.
+  formal(ctx,toUK(r.issueDate),1176,826,300,19);
  }
  function setDownloads(enabled){
   downloadReady=enabled;
@@ -172,7 +177,7 @@
   try{
    const response=await apiFn('/masjid/marriage-template');
    if(!response.configured||!response.image){
-    $('marriage-template-message').textContent='Template update required: upload the new witness-free certificate artwork below. The previous version remains archived and is not used.';
+    $('marriage-template-message').textContent='Template update required: upload the approved certificate with two witness-name fields and an officiating imam field. Earlier artwork remains archived and is not used.';
     $('marriage-canvas-placeholder').hidden=false;canvas.hidden=true;return;
    }
    base=await loadImage(response.image);ready=true;
