@@ -808,7 +808,9 @@ async function dispatchFamilyInvoiceEmails(env,maxCount=6){
   const claim=await run(db,`UPDATE family_invoice_email_queue SET status='sending',attempts=attempts+1,updated_at=CURRENT_TIMESTAMP
    WHERE family_invoice_id=? AND attempts<4 AND
    (status IN ('pending','failed') OR (status='sending' AND updated_at<datetime('now','-15 minutes')))`,item.family_invoice_id);
-  if(Number(claim.meta?.changes||0)!==1)continue;
+  // The Worker returns meta.changes; the local SQLite smoke adapter
+  // returns changes directly. Never send unless one row was claimed.
+  if(Number(claim.meta?.changes ?? claim.changes ?? 0)!==1)continue;
   let rateLimited=false;
   try{
    const result=await sendFamilyFinanceEmail(db,env,item.family_invoice_id,'issued');
