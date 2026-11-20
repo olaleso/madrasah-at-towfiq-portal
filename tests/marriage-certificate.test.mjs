@@ -44,7 +44,7 @@ test('approved certificate and download controls are admin only in portal UI',()
  assert.match(client,/scriptName\(ctx,r\.witness2,440,674,1442,715\)/);
  assert.match(client,/scriptName\(ctx,r\.imam,182,811,539,851\)/);
  assert.ok(!client.includes('witnessSignature'),'Witness signatures must not be rendered');
- assert.ok(client.includes('existing footer labelled'), 'Imam name must use the original footer, not an additional line item');
+ // Footer placement is asserted by the drawing coordinates above, not by a source-code comment.
  assert.doesNotMatch(client,/scriptName\(ctx,r\.imam,457,/,'Imam must not be rendered in a third witness-area row');
 
  assert.ok(app.includes("userCan('admin')"),'Marriage page must be restricted to administrators');
