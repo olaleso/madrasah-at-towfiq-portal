@@ -730,7 +730,7 @@ function marriagePage(){
  if(!userCan('admin'))return blank('Administrator access required','Marriage certificates are available to authorised administrators only.');
  return `${pagehead('Marriage certificates','Generate bilingual Nikah certificates with prefilled bride, groom, witness and officiating imam names.')}
   <div class="marriage-intro">
-   <div><strong>${ico('award',18)} Approved Masjid At-Towfiq design</strong><p>The bilingual blue-and-gold certificate now prints both witness names and the officiating imam’s name in addition to the couple’s names. Witness signatures are not required; the imam’s manual signature line and masjid seal are retained.</p></div>
+   <div><strong>${ico('award',18)} Approved Masjid At-Towfiq design</strong><p>The blue-and-gold certificate prints both witness names without signatures. The officiating imam’s name appears in the existing Authorised Imam / Officiating Registrar area at the bottom—not as an extra row. The masjid seal is retained.</p></div>
    <p class="small muted">Religious Nikah certificate · Not a UK civil marriage certificate. The imam or authorised registrar signs the printed original manually; no signature is fabricated.</p>
   </div>
   <div class="marriage-workspace">
@@ -747,7 +747,7 @@ function marriagePage(){
       ${field('Witness 2 · Full name','witness2','','text','required maxlength="120" autocomplete="off"','wide')}
       ${field('Officiating imam · Full name','imam','','text','required maxlength="120" autocomplete="off"','wide')}
      </div>
-     <div class="marriage-signature-note">${ico('info',17)} Witness 1, Witness 2 and the officiating imam are printed automatically from the fields above, just like the bride and groom. There are no witness signature spaces. The officiating imam signs the printed original manually; the mosque seal remains in place.</div>
+     <div class="marriage-signature-note">${ico('info',17)} The two witnesses appear as names only. The officiating imam’s name is printed within the existing Authorised Imam / Officiating Registrar area at the bottom, with no extra imam row. The imam’s signature line and mosque seal are preserved.</div>
      <button class="btn primary" type="submit">${ico('award',18)} Generate certificate</button>
     </form>
     <details class="marriage-template-settings" id="marriage-template-settings">
