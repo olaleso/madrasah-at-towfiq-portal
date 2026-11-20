@@ -1312,7 +1312,7 @@ async function handle(req,env,ctx){
  if(path==='/api/masjid/marriage-template'){
   requireRole(user,'admin');
   // New approved artwork uses its own key: print witness names and officiating imam but do not reuse previous witness-signature or witness-free templates.
-  const key='masjid_marriage_certificate_template_v3_witness_names_imam';
+  const key='masjid_marriage_certificate_template_v4_imam_footer';
   if(method==='GET'){
    const record=await first(db,'SELECT value FROM school_settings WHERE key=?',key);
    return json({configured:!!record?.value,image:record?.value||null},200,
