@@ -462,7 +462,7 @@ function feeTable(arr,formalIds=new Set()){
   return `<tr><td><span class="cell-name">${h(f.first_name||student(f.student_id)?.first_name||'')} ${h(f.last_name||student(f.student_id)?.last_name||'')}</span></td>
   <td>${h(f.period)}</td><td>${money(f.amount_pence)}</td><td>${money(f.paid_pence)}</td><td><strong class="${left?'red':'green'}">${money(left)}</strong></td>
   <td>${f.due_date?h(fmt(f.due_date)):'—'}<div class="fee-status-line">${tag(status,color)}</div></td>
-  <td>${canManage?`<div class="fee-actions">${formalIds.has(f.id)?'<span class="small muted">Use family payment and statement actions above</span>':left>0?`<button class="btn smol outline" data-action="modal" data-value="payment" data-id="${h(f.id)}">${ico('cash',14)} Record payment</button>${!formalIds.has(f.id)?`<button class="btn smol white" data-action="finance-notify" data-id="${h(f.id)}">${ico('mail',14)} Send statement</button>`:'<span class="small muted">Use family statement above</span>'}`:`<span class="tiny muted">${ico('check',14)} Settled</span>`}</div>`:left===0?tag('Settled','green'):`<span class="tiny muted">View in portal</span>`}</td></tr>`;
+  <td>${canManage?`<div class="fee-actions">${formalIds.has(f.id)?'<span class="small muted">Use family payment and statement actions above</span>':left>0?`<button class="btn smol outline" data-action="modal" data-value="payment" data-id="${h(f.id)}">${ico('cash',14)} Record payment</button><button class="btn smol primary" data-action="cash-settle" data-id="${h(f.id)}">${ico('check',14)} Mark paid (cash)</button>${!formalIds.has(f.id)?`<button class="btn smol white" data-action="finance-notify" data-id="${h(f.id)}">${ico('mail',14)} Send statement</button>`:'<span class="small muted">Use family statement above</span>'}`:`<span class="tiny muted">${ico('check',14)} Settled</span>`}</div>`:left===0?tag('Settled','green'):`<span class="tiny muted">View in portal</span>`}</td></tr>`;
  }).join('')}</tbody></table></div>`;
 }
 function feesPage(){
@@ -1564,6 +1564,20 @@ async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
   const approved=await confirmDialog({title:'Permanently delete student?',message:'Delete '+sidName(s)+' and all linked school records?',details:'Attendance, homework, behaviour, invoices and payment records will be permanently deleted. This cannot be undone.',actionLabel:'Delete student permanently',tone:'danger',requiredText:'DELETE'});
   if(!approved)return;
   await post('/students',{id:selectedId},'DELETE');document.querySelector('.modal-overlay')?.remove();S.studentId=null;toast('Student and linked records permanently deleted');await navigate('students');return;
+ }
+ if(a==='cash-settle'){
+  if(!userCan('admin','staff'))throw Error('Only authorised office staff can record payments');
+  const invoice=get('fees').find(x=>x.id===selectedId);
+  if(!invoice)throw Error('Invoice not found. Refresh the fee page.');
+  const balance=Math.max(0,Number(invoice.amount_pence)-Number(invoice.paid_pence));
+  if(!balance){toast('Already marked paid. No additional cash payment recorded.');return;}
+  const child=[invoice.first_name,invoice.last_name].filter(Boolean).join(' ');
+  if(!await confirmDialog({title:'Mark invoice paid in cash?',message:'Confirm you received '+money(balance)+' in cash for '+child+' ('+invoice.period+')?',
+   details:'This records the entire outstanding balance in the existing payment ledger, with Cash as the method. Confirm that the money has actually been received; this is not a card or direct-debit transaction.',
+   actionLabel:'Confirm cash received',tone:'warning'}))return;
+  const result=await post('/payments',{invoice_id:invoice.id,amount_pence:balance,method:'cash',reference:'Cash received by school office'});
+  toast('Cash payment recorded. Invoice marked paid.'+(result.notification_status==='sent'?' Receipt email accepted.':''));
+  await navigate('fees');return;
  }
  if(a==='finance-notify'){
   const invoice=get('fees').find(x=>x.id===selectedId);
