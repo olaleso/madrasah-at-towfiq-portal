@@ -29,6 +29,7 @@
      <div class="family-bill-actions">
        <button type="button" class="btn smol outline" data-family-action="pdf" data-index="${index}">Download PDF</button>
        ${canManage&&group.formal&&!group.requires_review&&balance?`<button type="button" class="btn smol primary" data-family-action="pay" data-index="${index}">Record family payment</button>
+        <button type="button" class="btn smol white" data-family-action="cash-settle" data-index="${index}">Mark fully paid (cash)</button>
         <button type="button" class="btn smol white" data-family-action="remind" data-index="${index}">Email family statement</button>`:''}
        ${canManage&&!group.formal?'<span class="small muted">Existing charges are grouped for display; no new invoice has been issued.</span>':''}
      </div>
@@ -115,6 +116,26 @@
    try{
     if(action==='toggle-issue'){const panel=$('#family-issue-panel',root);panel.hidden=!panel.hidden;return;}
     if(action==='pdf'){await window.MadrasahFamilyInvoicePdf.download(group);return;}
+    if(action==='cash-settle'){
+     if(!group?.formal||group.requires_review||!group.balance_pence)return;
+     const amount=Number(group.balance_pence);
+     const confirmed=await state.confirmDialog({title:'Mark family invoice paid in cash?',
+      message:'Confirm receipt of '+money(amount)+' cash from '+group.guardian_name+' for '+month(group.period)+'?',
+      details:'The outstanding balance will be allocated across the family’s student charges and recorded as Cash. Only confirm after receiving the money.',
+      actionLabel:'Confirm cash received',tone:'warning'});
+     if(!confirmed)return;
+     button.disabled=true;
+     try{
+      const result=await state.post('/fees/families/payments',{
+       family_invoice_id:group.family_invoice_id,amount_pence:amount,method:'cash',
+       reference:'Cash received by school office',request_key:crypto.randomUUID()
+      });
+      state.toast(result.already_recorded?'Cash payment was already recorded':
+       'Family invoice fully paid in cash'+(result.notification_status==='sent'?' · receipt email accepted':' · receipt email requires review'));
+      await state.navigate('fees');
+     }catch(err){state.toast(err.message,true);button.disabled=false;}
+     return;
+    }
     if(action==='pay'){
      const panel=$('[data-family-pay-panel="'+button.dataset.index+'"]',root);
      if(panel)panel.hidden=!panel.hidden;return;
