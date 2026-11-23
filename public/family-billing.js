@@ -45,7 +45,7 @@
        ${canManage&&group.formal&&!group.requires_review&&balance?`<button type="button" class="btn smol primary" data-family-action="pay" data-index="${index}">Record family payment</button>
         <button type="button" class="btn smol white" data-family-action="cash-settle" data-index="${index}">Mark fully paid (cash)</button>
         <button type="button" class="btn smol white" data-family-action="remind" data-index="${index}">Email family statement</button>`:''}
-       ${canManage&&!group.formal?'<span class="small muted">Historical student invoices: use each student's payment actions above. No new invoice has been issued.</span>':''}
+       ${canManage&&!group.formal?'<span class="small muted">Historical student invoices: use the student payment actions above. No new invoice has been issued.</span>':''}
      </div>
      <div class="family-pay-panel" data-family-pay-panel="${index}" hidden>
        <form class="family-payment-form" data-family-payment="${index}">
