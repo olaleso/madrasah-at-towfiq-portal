@@ -80,3 +80,17 @@ test('family invoice UI and secure endpoints are registered',()=>{
  assert.match(html,/family-invoice\.js/);
  assert.match(pdf,/new Blob\(parts,\{type:'application\/pdf'\}\)/);
 });
+
+test('fees page renders one unified family-and-student invoice section',()=>{
+ const app=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+ const family=readFileSync(new URL('../public/family-billing.js',import.meta.url),'utf8');
+ const feesPage=app.slice(app.indexOf('function feesPage(){'),app.indexOf('const compliancePolicyCategories='));
+ assert.match(feesPage,/MadrasahFamilyBilling\?\.html/);
+ assert.doesNotMatch(feesPage,/Detailed student invoice ledger/);
+ assert.match(family,/Invoices &amp; payments/);
+ assert.match(family,/data-family-row/);
+ assert.match(family,/data-action="cash-settle"/);
+ assert.match(family,/data-action="finance-notify"/);
+ assert.match(family,/data-action="modal" data-value="payment"/);
+ assert.match(family,/group\.formal/);
+});
