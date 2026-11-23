@@ -82,12 +82,13 @@ function metrics(){
  todayAtt=att.filter(x=>x.date===today()),points=get('behaviour').reduce((a,b)=>a+b.points,0);
  return [{label:'Active students',value:students.filter(x=>x.status==='active').length,icon:'students',color:''},
  {label:'Present today',value:todayAtt.filter(x=>x.status==='present').length,icon:'check',color:'green'},
- {label:'Pending homework',value:hs.filter(x=>x.status==='incomplete').length,icon:'book',color:'amber'},
+ userCan('admin')?
+  {label:'Guardians not linked',value:get('legacy-students').filter(x=>!x.parent_id).length,
+   icon:'users',color:'amber',page:'legacy',trend:'Review uploaded pupils & link guardians'}:
+  {label:'Pending homework',value:hs.filter(x=>x.status==='incomplete').length,icon:'book',color:'amber'},
  userCan('admin','staff')?
   {label:'Admissions to review',value:pendingApplications().length,icon:'folder',color:'amber',page:'admissions',trend:'Open the pending queue'}:
-  {label:'Net behaviour points',value:points,icon:'award',color:'rose'},
- ...(userCan('admin')?[{label:'Guardians not linked',value:get('legacy-students').filter(x=>!x.parent_id).length,
- icon:'users',color:'amber',page:'legacy',trend:'Review uploaded pupils & link guardians'}]:[])];
+  {label:'Net behaviour points',value:points,icon:'award',color:'rose'}];
 }
 function metricCards(items){
  return `<div class="cards four">${items.map(m=>{
