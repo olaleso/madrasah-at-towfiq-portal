@@ -2264,6 +2264,68 @@ async function handle(req,env,ctx){
    items:await all(db,`SELECT guardian_email,status,attempts,last_error,sent_at,created_at
     FROM legacy_migration_notices ORDER BY created_at DESC LIMIT 120`)});
  }
+ // Administrator-entered existing pupils use the same legacy record model as bulk import.
+ // No application acknowledgement or guardian invitation is sent automatically.
+ if(path==='/api/legacy-students/manual'&&method==='POST'){
+  requireRole(user,'admin');
+  const b=await input(req);
+  if(b.confirmation!=='REGISTER EXISTING LEGACY PUPIL')
+   error('Confirm this child is an existing legacy pupil',400);
+  const checked=validateLegacyRow({
+   source_row:2,first_name:b.first_name,last_name:b.last_name,
+   dob:b.dob,gender:b.gender,guardian_name:b.guardian_name,
+   guardian_email:b.guardian_email,guardian_phone:b.guardian_phone,
+   address:b.home_address,class_id:b.class_id,review_note:b.review_note
+  });
+  if(checked.errors.length)error(checked.errors.join('; '),400);
+  const pupil=checked.student;
+  const existing=await all(db,'SELECT id,student_no,first_name,last_name,dob FROM students');
+  const matches=matchExistingLegacy(pupil,existing);
+  if(matches.length)error('Possible duplicate student: '+matches.map(x=>x.student_no).join(', ')+'. Review the directory before registering.',409);
+  if(pupil.class_id){
+   const target=await first(db,'SELECT id,capacity FROM classes WHERE id=?',pupil.class_id);
+   if(!target)error('Selected class was not found',404);
+   const n=await first(db,'SELECT COUNT(*) AS total FROM students WHERE class_id=? AND status=\'active\'',pupil.class_id);
+   if(Number(n.total)>=Number(target.capacity))error('Selected class is full',409);
+  }
+  const year=Number(schoolLocalDate().slice(0,4)),sid=id();
+  const seq=await first(db,'SELECT last_number FROM student_number_sequences WHERE enrollment_year=?',year);
+  if(Number(seq?.last_number||0)>=9999)error('Registration number limit reached',409);
+  const guardianEmail=pupil.guardian_email;
+  const note=short([pupil.review_note,'Manually registered existing legacy pupil; family access pending verification'].filter(Boolean).join(' | '),500);
+  const ops=[
+   db.prepare(`INSERT INTO student_number_sequences(enrollment_year,last_number) VALUES(?,1)
+    ON CONFLICT(enrollment_year) DO UPDATE SET last_number=last_number+1 WHERE last_number<9999`).bind(year),
+   db.prepare(`INSERT INTO students
+    (id,student_no,first_name,last_name,dob,gender,class_id,parent_id,phone,address,status,medical_notes)
+    SELECT ?,'MATT-'||printf('%04d',?)||'-'||printf('%04d',last_number),
+    ?,?,?,?,?,NULL,?,?,'active',?
+    FROM student_number_sequences WHERE enrollment_year=?`)
+    .bind(sid,year,pupil.first_name,pupil.last_name,pupil.dob||null,pupil.gender||'',
+     pupil.class_id||null,pupil.guardian_phone||'',pupil.address||'',
+     short(b.medical_information,600),year),
+   db.prepare(`INSERT INTO admissions
+    (id,child_name,first_name,last_name,dob,gender,guardian_name,guardian_email,
+    guardian_phone,home_address,phone,status,student_id,message,parent_confirmed,
+    emergency_phone,guardian_relationship,medical_information,allergies,additional_learning_needs)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?)`)
+    .bind(sid,[pupil.first_name,pupil.last_name].join(' '),pupil.first_name,pupil.last_name,
+     pupil.dob||null,pupil.gender||'',pupil.guardian_name,guardianEmail,
+     pupil.guardian_phone||'',pupil.address||'',pupil.guardian_phone||'',
+     'accepted',sid,note,short(b.emergency_phone,40),short(b.guardian_relationship,50),
+     short(b.medical_information,1600),short(b.allergies,1000),
+     short(b.additional_learning_needs,1600)),
+   db.prepare(`INSERT INTO legacy_student_import_records
+    (id,source_hash,source_filename,source_row,student_id,imported_by,review_note)
+    VALUES(?,?,?,?,?,?,?)`).bind(id(),id(),'Manual legacy registration',2,sid,user.id,note)
+  ];
+  await db.batch(ops);
+  const created=await first(db,'SELECT student_no FROM students WHERE id=?',sid);
+  try{await audit(db,user,'legacy_manual_registration','students',sid,
+   'Existing legacy pupil registered manually; guardian not linked or invited');}catch{}
+  return json({ok:true,student_id:sid,student_no:created?.student_no,
+   warnings:checked.warnings,guardian_linked:false,invitation_status:'not_sent'});
+ }
  if(path==='/api/legacy-students/preview'||path==='/api/legacy-students/commit'){
   requireRole(user,'admin');
   if(method!=='POST')error('Method not allowed',405);
