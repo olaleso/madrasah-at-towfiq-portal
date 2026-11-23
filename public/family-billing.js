@@ -15,7 +15,21 @@
   const invoiceIds=new Set(group.lines.map(x=>x.invoice_id));
   const history=[...familyPayments.filter(x=>x.family_invoice_id===group.family_invoice_id).map(x=>({...x,first_name:'Family payment',last_name:''})),...payments.filter(x=>invoiceIds.has(x.invoice_id)&&!x.family_batch_id)].sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
   const status=!balance?'Paid':paid?'Part paid':'Outstanding';
-  const lines=group.lines.map(x=>`<tr><td><strong>${safe(x.student_name)}</strong><small>${safe(x.student_no)}</small></td><td>${money(x.amount_pence)}</td><td>${money(x.paid_pence)}</td><td><strong>${money(x.balance_pence)}</strong></td></tr>`).join('');
+  // Student invoice actions live inside the family statement, not in a duplicate ledger.
+  // Formal family invoices are paid through the consolidated family-payment workflow.
+  const lines=group.lines.map(x=>{
+   const due=Number(x.balance_pence||0)>0,invoiceId=safe(x.invoice_id);
+   const actions=canManage&&!group.formal&&due?
+    `<div class="fee-actions"><button type="button" class="btn smol outline" data-action="modal" data-value="payment" data-id="${invoiceId}">Record payment</button>
+     <button type="button" class="btn smol primary" data-action="cash-settle" data-id="${invoiceId}">Mark paid (cash)</button>
+     <button type="button" class="btn smol white" data-action="finance-notify" data-id="${invoiceId}">Send statement</button></div>`:
+    canManage&&group.formal&&due?'<span class="small muted">Use family payment above</span>':
+    !due?'<span class="small muted">Paid</span>':'';
+   return `<tr><td><strong>${safe(x.student_name)}</strong><small>${safe(x.student_no)}</small></td>
+    <td>${money(x.amount_pence)}</td><td>${money(x.paid_pence)}</td>
+    <td><strong>${money(x.balance_pence)}</strong></td>
+    ${canManage?'<td>'+actions+'</td>':''}</tr>`;
+  }).join('');
   return `<details class="family-bill" data-family-row data-family-index="${index}" data-search="${safe([group.guardian_name,group.guardian_email,group.period,group.invoice_number,group.lines.map(x=>x.student_name+' '+x.student_no).join(' ')].join(' ').toLowerCase())}">
    <summary class="family-bill-head">
      <div><strong>${safe(group.guardian_name)}</strong><small>${safe(group.guardian_email||'No linked guardian address')} · ${safe(month(group.period))} · ${group.lines.length} student${group.lines.length===1?'':'s'}</small></div>
@@ -24,14 +38,14 @@
    <div class="family-bill-body">
      <p class="family-bill-ref">${group.formal?'Family invoice '+safe(group.invoice_number):'Historical family statement (student invoices retained)'}
       ${group.requires_review?'<span class="family-review">Guardian review required</span>':''}</p>
-     <div class="table-scroll"><table class="table"><thead><tr><th>Student</th><th>Charge</th><th>Paid</th><th>Outstanding</th></tr></thead><tbody>${lines}</tbody></table></div>
+     <div class="table-scroll"><table class="table"><thead><tr><th>Student</th><th>Charge</th><th>Paid</th><th>Outstanding</th>${canManage?'<th>Actions</th>':''}</tr></thead><tbody>${lines}</tbody></table></div>
      <div class="family-bill-foot"><span>Family charges <b>${money(group.total_pence)}</b></span><span>Paid <b>${money(group.paid_pence)}</b></span><span>Balance <b>${money(group.balance_pence)}</b></span><span>Due ${date(group.due_date)}</span></div>
      <div class="family-bill-actions">
        <button type="button" class="btn smol outline" data-family-action="pdf" data-index="${index}">Download PDF</button>
        ${canManage&&group.formal&&!group.requires_review&&balance?`<button type="button" class="btn smol primary" data-family-action="pay" data-index="${index}">Record family payment</button>
         <button type="button" class="btn smol white" data-family-action="cash-settle" data-index="${index}">Mark fully paid (cash)</button>
         <button type="button" class="btn smol white" data-family-action="remind" data-index="${index}">Email family statement</button>`:''}
-       ${canManage&&!group.formal?'<span class="small muted">Existing charges are grouped for display; no new invoice has been issued.</span>':''}
+       ${canManage&&!group.formal?'<span class="small muted">Historical student invoices: use each student's payment actions above. No new invoice has been issued.</span>':''}
      </div>
      <div class="family-pay-panel" data-family-pay-panel="${index}" hidden>
        <form class="family-payment-form" data-family-payment="${index}">
@@ -57,7 +71,7 @@
   const selected=verified[0]||null;
   const perChild=selected?selected.children.map(c=>`<label class="family-child-price"><span>${safe(c.name)}<small>${safe(c.student_no)}</small></span><input name="student_fee" data-student-id="${safe(c.id)}" type="number" min="0" max="100000" step="0.01" value="30.00" aria-label="Fee for ${safe(c.name)}"></label>`).join(''):'';
   return `<section class="surface family-billing" id="family-billing">
-   <div class="surface-head"><div><h3>Family billing &amp; statements</h3><p class="small muted" style="margin-top:6px">One family summary per guardian and billing month, with every child's charges and payments preserved.</p></div>
+   <div class="surface-head"><div><h3>Invoices &amp; payments</h3><p class="small muted" style="margin-top:6px">All student invoices grouped by guardian and billing month. Expand a family to record payments, mark cash received, or download a statement.</p></div>
     ${canManage?`<button class="btn primary" type="button" data-family-action="toggle-issue">Create family invoices</button>`:''}
    </div>
    <div class="family-billing-metrics"><div><small>Family statements</small><strong>${sorted.length}</strong></div><div><small>Total charges</small><strong>${money(sum(sorted,'total_pence'))}</strong></div><div><small>Recorded payments</small><strong>${money(sum(sorted,'paid_pence'))}</strong></div><div><small>Outstanding</small><strong>${money(sum(sorted,'balance_pence'))}</strong></div></div>
