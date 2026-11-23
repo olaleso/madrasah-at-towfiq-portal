@@ -260,7 +260,7 @@ function legacyPage(){
   ['First aid consent',x.first_aid_consent===null||x.first_aid_consent===undefined],
   ['Photography consent',x.photo_consent===null||x.photo_consent===undefined]
  ].filter(([,isMissing])=>isMissing).map(([label])=>label);
- return `${pagehead('Legacy student import','A controlled way to enrol historic pupils without fabricating missing details.',`<button type="button" class="btn white" data-action="nav" data-value="students">${ico('students',16)} Student directory</button>`)}
+ return `${pagehead('Legacy student import','A controlled way to enrol historic pupils without fabricating missing details.',`<button type="button" class="btn white" data-action="nav" data-value="students">${ico('students',16)} Student directory</button><button type="button" class="btn primary" data-action="manual-legacy">${ico('plus',16)} Add legacy student manually</button>`)}
  <section class="surface"><div class="surface-head"><div><h3>Migration email delivery</h3><p class="muted small">Retry eligible failed guardian notices without reimporting pupils. Previously accepted notices will not be resent.</p></div><button type="button" class="btn white smol" data-action="legacy-retry-notices">${ico('refresh',16)} Retry failed emails</button></div><p class="muted small" id="legacy-delivery-stats">Loading migration notice statuses…</p></section>
  <section class="surface"><div class="surface-head"><div><h3>Family onboarding · After student import</h3><p class="muted small">Review each guardian group before enabling access. One follow-up invitation is sent per verified family, with all its imported children.</p></div></div><div class="legacy-warning"><strong>${ico('shield',17)} Guardian identity verification required</strong><p>Do not approve a group unless its address is confirmed to belong to the children's authorised guardian. Missing addresses, conflicting names or existing different parent assignments must be reviewed manually. This will not reimport children or resend the original migration email.</p></div><div id="legacy-family-review"><p class="small muted">Loading imported family groups…</p></div><label style="display:flex;align-items:flex-start;gap:8px;margin:14px 0"><input type="checkbox" id="legacy-family-verified"><span>I have checked the selected guardians' identities and confirmed that they may access the listed children.</span></label><div class="row" style="gap:10px;flex-wrap:wrap"><button class="btn primary" type="button" id="legacy-link-families" disabled>Link selected guardians</button><button class="btn white" type="button" id="legacy-send-followups">Send queued follow-up invitations</button></div><p class="small muted" id="legacy-family-status" style="margin-top:10px">Linking and sending are separate, administrator-controlled actions.</p></section>
  <section class="surface legacy-upload-box">
@@ -1150,7 +1150,7 @@ function openModal(type,selectedId=''){
    if(type==='edit-admission'&&!entry)return;
    title=entry?'Edit student application':'Register student';form='admission-form';size=true;
    body=entry?admissionForm(entry):
-    `<div class="form-grid" style="margin-bottom:16px">${select('Registration type','registration_type',htmlOptions([['new','New student application'],['legacy','Existing / legacy student']],'new'),'required','wide')}</div>
+    `<div class="form-grid" style="margin-bottom:16px">${select('Registration type','registration_type',htmlOptions(userCan('admin')?[['new','New student application'],['legacy','Existing / legacy student']]:[['new','New student application']],'new'),'required','wide')}</div>
     <div id="registration-fields">${admissionForm({})}</div>`;
    submit=entry?'Save application changes':'Continue';break;}
  case 'invoice':{
@@ -1530,6 +1530,13 @@ async function action(a,el){const key=el.dataset.value,selectedId=el.dataset.id;
   await navigate(key);return;
  }
  if(a==='back-dashboard'){await navigate('dashboard');return;}
+ if(a==='manual-legacy'){
+  if(!userCan('admin'))return;
+  openModal('admission');
+  const type=document.querySelector('#admission-form [name="registration_type"]');
+  if(type){type.value='legacy';type.dispatchEvent(new Event('change',{bubbles:true}));}
+  return;
+ }
  if(a==='legacy-retry-notices'){
   if(!userCan('admin'))return;
   const approved=await confirmDialog({title:'Retry failed migration emails?',message:'Attempt eligible failed guardian notices now?',details:'Only previously failed or pending notices with attempts remaining will be processed. Resend may still reject rate-limited or invalid addresses. Previously accepted messages are excluded.',actionLabel:'Retry failed notices',tone:'warning'});
