@@ -409,6 +409,33 @@ function admissionsPage(){let arr=[...get('admissions')].sort((a,b)=>Number(!['n
 function admissionLevel(a){let parts=[];if(a.level_starting)parts.push('Starting now');if(a.level_qaaidah)parts.push('Qaaidah'+(a.qaaidah_page?' · p. '+a.qaaidah_page:''));if(a.level_quran)parts.push('Qur’an'+(a.quran_surah?' · '+a.quran_surah:''));if(a.arabic_read_write)parts.push('Reads / writes Arabic');return parts.join(' · ')||'Not assessed';}
 const admissionCheck=(label,name,checked=false)=>`<label class="admission-check"><input type="checkbox" name="${h(name)}" ${checked?'checked':''}><span>${h(label)}</span></label>`;
 const admissionSection=(no,label,subtitle,fields)=>`<div class="admission-form-section"><div class="admission-section-head"><span>${no}</span><div><h3>${label}</h3><p>${subtitle}</p></div></div><div class="form-grid">${fields}</div></div>`;
+function manualLegacyRegistrationForm(){
+ return `<div class="notice admission-privacy">${ico('shield',18)} Existing pupils only. This saves directly to the student directory as a legacy record, not as a new application. Missing historical details can be completed later. Guardians are not automatically linked or emailed.</div>
+ <div class="admission-form-section"><div class="admission-section-head"><span>01</span><div><h3>Existing pupil details</h3><p>Only first and last name are required; do not invent missing dates or contact information.</p></div></div>
+ <div class="form-grid">
+ ${field('Student forename','first_name','','text','required maxlength="80"')}
+ ${field('Student surname','last_name','','text','required maxlength="80"')}
+ ${field('Date of birth, if known','dob','','date')}
+ ${select('Gender, if known','gender',htmlOptions([['','Not recorded'],['Male','Male'],['Female','Female'],['Prefer not to say','Prefer not to say']]))}
+ ${select('Class (can be assigned later)','class_id',classOptions('','Unassigned for now'))}
+ ${field('Home address, if known','home_address','','textarea','','wide')}</div></div>
+ <div class="admission-form-section"><div class="admission-section-head"><span>02</span><div><h3>Guardian &amp; contact information</h3><p>Verify the guardian relationship before granting parent portal access.</p></div></div>
+ <div class="form-grid">
+ ${field('Parent / guardian name','guardian_name','','text','maxlength="120"')}
+ ${select('Relationship','guardian_relationship',htmlOptions([['','Not recorded'],['Mother','Mother'],['Father','Father'],['Grandparent','Grandparent'],['Legal guardian','Legal guardian'],['Other','Other']]))}
+ ${field('Parent / guardian email, if verified','guardian_email','','email','maxlength="254"')}
+ ${field('Contact phone','guardian_phone','','tel','maxlength="40"')}
+ ${field('Emergency telephone','emergency_phone','','tel','maxlength="40"')}
+ </div></div>
+ <div class="admission-form-section"><div class="admission-section-head"><span>03</span><div><h3>Learning &amp; additional information</h3><p>Only record information supplied or verified by an authorised source.</p></div></div>
+ <div class="form-grid">
+ ${field('Medical / support information','medical_information','','textarea','','wide')}
+ ${field('Allergies','allergies','','textarea','','wide')}
+ ${field('Learning support needs','additional_learning_needs','','textarea','','wide')}
+ ${field('Details requiring later verification','review_note','','textarea','placeholder="Optional missing information or historical record notes"','wide')}
+ </div></div>
+ <label class="row small" style="gap:9px;align-items:flex-start;margin:12px 0"><input type="checkbox" name="legacy_confirmed" required><span>I confirm this pupil was already enrolled at the madrasah and I have checked for an existing student record.</span></label>`;
+}
 function admissionForm(a={}){
  const v=(k,f='')=>a[k]??f;
  const bool=k=>Number(a[k])===1;
@@ -1121,7 +1148,11 @@ function openModal(type,selectedId=''){
  case 'admission':case 'edit-admission':{
    const entry=type==='edit-admission'?get('admissions').find(x=>x.id===selectedId):null;
    if(type==='edit-admission'&&!entry)return;
-   title=entry?'Edit student application':'New student application';form='admission-form';size=true;body=admissionForm(entry||{});submit=entry?'Save application changes':'Submit application';break;}
+   title=entry?'Edit student application':'Register student';form='admission-form';size=true;
+   body=entry?admissionForm(entry):
+    `<div class="form-grid" style="margin-bottom:16px">${select('Registration type','registration_type',htmlOptions([['new','New student application'],['legacy','Existing / legacy student']],'new'),'required','wide')}</div>
+    <div id="registration-fields">${admissionForm({})}</div>`;
+   submit=entry?'Save application changes':'Continue';break;}
  case 'invoice':{
    const active=get('students').filter(x=>x.status==='active');
    const choices=active.map(x=>`<label class="invoice-choice"><input type="checkbox" name="invoice_student_ids" value="${h(x.id)}"><span>${h(sidName(x))}<small>${h(x.class_name||'Not assigned')}</small></span></label>`).join('');
@@ -1742,7 +1773,21 @@ async function submitForm(form){const formId=form.getAttribute('id'),raw=Object.
   const result=await post('/classes/enrolment',{class_id:raw.class_id,student_ids},'PATCH');
   toast(result.assigned+' pupils assigned to '+(course?.name||'the class'));
  }
- else if(formId==='admission-form'){for(const k of ['level_starting','level_qaaidah','level_quran','arabic_read_write','consent_first_aid','consent_photos'])raw[k]=form.elements[k]?.checked?1:0;const aid=raw.id;delete raw.id;if(raw.previous_attended==='yes'&&!raw.previous_institute.trim())throw Error('Please enter the previous institute / madrasah name');const result=await post('/admissions',aid?{...raw,id:aid,update_details:true}:raw,aid?'PATCH':'POST');
+ else if(formId==='admission-form'){
+  if(raw.registration_type==='legacy'){
+   if(!userCan('admin'))throw Error('Only administrators can manually register legacy students');
+   if(!form.elements.legacy_confirmed?.checked)throw Error('Confirm this is an existing pupil');
+   const ok=await confirmDialog({title:'Register existing legacy student?',
+    message:'Create a permanent student record for '+raw.first_name+' '+raw.last_name+'?',
+    details:'Check for duplicates before proceeding. This bypasses the new admissions queue, leaves the guardian unlinked and does not send an invitation. Missing details can be corrected later.',
+    actionLabel:'Register legacy student',tone:'warning'});
+   if(!ok)return;
+   const result=await post('/legacy-students/manual',{...raw,
+    confirmation:'REGISTER EXISTING LEGACY PUPIL'});
+   toast('Existing pupil registered successfully · '+result.student_no+'. Guardian linking is available under Legacy student import.');
+   close();await navigate('students');return;
+  }
+  for(const k of ['level_starting','level_qaaidah','level_quran','arabic_read_write','consent_first_aid','consent_photos'])raw[k]=form.elements[k]?.checked?1:0;const aid=raw.id;delete raw.id;if(raw.previous_attended==='yes'&&!raw.previous_institute.trim())throw Error('Please enter the previous institute / madrasah name');const result=await post('/admissions',aid?{...raw,id:aid,update_details:true}:raw,aid?'PATCH':'POST');
  if(aid){toast('Application details updated');}
  else if(result.acknowledgement_status==='sent'){toast('Application recorded · receipt email accepted for delivery · '+result.reference);}
  else{toast('Application recorded · email acknowledgement not sent. Check the email log or Resend configuration.',true);}}
@@ -1891,7 +1936,17 @@ function updateDbsCertificateRequirement(){
  consent.hidden=!showing;
  form.elements.retention_authorized.required=showing;
 }
-document.addEventListener('change',async e=>{const el=e.target;if(el.id==='timetable-class-filter'){S.timetableClass=el.value;renderPage();return;}if(el.closest('#dbs-record-form')&&['issued_on','certificate'].includes(el.name))updateDbsCertificateRequirement();if(el.closest('#invoice-form'))updateInvoiceTargets();if(el.closest('#homework-form')&&(['surah_from','surah_to','verse_from','verse_to'].includes(el.name)))updateSurahVerseLimits();if(el.name==='type'&&el.closest('#homework-form')){const surah=['hifdh','murajaa'].includes(el.value);$('#surah-fields')?.classList.toggle('hide',!surah);$('#page-fields')?.classList.toggle('hide',surah);}if(el.dataset.calendarMonth!==undefined){S.calendarMonth=el.value;renderPage();return;}if(el.dataset.date==='attendance'){S.attendanceDate=el.value;await navigate('attendance');}if(el.dataset.attendanceClass!==undefined){S.attendanceClass=el.value;renderPage();return;}if(el.dataset.classroomClass!==undefined){S.classroomClass=el.value;renderPage();return;}if(el.dataset.filter){S.filter=el.value;renderPage();}if(el.dataset.admission){try{
+document.addEventListener('change',async e=>{const el=e.target;
+ if(el.name==='registration_type'&&el.closest('#admission-form')){
+  const legacy=el.value==='legacy';
+  if(legacy&&!userCan('admin')){toast('Only administrators can register legacy students',true);el.value='new';return;}
+  const slot=document.getElementById('registration-fields');
+  if(slot)slot.innerHTML=legacy?manualLegacyRegistrationForm():admissionForm({});
+  const save=el.closest('form')?.querySelector('button[type="submit"]');
+  if(save)save.textContent=legacy?'Register existing pupil':'Submit new application';
+  return;
+ }
+ if(el.id==='timetable-class-filter'){S.timetableClass=el.value;renderPage();return;}if(el.closest('#dbs-record-form')&&['issued_on','certificate'].includes(el.name))updateDbsCertificateRequirement();if(el.closest('#invoice-form'))updateInvoiceTargets();if(el.closest('#homework-form')&&(['surah_from','surah_to','verse_from','verse_to'].includes(el.name)))updateSurahVerseLimits();if(el.name==='type'&&el.closest('#homework-form')){const surah=['hifdh','murajaa'].includes(el.value);$('#surah-fields')?.classList.toggle('hide',!surah);$('#page-fields')?.classList.toggle('hide',surah);}if(el.dataset.calendarMonth!==undefined){S.calendarMonth=el.value;renderPage();return;}if(el.dataset.date==='attendance'){S.attendanceDate=el.value;await navigate('attendance');}if(el.dataset.attendanceClass!==undefined){S.attendanceClass=el.value;renderPage();return;}if(el.dataset.classroomClass!==undefined){S.classroomClass=el.value;renderPage();return;}if(el.dataset.filter){S.filter=el.value;renderPage();}if(el.dataset.admission){try{
   const application=get('admissions').find(x=>x.id===el.dataset.admission);
   let classId='';
   if(el.value==='accepted'){
