@@ -2044,6 +2044,68 @@ async function handle(req,env,ctx){
     ORDER BY a.guardian_email,s.last_name,s.first_name`);
   return json({items:data});
  }
+ // Repair a missing legacy guardian address for one specific imported pupil.
+ // Never infer guardianship from matching names or an email alone.
+ if(path==='/api/legacy-students/families/link-missing-email'&&method==='POST'){
+  requireRole(user,'admin');
+  const b=await input(req);
+  if(b.confirmation!=='VERIFY AND LINK LEGACY GUARDIAN'||b.guardian_verified!==true)
+   error('Verify the authorised guardian and their email address first',400);
+  const sid=short(b.student_id,100),addr=email(b.guardian_email);
+  if(!/^\S+@\S+\.\S+$/.test(addr))error('Enter a valid guardian email',400);
+  const child=await first(db,`SELECT s.id,s.parent_id,s.first_name,s.last_name,a.guardian_name,a.guardian_email
+   FROM legacy_student_import_records li JOIN students s ON s.id=li.student_id
+   JOIN admissions a ON a.student_id=s.id WHERE s.id=?`,sid);
+  if(!child)error('Imported student record not found',404);
+  if(child.parent_id)error('This student already has a linked guardian. Review the existing link before changing it.',409);
+  if(email(child.guardian_email))error('This student already has a recorded guardian email. Use the verified family onboarding workflow.',409);
+  const guardianName=short(child.guardian_name,100).trim();
+  if(!guardianName)error('Complete the guardian name before linking',409);
+  const other=await first(db,`SELECT a.guardian_name FROM admissions a
+   WHERE lower(trim(a.guardian_email))=? AND a.student_id<>? LIMIT 1`,addr,sid);
+  if(other&&short(other.guardian_name,100).trim().toLowerCase()!==guardianName.toLowerCase())
+   error('This address belongs to a differently named guardian. Review identity before linking.',409);
+  const existing=await first(db,'SELECT id,role,active,password_hash FROM users WHERE email=?',addr);
+  if(existing&&existing.role!=='parent')
+   error('This email belongs to another account role. Review the guardian relationship manually.',409);
+  if(existing&&(!existing.active&&existing.password_hash))
+   error('This guardian account is deactivated. Review it before linking.',409);
+  const previous=await first(db,'SELECT * FROM legacy_parent_onboarding WHERE guardian_email=?',addr);
+  if(previous&&previous.user_id!==existing?.id)error('Guardian account and onboarding record do not match',409);
+  let studentIds=[];
+  if(previous){
+   try{studentIds=JSON.parse(previous.student_ids_json);}catch{error('Onboarding record requires manual review',409);}
+   if(!Array.isArray(studentIds)||studentIds.length>99||!studentIds.every(x=>typeof x==='string'))
+    error('Onboarding record requires manual review',409);
+  }
+  if(studentIds.includes(sid))error('Student already has a pending guardian invitation',409);
+  const uid=existing?.id||id();
+  const ops=[];
+  if(!existing)ops.push(db.prepare('INSERT INTO users(id,name,email,role,active) VALUES(?,?,?,?,0)')
+   .bind(uid,guardianName,addr,'parent'));
+  ops.push(db.prepare('UPDATE admissions SET guardian_email=?,updated_at=? WHERE student_id=?').bind(addr,iso(),sid));
+  ops.push(db.prepare('UPDATE students SET parent_id=? WHERE id=? AND parent_id IS NULL').bind(uid,sid));
+  if(previous){
+   ops.push(db.prepare(`UPDATE legacy_parent_onboarding SET student_ids_json=?,status='pending',
+    attempts=0,last_error='',sent_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .bind(JSON.stringify([...studentIds,sid]),previous.id));
+  }else{
+   ops.push(db.prepare(`INSERT INTO legacy_parent_onboarding
+    (id,guardian_email,guardian_name,user_id,student_ids_json) VALUES(?,?,?,?,?)`)
+    .bind(id(),addr,guardianName,uid,JSON.stringify([sid])));
+  }
+  await db.batch(ops);
+  await audit(db,user,'legacy_guardian_missing_email_linked','students',sid,
+   'Verified guardian address supplied; parent account linked and secure welcome queued');
+  // Sending is attempted immediately; a provider rejection keeps it retryable in the queue.
+  try{await dispatchLegacyParentOnboarding(env,10);}
+  catch(err){console.error('Legacy guardian welcome dispatch failed',err);}
+  const queued=await first(db,'SELECT status FROM legacy_parent_onboarding WHERE guardian_email=?',addr);
+  const accepted=queued?.status==='sent';
+  return json({ok:true,student_id:sid,linked:true,invitation_accepted:accepted,
+   message:accepted?'Guardian linked and onboarding email accepted for delivery.':
+    'Guardian linked. Invitation not yet accepted by the email provider; use Send queued follow-up invitations to retry.'});
+ }
  if(path==='/api/legacy-students/families/onboard'&&method==='POST'){
   requireRole(user,'admin');
   const b=await input(req);

@@ -133,6 +133,12 @@
     if(!groups.has(address))groups.set(address,[]);
     groups.get(address).push(item);
    }
+   // Include pupils without any email: admins can verify and supply one per student.
+   const missing=families.filter(x=>!String(x.guardian_email||'').trim()&&!x.parent_id);
+   const missingRows=missing.map(x=>'<tr><td>—</td><td><strong>'+h(x.guardian_name||'Guardian name missing')+
+    '</strong><small>No email recorded</small></td><td>'+h(x.first_name+' '+x.last_name+' ('+x.student_no+')')+
+    '</td><td><span class="tag amber">Email missing</span> '+
+    '<button type="button" class="btn smol primary legacy-supply-email" data-student="'+h(x.student_id)+'">Enter email &amp; link</button></td></tr>').join('');
    const rows=[...groups.entries()].map(([address,kids])=>{
     const names=[...new Set(kids.map(x=>String(x.guardian_name||'').trim().toLowerCase()).filter(Boolean))];
     const linked=kids.every(x=>x.parent_id&&x.parent_id===(x.account_id||''));
@@ -155,7 +161,7 @@
      ' pupils missing guardian email. Confirm any group marked manual review before proceeding.</p>'+
      '<div class="toolbar" style="margin:12px 0;gap:12px;flex-wrap:wrap"><div class="searchbox" style="flex:1;min-width:230px"><input id="legacy-family-search" type="search" autocomplete="off" aria-label="Search family onboarding" placeholder="Search guardian, student, email or registration number"></div><span class="tag blue" id="legacy-family-search-count"></span></div>'+
      '<div class="table-scroll"><table class="table"><thead><tr><th>Select</th><th>Guardian</th><th>Imported children</th><th>Status</th></tr></thead><tbody>'+
-      rows+'</tbody></table></div>';
+      missingRows+rows+'</tbody></table></div>';
    const search=familyReview.querySelector('#legacy-family-search');
    if(search)search.value=familyQuery;
    filterFamilies();
@@ -171,6 +177,52 @@
    if(familyLink)familyLink.disabled=!(familyVerified?.checked&&
      familyReview?.querySelector('.legacy-family-select:checked'));
   };
+  familyReview?.addEventListener('click',async event=>{
+   const button=event.target.closest('.legacy-supply-email');
+   if(!button)return;
+   const student=families.find(x=>x.student_id===button.dataset.student);
+   if(!student)return;
+   const row=button.closest('tr');
+   const old=row.querySelector('.legacy-email-correction');
+   if(old){old.remove();return;}
+   const area=document.createElement('div');
+   area.className='legacy-email-correction';
+   area.style.marginTop='10px';
+   const label=document.createElement('label');
+   label.textContent='Verified guardian email for '+student.first_name+' '+student.last_name;
+   label.className='small';
+   const entry=document.createElement('input');
+   entry.type='email';entry.required=true;entry.autocomplete='off';
+   entry.placeholder='guardian@example.com';
+   entry.style.width='min(100%,310px)';
+   const submit=document.createElement('button');
+   submit.type='button';submit.className='btn smol primary';
+   submit.textContent='Link guardian & send invitation';
+   area.append(label,entry,submit);
+   row.lastElementChild.append(area);
+   entry.focus();
+   submit.addEventListener('click',async()=>{
+    const address=entry.value.trim().toLowerCase();
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)){toast('Enter a valid email address',true);return;}
+    const verified=await confirmDialog({
+     title:'Verify guardian & link student?',
+     message:'Link '+student.first_name+' '+student.last_name+' to '+(student.guardian_name||'the recorded guardian')+' at '+address+'?',
+     details:'Only proceed after independently confirming guardianship and email ownership. This grants access to the child’s private records and automatically attempts a secure invitation.',
+     actionLabel:'Verify, link & send',tone:'warning'
+    });
+    if(!verified)return;
+    submit.disabled=true;
+    try{
+     const result=await post('/legacy-students/families/link-missing-email',{
+      student_id:student.student_id,guardian_email:address,guardian_verified:true,
+      confirmation:'VERIFY AND LINK LEGACY GUARDIAN'
+     });
+     familyStatus.textContent=result.message;
+     toast(result.message,!result.invitation_accepted);
+     await loadFamilies();
+    }catch(err){toast(err.message,true);submit.disabled=false;}
+   });
+  });
   familyReview?.addEventListener('click',async event=>{
    const button=event.target.closest('.legacy-correct-email');
    if(!button)return;
