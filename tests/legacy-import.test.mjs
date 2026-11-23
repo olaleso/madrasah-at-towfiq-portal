@@ -86,3 +86,21 @@ test('import UI exposes guarded review and does not trigger parent invitations',
  assert.ok(client.includes('Preview and check duplicates')||app.includes('Preview and check duplicates'));
  assert.ok(!client.includes('/guardians'));
 });
+
+test('manual legacy registration is admin-only and reuses strict historical validation',()=>{
+ const app=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
+ const worker=fs.readFileSync(new URL('../src/worker.js',import.meta.url),'utf8');
+ assert.match(app,/registration_type/);
+ assert.match(app,/manualLegacyRegistrationForm/);
+ assert.match(app,/Add legacy student manually/);
+ assert.match(app,/post\('\/legacy-students\/manual'/);
+ assert.match(worker,/if\(path==='\/api\/legacy-students\/manual'&&method==='POST'\)/);
+ assert.match(worker,/validateLegacyRow\(/);
+ assert.match(worker,/matchExistingLegacy\(/);
+ assert.match(worker,/guardian_linked:false,invitation_status:'not_sent'/);
+ assert.match(worker,/REGISTER EXISTING LEGACY PUPIL/);
+ assert.match(app,/legacy_confirmed/);
+ const result=validateLegacyRow({source_row:2,first_name:'Aminah',last_name:'Example'});
+ assert.deepEqual(result.errors,[]);
+ assert.ok(result.warnings.some(x=>x.includes('Missing:')));
+});
