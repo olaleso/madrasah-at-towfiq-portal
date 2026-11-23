@@ -203,7 +203,7 @@
    entry.focus();
    submit.addEventListener('click',async()=>{
     const address=entry.value.trim().toLowerCase();
-    if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(address)){toast('Enter a valid email address',true);return;}
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)){toast('Enter a valid email address',true);return;}
     const verified=await confirmDialog({
      title:'Verify guardian & link student?',
      message:'Link '+student.first_name+' '+student.last_name+' to '+(student.guardian_name||'the recorded guardian')+' at '+address+'?',
