@@ -1,6 +1,6 @@
 import {groupFamilyFeeRows,allocateFamilyPayment} from './family-billing.mjs';
 import {loadCommunity,saveCommunity,validateCommunityEntry,publicCommunity,COMMUNITY_LIMIT} from './masjid-community.mjs';
-import {validateLegacyBatch,matchExistingLegacy,validLegacyDate,normalizeLegacyPhone} from './legacy-students.mjs';
+import {validateLegacyBatch,validateLegacyRow,matchExistingLegacy,validLegacyDate,normalizeLegacyPhone} from './legacy-students.mjs';
 import {legacyMigrationEmail,LEGACY_MIGRATION_SUBJECT} from './legacy-migration-email.mjs';
 const ROLES = ['admin','staff','teacher','parent'];
 
