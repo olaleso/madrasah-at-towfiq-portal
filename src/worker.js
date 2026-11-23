@@ -2098,12 +2098,13 @@ async function handle(req,env,ctx){
   await audit(db,user,'legacy_guardian_missing_email_linked','students',sid,
    'Verified guardian address supplied; parent account linked and secure welcome queued');
   // Sending is attempted immediately; a provider rejection keeps it retryable in the queue.
-  let accepted=0;
-  try{accepted=await dispatchLegacyParentOnboarding(env,10);}
+  try{await dispatchLegacyParentOnboarding(env,10);}
   catch(err){console.error('Legacy guardian welcome dispatch failed',err);}
-  return json({ok:true,student_id:sid,linked:true,invitation_accepted:accepted>0,
-   message:accepted>0?'Guardian linked and onboarding email accepted for delivery.':
-    'Guardian linked. Email remains queued; use Send queued follow-up invitations to retry.'});
+  const queued=await first(db,'SELECT status FROM legacy_parent_onboarding WHERE guardian_email=?',addr);
+  const accepted=queued?.status==='sent';
+  return json({ok:true,student_id:sid,linked:true,invitation_accepted:accepted,
+   message:accepted?'Guardian linked and onboarding email accepted for delivery.':
+    'Guardian linked. Invitation not yet accepted by the email provider; use Send queued follow-up invitations to retry.'});
  }
  if(path==='/api/legacy-students/families/onboard'&&method==='POST'){
   requireRole(user,'admin');
